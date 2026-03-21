@@ -12,12 +12,14 @@ import {
   ArrowUpDown,
   Calculator as CalcIcon,
   Percent,
-  CheckCircle2
+  CheckCircle2,
+  Merge
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Stage, RightPanelTab } from '../types';
-import { useData } from '../context/DataContext';
+import { useData, SpecRow, InvoiceRow, EstimateRow } from '../context/DataContext';
+import { exportGeometryToXLSX, exportToXLSX } from '../utils/fileUtils';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -35,11 +37,69 @@ interface RightPanelProps {
 export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasNextStage, canProceed }: RightPanelProps) {
   const [activeTab, setActiveTab] = React.useState<RightPanelTab>('tools');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { handleFile } = useData();
+  const { 
+    handleFile, isMerged, toggleMerge, pdfGeometry, 
+    estimateRows, estimateTotal, specRows, invoiceRows,
+    resetData, sortRows, groupRows, filesMap
+  } = useData();
+
+  const handleExport = () => {
+    let headers: string[] = [];
+    let data: string[][] = [];
+    let filename = `DocOK_${currentStage}.xlsx`;
+
+    if (currentStage === 'spec') {
+      headers = ['№', 'Наименование', 'Артикул', 'Кол-во', 'Ед. изм.', 'Примечание'];
+      data = specRows.map((r: SpecRow, i: number) => [
+        String(i + 1), r.name || '', r.code || '', String(r.quantity || ''), r.unit || '', r.note || ''
+      ]);
+    } else if (currentStage === 'invoice') {
+      headers = ['№', 'Наименование', 'Артикул', 'Кол-во', 'Цена', 'Сумма', 'Поставщик'];
+      data = invoiceRows.map((r: InvoiceRow, i: number) => [
+        String(i + 1), r.name || '', r.article || '', String(r.quantity || ''), String(r.price || ''), String(r.total || ''), r.supplier || ''
+      ]);
+    } else if (currentStage === 'estimate') {
+      headers = ['№', 'Наименование', 'Кол-во', 'Ед. изм.', 'Цена', 'Сумма', 'Поставщик'];
+      data = estimateRows.map((r: EstimateRow, i: number) => [
+        String(i + 1), r.name || '', String(r.quantity || ''), r.unit || '', String(r.price || ''), String(r.sum || ''), r.supplier || ''
+      ]);
+      data.push(['', 'ИТОГО', '', '', '', estimateTotal, '']);
+    }
+
+    if (headers.length > 0) {
+      exportToXLSX(headers, data, [], filename);
+    }
+  };
+
+  const getStageLabel = (stage: Stage) => {
+    switch (stage) {
+      case 'spec': return 'Позиций спецификации';
+      case 'invoice': return 'Строк в счетах';
+      case 'request': return 'Позиций в заявке';
+      case 'estimate': return 'Позиций сметы';
+      default: return 'Позиций';
+    }
+  };
+
+  const getIntermediateTotal = () => {
+    if (parseFloat(estimateTotal) > 0) return estimateTotal;
+    
+    if (currentStage === 'invoice') {
+      return invoiceRows.reduce((acc: number, r: InvoiceRow) => acc + (parseFloat(String(r.total)) || 0), 0).toFixed(2);
+    }
+    return '0.00';
+  };
+
+  const currentCount = () => {
+    if (currentStage === 'spec') return specRows.length;
+    if (currentStage === 'invoice') return invoiceRows.length;
+    if (currentStage === 'estimate') return estimateRows.length;
+    return 0;
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (f) handleFile(f, false);
+    if (f) handleFile(f, currentStage, false);
     e.target.value = '';
   };
 
@@ -109,29 +169,79 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
                   <UploadCloud className="w-4 h-4 text-slate-500" /> Импорт данных
                 </button>
-                <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
+                 <button 
+                  onClick={handleExport}
+                  className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
                   <Download className="w-4 h-4 text-slate-500" /> Экспорт таблицы
                 </button>
-                <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-red-600 rounded-md transition-colors text-sm">
+                <button 
+                  onClick={() => resetData(currentStage)}
+                  className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-red-600 rounded-md transition-colors text-sm">
                   <RotateCcw className="w-4 h-4 text-red-500" /> Сброс
                 </button>
 
                 <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-4 mb-2">Работа с данными</div>
-                <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
+                {currentStage === 'spec' && (
+                  <>
+                    <button 
+                      onClick={toggleMerge}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-2 rounded-md transition-colors text-sm w-full",
+                        isMerged ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-slate-50 hover:bg-slate-100 text-slate-700"
+                      )}
+                    >
+                      {isMerged ? <RotateCcw className="w-4 h-4" /> : <Merge className="w-4 h-4" />}
+                      {isMerged ? "Разъединить дубли" : "Объединить дубли"}
+                    </button>
+                    {pdfGeometry && (
+                      <button 
+                        onClick={() => exportGeometryToXLSX(pdfGeometry, 'geometry_spec.xlsx')}
+                        className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm w-full"
+                      >
+                        <Download className="w-4 h-4 text-emerald-500" /> Экспорт геометрии
+                      </button>
+                    )}
+                  </>
+                )}
+                {currentStage === 'estimate' && (
+                  <button 
+                    onClick={handleExport}
+                    className="flex items-center gap-3 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-all text-sm font-bold shadow-md hover:shadow-lg w-full"
+                  >
+                    <Download className="w-4 h-4" /> Экспорт финальной сметы
+                  </button>
+                )}
+                <button 
+                  onClick={() => groupRows(currentStage, 'name')}
+                  className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
                   <Rows3 className="w-4 h-4 text-slate-500" /> Группировка
                 </button>
-                <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
+                <button 
+                  onClick={() => sortRows(currentStage, 'name')}
+                  className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
                   <ArrowUpDown className="w-4 h-4 text-slate-500" /> Сортировка
                 </button>
               </>
             ) : (
               <div className="flex flex-col gap-4" title="Инструменты">
                  <UploadCloud className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={() => fileInputRef.current?.click()} />
-                 <Download className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" />
-                 <RotateCcw className="w-6 h-6 text-red-500 hover:text-red-700 cursor-pointer" />
+                 <Download className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={handleExport} />
+                 <RotateCcw className="w-6 h-6 text-red-500 hover:text-red-700 cursor-pointer" onClick={() => resetData(currentStage)} />
                  <div className="w-full h-px bg-slate-200 my-2" />
-                 <Rows3 className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" />
-                 <ArrowUpDown className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" />
+                 {currentStage === 'spec' && (
+                   <>
+                     {isMerged ? (
+                       <RotateCcw className="w-6 h-6 text-indigo-600 cursor-pointer" onClick={toggleMerge} title="Разъединить дубли" />
+                     ) : (
+                       <Merge className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={toggleMerge} title="Объединить дубли" />
+                     )}
+                   </>
+                 )}
+                 {currentStage === 'estimate' && (
+                   <Download className="w-6 h-6 text-indigo-600 cursor-pointer" onClick={handleExport} title="Экспорт сметы" />
+                 )}
+                 <Rows3 className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={() => groupRows(currentStage, 'name')} />
+                 <ArrowUpDown className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={() => sortRows(currentStage, 'name')} />
               </div>
             )}
           </div>
@@ -144,26 +254,26 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Общая сводка</div>
                  <div className="bg-slate-50 p-4 rounded-lg flex flex-col gap-3 text-sm">
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Всего позиций:</span>
-                      <span className="font-semibold text-slate-900">142</span>
+                      <span className="text-slate-500">{getStageLabel(currentStage)}:</span>
+                      <span className="font-semibold text-slate-900">{currentCount()}</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Сумма (без НДС):</span>
-                      <span className="font-semibold text-slate-900">890 000 ₽</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Сумма НДС:</span>
-                      <span className="font-semibold text-slate-900">178 000 ₽</span>
+                      <span className="text-slate-500">Загружено файлов:</span>
+                      <span className="font-semibold text-slate-900">
+                        {currentStage === 'invoice' 
+                          ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length 
+                          : Object.keys(filesMap || {}).length}
+                      </span>
                     </div>
                     <div className="h-px w-full bg-slate-200 my-1" />
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-600 font-medium">Итого:</span>
-                      <span className="font-bold text-indigo-700">1 068 000 ₽</span>
+                      <span className="text-slate-600 font-medium whitespace-nowrap">Итого по этапу:</span>
+                      <span className="font-bold text-indigo-700 text-right">{getIntermediateTotal()} ₽</span>
                     </div>
                  </div>
                </>
              ) : (
-               <div className="flex flex-col gap-4 items-center group cursor-help" title="Всего: 142 поз. | Итого: 1 068 000 ₽">
+               <div className="flex flex-col gap-4 items-center group cursor-help" title={`Итого: ${getIntermediateTotal()} ₽`}>
                   <Info className="w-6 h-6 text-slate-400 group-hover:text-indigo-600 transition-colors" />
                </div>
              )}

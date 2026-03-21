@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES } from '../utils/fileUtils';
+import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
+import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
+import { Stage } from '../types';
 
 export interface YandexConfig {
   apiKey: string;
@@ -16,6 +18,28 @@ export interface SpecRow extends MaterialPosition {
   originalRowsIds?: string[];
   children?: SpecRow[];
 }
+
+export const SPEC_COLUMNS = [
+  { key: 'name', label: 'Наименование', width: 220 },
+  { key: 'brand', label: 'Марка', width: 130 },
+  { key: 'code', label: 'Код', width: 110 },
+  { key: 'supplier', label: 'Поставщик', width: 140 },
+  { key: 'unit', label: 'Ед.', width: 80, align: 'center' },
+  { key: 'quantity', label: 'Кол-во', width: 100, type: 'number', align: 'right' },
+  { key: 'mass', label: 'Масса', width: 100, type: 'number', align: 'right' },
+  { key: 'note', label: 'Прим.', width: 180 },
+];
+
+export const SPEC_TARGET_FIELDS = [
+  { key: 'name', label: 'Наименование', required: true },
+  { key: 'brand', label: 'Марка' },
+  { key: 'code', label: 'Код' },
+  { key: 'supplier', label: 'Поставщик' },
+  { key: 'unit', label: 'Единицы измерения' },
+  { key: 'quantity', label: 'Количество' },
+  { key: 'mass', label: 'Масса' },
+  { key: 'note', label: 'Примечания' },
+];
 
 export interface InvoiceRow {
   id: string;
@@ -71,25 +95,23 @@ export function emptySpecRow(): SpecRow {
 export function emptyEstimateRow(): EstimateRow {
   return {
     id: genId(),
-    type: 'material',
     name: '',
     unit: 'шт',
     quantity: '1',
-    cost: '0',
-    markup: '15',
-    clientPrice: '0',
+    price: '',
+    sum: '',
+    supplier: '',
   };
 }
 
 export interface EstimateRow {
   id: string;
-  type: string;
   name: string;
   unit: string;
   quantity: string;
-  cost: string;
-  markup: string;
-  clientPrice: string;
+  price: string;
+  sum: string;
+  supplier: string;
 }
 
 interface DataContextType {
@@ -111,7 +133,15 @@ interface DataContextType {
   setUploadStatuses: React.Dispatch<React.SetStateAction<Record<string, { status: string; time: string }>>>;
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
-  handleFile: (file: File, forceAI?: boolean) => Promise<void>;
+  handleFile: (file: File, stage: string, forceAI?: boolean) => Promise<void>;
+  pdfGeometry: PdfGeometry | null;
+  isMerged: boolean;
+  handleUnmerge: (parentId: string, childId: string) => void;
+  generateEstimate: () => void;
+  estimateTotal: string;
+  resetData: (stage: Stage) => void;
+  sortRows: (stage: Stage, field: string) => void;
+  groupRows: (stage: Stage, field: string) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -129,60 +159,97 @@ export function DataProvider({ children }: { children: ReactNode }) {
   });
   const [uploadStatuses, setUploadStatuses] = useState<Record<string, { status: string; time: string }>>({});
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
+  const [pdfGeometry, setPdfGeometry] = useState<PdfGeometry | null>(null);
+  const [isMerged, setIsMerged] = useState(false);
+  const [backupSpecRows, setBackupSpecRows] = useState<SpecRow[]>([]);
 
   const saveYandexConfig = (config: YandexConfig) => {
     setYandexConfig(config);
     localStorage.setItem('docok_yandex_config', JSON.stringify(config));
   };
 
-  const handleFile = async (file: File, forceAI: boolean = false) => {
+  const handleFile = async (file: File, stage: string, forceAI: boolean = false) => {
     const now = new Date();
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
-    setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime } }));
+    setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime } }));
 
     const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
     const useAi = forceAI || isPdfOrImage;
 
     if (!useAi) {
-      setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Локальный парсинг...', time: currentTime } }));
+      setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Локальный парсинг...', time: currentTime } }));
       try {
-        const { headers, rows: parsedRawRows } = await parseFile(file);
-        const detected = autoDetectMapping(headers, INVOICE_ALIASES);
+        const { headers, rows: parsedRawRows, gridX } = await parseFile(file);
+        
+        // Дополнительно парсим геометрию для "Цифрового двойника" если это этап спецификации
+        if (stage === 'spec' && file.name.toLowerCase().endsWith('.pdf')) {
+          const geometry = await parsePdfGeometry(file);
+          setPdfGeometry(geometry);
+        }
+
+        const aliases = stage === 'spec' ? SPEC_ALIASES : INVOICE_ALIASES;
+        const detected = autoDetectMapping(headers, aliases);
         
         const mapping = Object.fromEntries(
           Object.entries(detected).map(([key, value]) => [key, value.index])
         );
 
-        const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
-          const r = emptyInvoiceRow();
-          r.documentName = file.name;
-          if (mapping.article !== undefined) r.article = row[mapping.article] || '';
-          if (mapping.name !== undefined) r.name = row[mapping.name] || '';
-          if (mapping.supplier !== undefined) r.supplier = row[mapping.supplier] || '';
-          if (mapping.quantity !== undefined) r.quantity = row[mapping.quantity] || '';
-          if (mapping.unit !== undefined) r.unit = row[mapping.unit] || '';
-          if (mapping.price !== undefined) r.price = row[mapping.price] || '';
-          if (mapping.vat !== undefined) r.vatRate = row[mapping.vat] || '';
-          if (mapping.vatAmount !== undefined) r.vatAmount = row[mapping.vatAmount] || '';
-          if (mapping.total !== undefined) r.total = row[mapping.total] || '';
+        if (stage === 'spec') {
+          const newRows: SpecRow[] = parsedRawRows.map((row) => ({
+            id: genId(),
+            name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
+            brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
+            code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
+            supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
+            unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
+            quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
+            mass: mapping.mass !== undefined ? (row[mapping.mass] || '') : '',
+            note: mapping.note !== undefined ? (row[mapping.note] || '') : '',
+            originalRowsIds: [],
+            children: [],
+          }));
 
-          const qty = parseFloat(String(r.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-          const price = parseFloat(String(r.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-          const subtotal = qty * price;
+          // Автоматическое объединение дубликатов для спецификаций
+          const merged = mergeDuplicateMaterials(newRows).map(item => ({
+             ...item,
+             id: (item as any).id || genId()
+          })) as unknown as SpecRow[];
 
-          if (!r.total && subtotal > 0) {
-            r.total = subtotal.toFixed(2);
-          }
-          return r;
-        });
+          setSpecRows(merged);
+          setIsMerged(true);
+          setBackupSpecRows(newRows);
+        } else {
+          const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
+            const r = emptyInvoiceRow();
+            r.documentName = file.name;
+            if (mapping.article !== undefined) r.article = row[mapping.article] || '';
+            if (mapping.name !== undefined) r.name = row[mapping.name] || '';
+            if (mapping.supplier !== undefined) r.supplier = row[mapping.supplier] || '';
+            if (mapping.quantity !== undefined) r.quantity = row[mapping.quantity] || '';
+            if (mapping.unit !== undefined) r.unit = row[mapping.unit] || '';
+            if (mapping.price !== undefined) r.price = row[mapping.price] || '';
+            if (mapping.vat !== undefined) r.vatRate = row[mapping.vat] || '';
+            if (mapping.vatAmount !== undefined) r.vatAmount = row[mapping.vatAmount] || '';
+            if (mapping.total !== undefined) r.total = row[mapping.total] || '';
 
-        setInvoiceRows(prev => {
-          const filtered = prev.filter(r => r.documentName !== file.name);
-          return [...filtered, ...newRowsToAppend];
-        });
+            const qty = parseFloat(String(r.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+            const price = parseFloat(String(r.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+            const subtotal = qty * price;
+
+            if (!r.total && subtotal > 0) {
+              r.total = subtotal.toFixed(2);
+            }
+            return r;
+          });
+
+          setInvoiceRows((prev: InvoiceRow[]) => {
+            const filtered = prev.filter((r: InvoiceRow) => r.documentName !== file.name);
+            return [...filtered, ...newRowsToAppend];
+          });
+        }
         
-        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
-        setFilesMap(prev => ({ ...prev, [file.name]: file }));
+        setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
+        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
       } catch (e: any) {
         setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
       }
@@ -226,18 +293,148 @@ export function DataProvider({ children }: { children: ReactNode }) {
            return r;
         });
 
-        setInvoiceRows(prev => {
-          const filtered = prev.filter((r) => r.documentName !== file.name);
+        setInvoiceRows((prev: InvoiceRow[]) => {
+          const filtered = prev.filter((r: InvoiceRow) => r.documentName !== file.name);
           return [...filtered, ...aiRows];
         });
         
-        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
-        setFilesMap(prev => ({ ...prev, [file.name]: file }));
+        setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
+        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
       } catch (e: any) {
         setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
       }
     }
   };
+
+  const toggleMerge = () => {
+    if (isMerged) {
+      if (backupSpecRows.length > 0) {
+        setSpecRows(backupSpecRows);
+        setIsMerged(false);
+      }
+    } else {
+      setBackupSpecRows(specRows);
+      const merged = mergeDuplicateMaterials(specRows).map(item => ({
+        ...item,
+        id: (item as any).id || genId()
+      })) as unknown as SpecRow[];
+      setSpecRows(merged);
+      setIsMerged(true);
+    }
+  };
+
+  const handleUnmerge = (parentId: string, childId: string) => {
+    const newRows = [...specRows];
+    const parentIndex = newRows.findIndex(r => r.id === parentId);
+    if (parentIndex === -1) return;
+    
+    const parentRow = { ...newRows[parentIndex] };
+    if (!parentRow.children || parentRow.children.length === 0) return;
+    
+    const childIndex = parentRow.children.findIndex((c: SpecRow) => c.id === childId);
+    if (childIndex === -1) return;
+    
+    const extractedChild = parentRow.children[childIndex];
+    
+    parentRow.children = parentRow.children.filter((c: SpecRow) => c.id !== childId);
+    parentRow.originalRowsIds = parentRow.originalRowsIds?.filter(id => id !== childId);
+    
+    const parseQty = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+    const pQty = parseQty(parentRow.quantity);
+    const cQty = parseQty(extractedChild.quantity);
+    const newQty = Math.max(0, pQty - cQty);
+    parentRow.quantity = newQty === 0 ? '' : String(newQty);
+    
+    newRows[parentIndex] = parentRow;
+    
+    const unmergedSpecRow: SpecRow = {
+       ...extractedChild,
+       originalRowsIds: [extractedChild.id],
+       children: [{ ...extractedChild } as SpecRow]
+    };
+    
+    newRows.splice(parentIndex + 1, 0, unmergedSpecRow);
+    setSpecRows(newRows);
+  };
+  const generateEstimate = () => {
+    const newEstimate = specRows.map(spec => {
+      // Ищем совпадения в счетах по названию или артикулу/коду
+      const matches = invoiceRows.filter(inv => {
+        const invName = (inv.name || '').toLowerCase();
+        const specName = (spec.name || '').toLowerCase();
+        const invArt = (inv.article || '').toLowerCase();
+        const specCode = (spec.code || '').toLowerCase();
+        
+        return (specName && invName && invName.includes(specName)) || 
+               (specCode && invArt && invArt === specCode);
+      });
+
+      let bestPrice = '';
+      let bestSupplier = '';
+
+      if (matches.length > 0) {
+        const sorted = matches
+          .map((m: InvoiceRow) => ({
+            p: parseFloat(String(m.price).replace(/\s/g, '').replace(/,/g, '.')) || 0,
+            s: m.supplier
+          }))
+          .filter(m => m.p > 0)
+          .sort((a, b) => a.p - b.p);
+        
+        if (sorted.length > 0) {
+          bestPrice = String(sorted[0].p);
+          bestSupplier = sorted[0].s;
+        }
+      }
+
+      const q = parseFloat(String(spec.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+      const p = parseFloat(bestPrice) || 0;
+      const s = q * p;
+
+      return {
+        id: genId(),
+        name: spec.name,
+        unit: spec.unit,
+        quantity: spec.quantity,
+        price: bestPrice,
+        sum: s > 0 ? s.toFixed(2) : '',
+        supplier: bestSupplier
+      };
+    });
+    setEstimateRows(newEstimate);
+  };
+  
+  const resetData = (stage: Stage) => {
+    switch(stage) {
+      case 'spec': setSpecRows([]); break;
+      case 'invoice': setInvoiceRows([]); break;
+      case 'estimate': setEstimateRows([]); break;
+      case 'request': setRequestRows([]); break;
+    }
+  };
+
+  const sortRows = (stage: Stage, field: string) => {
+    const sortFn = (a: any, b: any) => {
+      const valA = String(a[field as keyof typeof a] || '').toLowerCase();
+      const valB = String(b[field as keyof typeof b] || '').toLowerCase();
+      return valA.localeCompare(valB, 'ru');
+    };
+
+    switch(stage) {
+      case 'spec': setSpecRows((prev: SpecRow[]) => [...prev].sort(sortFn)); break;
+      case 'invoice': setInvoiceRows((prev: InvoiceRow[]) => [...prev].sort(sortFn)); break;
+      case 'estimate': setEstimateRows((prev: EstimateRow[]) => [...prev].sort(sortFn)); break;
+    }
+  };
+
+  const groupRows = (stage: Stage, field: string) => {
+    // Базовая заглушка: просто логируем, так как сложная группировка требует UI-состояния
+    console.log(`Grouping ${stage} by ${field}`);
+  };
+
+  const estimateTotal = React.useMemo(() => {
+    return estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.sum)) || 0), 0).toFixed(2);
+  }, [estimateRows]);
 
   return (
     <DataContext.Provider
@@ -261,6 +458,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
         filesMap,
         setFilesMap,
         handleFile,
+        pdfGeometry,
+        isMerged,
+        toggleMerge,
+        handleUnmerge,
+        generateEstimate,
+        estimateTotal,
+        resetData,
+        sortRows,
+        groupRows,
       }}
     >
       {children}

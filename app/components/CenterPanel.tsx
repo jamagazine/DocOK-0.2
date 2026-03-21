@@ -17,7 +17,8 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Stage, SpecRow, EstimateRow, UploadedFile } from '../types';
 import { FilesPanel } from './FilesPanel';
-import { useData, genId, emptyInvoiceRow, InvoiceRow } from '../context/DataContext';
+import { useData, genId, emptyInvoiceRow, InvoiceRow, SPEC_COLUMNS, emptySpecRow } from '../context/DataContext';
+import { ChevronDown, ChevronRight, Split } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -35,7 +36,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
   const [filesOpen, setFilesOpen] = React.useState(false);
   const [isDragging, setIsDragging] = React.useState(false);
 
-  const { uploadStatuses, invoiceRows } = useData();
+  const { uploadStatuses, invoiceRows, specRows, requestRows, estimateRows, setInvoiceRows, setSpecRows, setRequestRows, setEstimateRows } = useData();
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, { status: string; time: string }>);
 
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -76,6 +77,48 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
       // For now we just show a toast or feedback
     }
   };
+
+  const handleRowChange = React.useCallback(
+    (index: number, field: string, value: string) => {
+      if (currentStage === 'spec') {
+        const updated = [...specRows];
+        updated[index] = { ...updated[index], [field]: value };
+        setSpecRows(updated);
+      } else if (currentStage === 'invoice') {
+        const updated = [...invoiceRows];
+        updated[index] = { ...updated[index], [field]: value } as InvoiceRow;
+
+        // Расчеты для инвойса
+        const qty = parseFloat(String(field === 'quantity' ? value : updated[index].quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const price = parseFloat(String(field === 'price' ? value : updated[index].price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const discountStr = String(field === 'discount' ? value : updated[index].discount || '');
+        const isPercent = discountStr.includes('%');
+        let dVal = parseFloat(discountStr) || 0;
+        
+        let pad = price;
+        if (dVal > 0) {
+          pad = isPercent ? price * (1 - dVal / 100) : Math.max(0, price - dVal);
+        }
+        
+        updated[index].priceAfterDiscount = pad.toFixed(2);
+        updated[index].totalBeforeDiscount = (qty * price).toFixed(2);
+        updated[index].total = (qty * pad).toFixed(2);
+        
+        setInvoiceRows(updated);
+      } else if (currentStage === 'estimate') {
+        const updated = [...estimateRows];
+        updated[index] = { ...updated[index], [field]: value };
+        
+        if (field === 'price' || field === 'quantity') {
+          const q = parseFloat(String(updated[index].quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const p = parseFloat(String(updated[index].price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          updated[index].sum = (q * p).toFixed(2);
+        }
+        setEstimateRows(updated);
+      }
+    },
+    [currentStage, specRows, invoiceRows, estimateRows, setSpecRows, setInvoiceRows, setEstimateRows]
+  );
 
   return (
     <div className="flex flex-col flex-1 bg-slate-50 relative min-w-0 h-full">
@@ -171,10 +214,10 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
         )}
 
         <div className="min-w-max p-4 pb-0">
-           {currentStage === 'spec' && <SpecTable />}
+           {currentStage === 'spec' && <SpecTable handleRowChange={handleRowChange} />}
            {currentStage === 'request' && <RequestTable />}
-           {currentStage === 'invoice' && <InvoiceTable />}
-           {currentStage === 'estimate' && <EstimateTable />}
+           {currentStage === 'invoice' && <InvoiceTable handleRowChange={handleRowChange} />}
+           {currentStage === 'estimate' && <EstimateTable handleRowChange={handleRowChange} />}
         </div>
       </div>
 
@@ -183,7 +226,12 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
         {/* Left: Row Count */}
         <div className="flex items-center gap-4">
           <span className="text-slate-400 whitespace-nowrap">
-            Всего строк: <span className="font-semibold text-slate-700">{invoiceRows.length}</span>
+            Всего строк: <span className="font-semibold text-slate-700">
+              {currentStage === 'spec' ? specRows.length :
+               currentStage === 'request' ? requestRows.length :
+               currentStage === 'invoice' ? invoiceRows.length :
+               estimateRows.length}
+            </span>
           </span>
           <div className="w-px h-4 bg-slate-200" />
           <span className="text-slate-400 whitespace-nowrap">
@@ -240,31 +288,115 @@ function TableHeader({ columns }: { columns: string[] }) {
   );
 }
 
-function SpecTable() {
-  const { specRows } = useData();
-  const columns = ['№', 'Наименование', 'Марка', 'Код', 'Поставщик', 'Количество', 'Единица измерения', 'Масса', 'Примечание'];
+interface SpecTableProps {
+  handleRowChange: (index: number, field: string, value: string) => void;
+}
+
+function SpecTable({ handleRowChange }: SpecTableProps) {
+  const { specRows, setSpecRows, handleUnmerge } = useData();
+  const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
+
+  const toggleExpand = (id: string) => {
+    setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleDeleteRow = React.useCallback(
+    (index: number) => {
+      setSpecRows(specRows.filter((_, i) => i !== index));
+    },
+    [specRows, setSpecRows]
+  );
+
+  const handleAddRow = React.useCallback(() => {
+    setSpecRows([...specRows, emptySpecRow()]);
+  }, [specRows, setSpecRows]);
+
+  const columnNames = ['№', ...SPEC_COLUMNS.map(c => c.label)];
 
   return (
-    <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
-      <TableHeader columns={columns} />
-      {specRows.map((row, i) => (
-        <div key={row.id} className="grid border-b border-slate-200 hover:bg-indigo-50/50 text-sm text-slate-600 transition-colors" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(100px, 1fr))` }}>
-          <div className="p-3 border-r border-slate-100 font-medium text-slate-400">{i + 1}</div>
-          <div className="p-3 border-r border-slate-100 font-medium text-slate-900 truncate">{row.name}</div>
-          <div className="p-3 border-r border-slate-100 truncate">{row.brand}</div>
-          <div className="p-3 border-r border-slate-100 truncate">{row.code}</div>
-          <div className="p-3 border-r border-slate-100 truncate text-indigo-600">{row.supplier}</div>
-          <div className="p-3 border-r border-slate-100 text-right">{row.quantity}</div>
-          <div className="p-3 border-r border-slate-100 text-center">{row.unit}</div>
-          <div className="p-3 border-r border-slate-100 text-right">{row.mass}</div>
-          <div className="p-3 text-slate-400 truncate text-xs flex items-center">{row.note}</div>
-        </div>
-      ))}
-      {specRows.length === 0 && (
-        <div className="p-8 text-center text-slate-400 text-sm">
-          Нет добавленных позиций.
-        </div>
-      )}
+    <div className="flex flex-col gap-2">
+      <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden min-w-full">
+        <TableHeader columns={columnNames} />
+        {specRows.map((row, i) => {
+          const hasChildren = row.children && row.children.length > 1;
+          const isExpanded = expandedRows[row.id];
+
+          return (
+            <React.Fragment key={row.id}>
+              <div className={cn(
+                "grid border-b border-slate-200 hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors",
+                hasChildren && "bg-slate-50/50"
+              )} style={{ gridTemplateColumns: `80px repeat(${SPEC_COLUMNS.length}, minmax(150px, 1fr))` }}>
+                
+                <div className="p-3 border-r border-slate-100 flex items-center justify-between group">
+                  <div className="flex items-center gap-1">
+                    {hasChildren && (
+                      <button onClick={() => toggleExpand(row.id)} className="p-0.5 hover:bg-slate-200 rounded text-slate-500">
+                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </button>
+                    )}
+                    <span className="font-medium text-slate-400">{i + 1}</span>
+                  </div>
+                  <button onClick={() => handleDeleteRow(i)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+
+                {SPEC_COLUMNS.map(col => (
+                  <div key={col.key} className="p-3 border-r border-slate-100 flex items-center">
+                    <input 
+                      type="text"
+                      className={cn(
+                        "w-full bg-transparent outline-none",
+                        col.key === 'name' ? "font-medium text-slate-900" : "text-slate-600",
+                        (col.key === 'quantity' || col.key === 'mass') && "text-right"
+                      )}
+                      value={(row as any)[col.key] || ''}
+                      onChange={(e) => handleRowChange(i, col.key, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {hasChildren && isExpanded && (
+                <div className="bg-white border-b border-slate-100">
+                  {row.children?.map((child, childIdx) => (
+                    <div key={child.id} className="grid text-xs text-slate-500 border-b border-slate-50 hover:bg-slate-50 pl-8" style={{ gridTemplateColumns: `80px repeat(${SPEC_COLUMNS.length}, minmax(150px, 1fr))` }}>
+                      <div className="p-2 border-r border-slate-50 flex items-center justify-between group">
+                        <span>{i + 1}.{childIdx + 1}</span>
+                        <button 
+                          onClick={() => handleUnmerge(row.id, child.id)}
+                          className="opacity-0 group-hover:opacity-100 text-indigo-400 hover:text-indigo-600 transition-opacity p-0.5"
+                          title="Вынести из группы"
+                        >
+                          <Split size={12} />
+                        </button>
+                      </div>
+                      {SPEC_COLUMNS.map(col => (
+                        <div key={col.key} className="p-2 border-r border-slate-50 italic">
+                          {(child as any)[col.key]}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+        {specRows.length === 0 && (
+          <div className="p-8 text-center text-slate-400 text-sm">
+            Нет добавленных позиций. Загрузите файл или добавьте строку вручную.
+          </div>
+        )}
+      </div>
+      <button 
+        onClick={handleAddRow}
+        className="self-start flex items-center gap-2 px-4 py-2 mt-2 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200"
+      >
+        <Plus className="w-4 h-4" />
+        Добавить строку спецификации
+      </button>
     </div>
   );
 }
@@ -298,53 +430,14 @@ function RequestTable() {
   );
 }
 
-function InvoiceTable() {
+interface InvoiceTableProps {
+  handleRowChange: (index: number, field: string, value: string) => void;
+}
+
+function InvoiceTable({ handleRowChange }: InvoiceTableProps) {
   const { invoiceRows, setInvoiceRows } = useData();
   const columns = ['№', 'Артикул', 'Наименование', 'Количество', 'Единица измерения', 'НДС (%)', 'Цена (с НДС)', 'Скидка', 'Цена со скидкой', 'Сумма без скидки', 'Сумма (с НДС)'];
   
-  const handleRowChange = React.useCallback(
-    (index: number, key: string, value: string) => {
-      const updated = [...invoiceRows];
-      updated[index] = { ...updated[index], [key]: value };
-
-      // Очистка строк для расчетов
-      const qtyStr = String(key === 'quantity' ? value : updated[index].quantity || '').replace(/\s/g, '').replace(/,/g, '.');
-      const priceStr = String(key === 'price' ? value : updated[index].price || '').replace(/\s/g, '').replace(/,/g, '.');
-      const discountStr = String(key === 'discount' ? value : updated[index].discount || '').replace(/\s/g, '').replace(/,/g, '.');
-
-      const qty = parseFloat(qtyStr) || 0;
-      const price = parseFloat(priceStr) || 0;
-      
-      const isPercent = discountStr.includes('%');
-      let discountVal = parseFloat(discountStr) || 0;
-      
-      let priceAfterDist = price;
-      if (discountVal > 0) {
-        if (isPercent || discountVal <= 100) {
-          priceAfterDist = price * (1 - (discountVal / 100)); // Процент
-        } else {
-          priceAfterDist = Math.max(0, price - discountVal); // Абсолютная скидка
-        }
-      }
-
-      const totalBeforeDiscount = qty * price;
-      const total = qty * priceAfterDist;
-
-      if (totalBeforeDiscount > 0) {
-        updated[index].priceAfterDiscount = priceAfterDist.toFixed(2);
-        updated[index].totalBeforeDiscount = totalBeforeDiscount.toFixed(2);
-        updated[index].total = total.toFixed(2);
-      } else {
-        updated[index].priceAfterDiscount = price > 0 ? priceAfterDist.toFixed(2) : '';
-        updated[index].totalBeforeDiscount = '';
-        updated[index].total = '';
-      }
-
-      setInvoiceRows(updated);
-    },
-    [invoiceRows, setInvoiceRows]
-  );
-
   const handleAddRow = React.useCallback(() => {
     setInvoiceRows([...invoiceRows, emptyInvoiceRow()]);
   }, [invoiceRows, setInvoiceRows]);
@@ -485,40 +578,76 @@ function InvoiceTable() {
   );
 }
 
-function EstimateTable() {
+interface EstimateTableProps {
+  handleRowChange: (index: number, field: string, value: string) => void;
+}
+
+function EstimateTable({ handleRowChange }: EstimateTableProps) {
   const { estimateRows } = useData();
-  const columns = ['№', 'Вид', 'Наименование', 'Количество', 'Единица измерения', 'Себестоимость', 'Наценка (%)', 'Стоимость клиента'];
+  const columns = ['№', 'Наименование', 'Кол-во (спец)', 'Ед. изм', 'Цена (счёт)', 'Сумма', 'Поставщик'];
   
   return (
     <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
-      <TableHeader columns={columns} />
-      {estimateRows.map((row, i) => {
-        const isMaterial = row.type === 'material';
-        return (
-          <div key={row.id} className="grid border-b border-slate-200 hover:bg-indigo-50/50 text-sm text-slate-600 transition-colors" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(100px, 1fr))` }}>
-            <div className="p-3 border-r border-slate-100 font-medium text-slate-400">{i + 1}</div>
-            <div className="p-3 border-r border-slate-100 flex items-center">
-              <span className={cn(
-                "px-2 py-1 rounded text-[10px] font-bold uppercase",
-                isMaterial ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
-              )}>
-                {isMaterial ? 'Материал' : 'Работы'}
-              </span>
-            </div>
-            <div className="p-3 border-r border-slate-100 font-medium text-slate-900 truncate">{row.name}</div>
-            <div className="p-3 border-r border-slate-100 text-right">{row.quantity}</div>
-            <div className="p-3 border-r border-slate-100 text-center">{row.unit}</div>
-            <div className="p-3 border-r border-slate-100 text-right">{row.cost} ₽</div>
-            <div className="p-3 border-r border-slate-100 text-center font-medium text-emerald-600">+{row.markup}%</div>
-            <div className="p-3 text-right font-bold text-slate-900 bg-slate-50">{row.clientPrice} ₽</div>
+      <div className="grid bg-slate-50 border-b border-slate-200 divide-x divide-slate-200" style={{ gridTemplateColumns: '50px 1.5fr 100px 80px 120px 120px 1fr' }}>
+        {columns.map((col, idx) => (
+          <div key={idx} className="p-3 text-xs font-bold text-slate-500 uppercase flex items-center justify-center text-center">
+            {col}
           </div>
-        );
-      })}
-      {estimateRows.length === 0 && (
-        <div className="p-8 text-center text-slate-400 text-sm">
-          Нет добавленных позиций для сметы.
-        </div>
-      )}
+        ))}
+      </div>
+      <div className="divide-y divide-slate-100">
+        {estimateRows.map((row, i) => (
+          <div key={row.id} className="grid hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors divide-x divide-slate-100" style={{ gridTemplateColumns: '50px 1.5fr 100px 80px 120px 120px 1fr' }}>
+            <div className="p-3 flex items-center justify-center font-medium text-slate-400">{i + 1}</div>
+            
+            <div className="p-3 flex items-center font-medium text-slate-800">
+              {row.name}
+            </div>
+            
+            <div className="p-3 flex items-center justify-center">
+              <input 
+                type="text"
+                className="w-full bg-transparent text-center outline-none"
+                value={row.quantity}
+                onChange={(e) => handleRowChange(i, 'quantity', e.target.value)}
+              />
+            </div>
+            
+            <div className="p-3 flex items-center justify-center text-slate-500 italic">
+              {row.unit}
+            </div>
+            
+            <div className="p-3 flex items-center justify-end font-semibold text-blue-600">
+               <input 
+                 type="text"
+                 className="w-full bg-transparent text-right outline-none font-semibold text-blue-600"
+                 value={row.price}
+                 onChange={(e) => handleRowChange(i, 'price', e.target.value)}
+                 placeholder="---"
+               />
+            </div>
+            
+            <div className="p-3 flex items-center justify-end font-bold text-slate-900">
+              {row.sum ? `${row.sum} ₽` : ''}
+            </div>
+            
+            <div className="p-3 flex items-center text-xs text-slate-500 truncate">
+               <input 
+                 type="text"
+                 className="w-full bg-transparent outline-none"
+                 value={row.supplier}
+                 onChange={(e) => handleRowChange(i, 'supplier', e.target.value)}
+                 placeholder="Поставщик..."
+               />
+            </div>
+          </div>
+        ))}
+        {estimateRows.length === 0 && (
+          <div className="p-8 text-center text-slate-400 text-sm italic">
+            Начните со Спецификаций и Счетов, чтобы сформировать смету.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -24,7 +24,13 @@ function AppContent() {
     }
   };
 
-  const { invoiceRows, filesMap, handleFile, uploadStatuses } = useData();
+  const { invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate } = useData();
+  
+  useEffect(() => {
+    if (currentStage === 'estimate') {
+      generateEstimate();
+    }
+  }, [currentStage, specRows, invoiceRows, generateEstimate]);
 
   const fileEntries = Object.entries(uploadStatuses || {});
   const filesList: UploadedFile[] = fileEntries.map(([filename, data]) => {
@@ -73,7 +79,7 @@ function AppContent() {
 
       if (validFiles.length > 0 && handleFileRef.current) {
         for (const file of validFiles) {
-          await handleFileRef.current(file, false);
+          await handleFileRef.current(file, currentStage, false);
         }
       }
     };
