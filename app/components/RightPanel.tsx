@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { 
   Menu, 
   Settings2, 
@@ -17,6 +17,7 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Stage, RightPanelTab } from '../types';
+import { useData } from '../context/DataContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -33,6 +34,14 @@ interface RightPanelProps {
 
 export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasNextStage, canProceed }: RightPanelProps) {
   const [activeTab, setActiveTab] = React.useState<RightPanelTab>('tools');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { handleFile } = useData();
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) handleFile(f, false);
+    e.target.value = '';
+  };
 
   const renderTabIcon = (tab: RightPanelTab) => {
     switch (tab) {
@@ -55,6 +64,8 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         expanded ? "w-72" : "w-16"
       )}
     >
+      <input type="file" className="hidden" ref={fileInputRef} accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg" onChange={handleFileChange} />
+
       {/* Header - Attic */}
       <div className={cn(
         "p-4 border-b border-slate-200 flex",
@@ -93,7 +104,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
             {expanded ? (
               <>
                 <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Действия</div>
-                <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
                   <UploadCloud className="w-4 h-4 text-slate-500" /> Импорт данных
                 </button>
                 <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
@@ -113,7 +126,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
               </>
             ) : (
               <div className="flex flex-col gap-4" title="Инструменты">
-                 <UploadCloud className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" />
+                 <UploadCloud className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={() => fileInputRef.current?.click()} />
                  <Download className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" />
                  <RotateCcw className="w-6 h-6 text-red-500 hover:text-red-700 cursor-pointer" />
                  <div className="w-full h-px bg-slate-200 my-2" />

@@ -45,6 +45,7 @@ pids
 *.pid
 *.seed
 *.pid.lock
+_legacy/
 
 # --- Логи и отладка ---
 logs
