@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Menu, 
   Home, 
@@ -48,9 +48,28 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
     estimateRows, 
     requestRows,
     completedStages,
-    uploadStatuses
+    uploadStatuses,
+    estimateTotal
   } = useData();
   const [showSettings, setShowSettings] = useState(false);
+  const [isServerAvailable, setIsServerAvailable] = useState(true);
+
+  const isApiConfigured = !!yandexConfig.apiKey && !!yandexConfig.catalogId;
+
+  useEffect(() => {
+    const checkServer = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/health'); // Use GET instead of HEAD
+        setIsServerAvailable(res.ok);
+      } catch (e) {
+        setIsServerAvailable(false);
+      }
+    };
+    
+    checkServer();
+    const interval = setInterval(checkServer, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
 
   const handleConfigChange = (key: 'apiKey' | 'catalogId', value: string) => {
     saveYandexConfig({
@@ -178,7 +197,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
             "px-4 py-2 flex items-center gap-3 text-slate-600 group cursor-help",
             !expanded && "justify-center"
           )}
-          title="Себестоимость проекта: 1 250 000 ₽"
+          title={`Себестоимость проекта: ${estimateTotal.cost} ₽`}
         >
           <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0 group-hover:bg-slate-200 transition-colors">
             <DollarSign className="w-4 h-4 text-slate-500" />
@@ -186,7 +205,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
           {expanded && (
             <div className="flex flex-col text-sm overflow-hidden">
               <span className="text-slate-500 text-xs">Себестоимость</span>
-              <span className="font-semibold text-slate-900 truncate">1 250 000 ₽</span>
+              <span className="font-semibold text-slate-900 truncate">{estimateTotal.cost} ₽</span>
             </div>
           )}
         </div>
@@ -195,7 +214,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
             "px-4 py-2 flex items-center gap-3 text-slate-600 group cursor-help",
             !expanded && "justify-center"
           )}
-          title="Стоимость клиента: 1 500 000 ₽"
+          title={`Стоимость клиента: ${estimateTotal.client} ₽`}
         >
           <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0 group-hover:bg-slate-200 transition-colors">
             <UserCheck className="w-4 h-4 text-slate-500" />
@@ -203,7 +222,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
           {expanded && (
              <div className="flex flex-col text-sm overflow-hidden">
                <span className="text-slate-500 text-xs">Стоимость клиента</span>
-               <span className="font-semibold text-slate-900 truncate">1 500 000 ₽</span>
+               <span className="font-semibold text-slate-900 truncate">{estimateTotal.client} ₽</span>
              </div>
           )}
         </div>
@@ -211,7 +230,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
 
       {/* Settings Panel */}
       <AnimatePresence>
-        {showSettings && (
+        {(showSettings && expanded) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -263,18 +282,25 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
         
         {/* API Settings Button */}
         <button 
-          onClick={() => setShowSettings(!showSettings)}
+          onClick={() => {
+            if (!expanded) {
+              onToggle();
+              setShowSettings(true);
+            } else {
+              setShowSettings(!showSettings);
+            }
+          }}
           className={cn(
-            "flex items-center justify-center transition-colors rounded-lg relative",
-            showSettings ? "bg-indigo-100 text-indigo-600" : "text-slate-500 hover:text-indigo-600 hover:bg-slate-50",
+            "flex items-center justify-center transition-all duration-200 rounded-lg relative",
+            showSettings ? "bg-indigo-100 text-indigo-600 shadow-inner" : "text-slate-500 hover:bg-slate-50",
             expanded ? "w-9 h-9 ml-2 shrink-0" : "w-12 h-12"
           )}
-          title="Настройки API"
+          title={!isServerAvailable ? "Сервер недоступен" : (isApiConfigured ? "API активно" : "Настройте API (Cloud Settings)")}
         >
-          <Cloud className="size-5" />
-          {!!yandexConfig.apiKey && !!yandexConfig.catalogId && (
-            <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-500 border-2 border-white rounded-full shadow-sm" />
-          )}
+          <Cloud className={cn(
+            "size-5 transition-colors",
+            !isServerAvailable ? "text-rose-500 animate-pulse" : (isApiConfigured ? "text-emerald-500 group-hover:text-emerald-600" : "text-slate-500 group-hover:text-indigo-600")
+          )} />
         </button>
       </div>
     </div>

@@ -620,20 +620,21 @@ interface EstimateTableProps {
 
 function EstimateTable({ handleRowChange }: EstimateTableProps) {
   const { estimateRows, searchQuery } = useData();
-  const columns = ['№', 'Наименование', 'Кол-во (спец)', 'Ед. изм', 'Цена (счёт)', 'Сумма', 'Поставщик'];
+  const columns = ['№', 'Вид работы', 'Наименование', 'Ед. изм.', 'Количество', 'Себестоимость', 'Цена заказчика'];
   
   const filteredRows = React.useMemo(() => {
     if (!searchQuery) return estimateRows;
     const q = searchQuery.toLowerCase();
     return estimateRows.filter(r => 
       (r.name?.toLowerCase().includes(q)) || 
+      (r.workType?.toLowerCase().includes(q)) || 
       (r.supplier?.toLowerCase().includes(q))
     );
   }, [estimateRows, searchQuery]);
 
   return (
     <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
-      <div className="grid bg-slate-50 border-b border-slate-200 divide-x divide-slate-200" style={{ gridTemplateColumns: '50px 1.5fr 100px 80px 120px 120px 1fr' }}>
+      <div className="grid bg-slate-50 border-b border-slate-200 divide-x divide-slate-200" style={{ gridTemplateColumns: '50px 180px 1.5fr 80px 100px 120px 120px' }}>
         {columns.map((col, idx) => (
           <div key={idx} className="p-3 text-xs font-bold text-slate-500 uppercase flex items-center justify-center text-center">
             {col}
@@ -644,48 +645,68 @@ function EstimateTable({ handleRowChange }: EstimateTableProps) {
         {filteredRows.map((row, idxRender) => {
           const i = estimateRows.findIndex(r => r.id === row.id);
           return (
-          <div key={row.id} className="grid hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors divide-x divide-slate-100" style={{ gridTemplateColumns: '50px 1.5fr 100px 80px 120px 120px 1fr' }}>
+          <div key={row.id} className="grid hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors divide-x divide-slate-100" style={{ gridTemplateColumns: '50px 180px 1.5fr 80px 100px 120px 120px' }}>
             <div className="p-3 flex items-center justify-center font-medium text-slate-400">{idxRender + 1}</div>
             
+            <div className="p-3 flex items-center">
+              <input 
+                 type="text"
+                 className="w-full bg-transparent outline-none text-slate-700"
+                 value={row.workType || ''}
+                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'workType', e.target.value)}
+                 placeholder="Вид работы..."
+               />
+            </div>
+
             <div className="p-3 flex items-center font-medium text-slate-800">
-              {row.name}
+              <input 
+                 type="text"
+                 className="w-full bg-transparent outline-none font-medium text-slate-800"
+                 value={row.name || ''}
+                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'name', e.target.value)}
+                 placeholder="Наименование..."
+               />
             </div>
             
+            <div className="p-3 flex items-center justify-center text-slate-500 italic">
+               <input 
+                 type="text"
+                 className="w-full bg-transparent text-center outline-none"
+                 value={row.unit || ''}
+                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'unit', e.target.value)}
+                 placeholder="ед."
+               />
+            </div>
+
             <div className="p-3 flex items-center justify-center">
               <input 
                 type="text"
                 className="w-full bg-transparent text-center outline-none"
                 value={row.quantity}
-                onChange={(e) => handleRowChange(i, 'quantity', e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'quantity', e.target.value)}
               />
             </div>
             
-            <div className="p-3 flex items-center justify-center text-slate-500 italic">
-              {row.unit}
-            </div>
-            
-            <div className="p-3 flex items-center justify-end font-semibold text-blue-600">
+            <div className="p-3 flex flex-col items-end justify-center">
                <input 
                  type="text"
                  className="w-full bg-transparent text-right outline-none font-semibold text-blue-600"
-                 value={row.price}
-                 onChange={(e) => handleRowChange(i, 'price', e.target.value)}
-                 placeholder="---"
+                 value={row.costPrice}
+                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'costPrice', e.target.value)}
+                 placeholder="0.00"
                />
+               <span className="text-[10px] text-slate-400 font-bold">{row.costSum} ₽</span>
             </div>
             
-            <div className="p-3 flex items-center justify-end font-bold text-slate-900">
-              {row.sum ? `${row.sum} ₽` : ''}
-            </div>
-            
-            <div className="p-3 flex items-center text-xs text-slate-500 truncate">
+            <div className="p-3 flex flex-col items-end justify-center bg-indigo-50/20">
                <input 
                  type="text"
-                 className="w-full bg-transparent outline-none"
-                 value={row.supplier}
-                 onChange={(e) => handleRowChange(i, 'supplier', e.target.value)}
-                 placeholder="Поставщик..."
+                 className="w-full bg-transparent text-right outline-none font-bold text-emerald-600"
+                 value={row.clientPrice}
+                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'clientPrice', e.target.value)}
+                 placeholder="0.00"
                />
+               <span className="text-[10px] text-emerald-500/70 font-bold">{row.clientSum} ₽</span>
             </div>
           </div>
           );

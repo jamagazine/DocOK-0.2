@@ -96,22 +96,28 @@ export function emptySpecRow(): SpecRow {
 export function emptyEstimateRow(): EstimateRow {
   return {
     id: genId(),
+    workType: '',
     name: '',
     unit: 'шт',
     quantity: '1',
-    price: '',
-    sum: '',
+    costPrice: '',
+    clientPrice: '',
+    costSum: '',
+    clientSum: '',
     supplier: '',
   };
 }
 
 export interface EstimateRow {
   id: string;
+  workType: string;
   name: string;
   unit: string;
   quantity: string;
-  price: string;
-  sum: string;
+  costPrice: string;
+  clientPrice: string;
+  costSum: string;
+  clientSum: string;
   supplier: string;
 }
 
@@ -139,7 +145,7 @@ interface DataContextType {
   isMerged: boolean;
   handleUnmerge: (parentId: string, childId: string) => void;
   generateEstimate: () => void;
-  estimateTotal: string;
+  estimateTotal: { cost: string; client: string };
   resetData: (stage: Stage) => void;
   sortRows: (stage: Stage, field: string) => void;
   groupRows: (stage: Stage, field: string) => void;
@@ -467,16 +473,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
 
       const q = parseFloat(String(spec.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-      const p = parseFloat(bestPrice) || 0;
-      const s = q * p;
+      const cp = parseFloat(bestPrice) || 0;
+      // По умолчанию наценка 20% для цены заказчика, если есть цена закупки
+      const clp = cp > 0 ? cp * 1.2 : 0;
+      
+      const cs = q * cp;
+      const cls = q * clp;
 
       return {
         id: genId(),
+        workType: 'Оборудование и материалы', // Значение по умолчанию
         name: spec.name,
         unit: spec.unit,
         quantity: spec.quantity,
-        price: bestPrice,
-        sum: s > 0 ? s.toFixed(2) : '',
+        costPrice: bestPrice,
+        clientPrice: clp > 0 ? clp.toFixed(2) : '',
+        costSum: cs > 0 ? cs.toFixed(2) : '',
+        clientSum: cls > 0 ? cls.toFixed(2) : '',
         supplier: bestSupplier
       };
     });
@@ -512,7 +525,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const estimateTotal = React.useMemo(() => {
-    return estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.sum)) || 0), 0).toFixed(2);
+    const cost = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.costSum)) || 0), 0);
+    const client = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.clientSum)) || 0), 0);
+    return {
+      cost: cost.toLocaleString('ru-RU'),
+      client: client.toLocaleString('ru-RU')
+    };
   }, [estimateRows]);
 
   const completeStage = (stageId: string) => {

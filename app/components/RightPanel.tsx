@@ -59,11 +59,11 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         String(i + 1), r.name || '', r.article || '', String(r.quantity || ''), String(r.price || ''), String(r.total || ''), r.supplier || ''
       ]);
     } else if (currentStage === 'estimate') {
-      headers = ['№', 'Наименование', 'Кол-во', 'Ед. изм.', 'Цена', 'Сумма', 'Поставщик'];
+      headers = ['№', 'Вид работы', 'Наименование', 'Ед. изм.', 'Количество', 'Себестоимость', 'Цена заказчика'];
       data = estimateRows.map((r: EstimateRow, i: number) => [
-        String(i + 1), r.name || '', String(r.quantity || ''), r.unit || '', String(r.price || ''), String(r.sum || ''), r.supplier || ''
+        String(i + 1), r.workType || '', r.name || '', r.unit || '', String(r.quantity || ''), String(r.costPrice || ''), String(r.clientPrice || '')
       ]);
-      data.push(['', 'ИТОГО', '', '', '', estimateTotal, '']);
+      data.push(['', '', 'ИТОГО', '', '', estimateTotal.cost, estimateTotal.client]);
     }
 
     if (headers.length > 0) {
