@@ -1,11 +1,12 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { toast } from 'sonner';
 import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
 import { Stage } from '../types';
 
 export interface YandexConfig {
   apiKey: string;
-  folderId: string;
+  catalogId: string;
 }
 export function genId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -142,20 +143,50 @@ interface DataContextType {
   resetData: (stage: Stage) => void;
   sortRows: (stage: Stage, field: string) => void;
   groupRows: (stage: Stage, field: string) => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [projectName, setProjectName] = useState('Новый проект #1');
-  const [specRows, setSpecRows] = useState<SpecRow[]>([]);
-  const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>([]);
-  const [estimateRows, setEstimateRows] = useState<EstimateRow[]>([]);
-  const [requestRows, setRequestRows] = useState<SpecRow[]>([]);
+  
+  const [specRows, setSpecRows] = useState<SpecRow[]>(() => {
+    try { const saved = localStorage.getItem('docok_specRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    return [];
+  });
+  const [requestRows, setRequestRows] = useState<RequestRow[]>(() => {
+    try { const saved = localStorage.getItem('docok_requestRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    return [];
+  });
+  const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>(() => {
+    try { const saved = localStorage.getItem('docok_invoiceRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    return [];
+  });
+  const [estimateRows, setEstimateRows] = useState<EstimateRow[]>(() => {
+    try { const saved = localStorage.getItem('docok_estimateRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    return [];
+  });
+
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => { localStorage.setItem('docok_specRows', JSON.stringify(specRows)); }, [specRows]);
+  useEffect(() => { localStorage.setItem('docok_requestRows', JSON.stringify(requestRows)); }, [requestRows]);
+  useEffect(() => { localStorage.setItem('docok_invoiceRows', JSON.stringify(invoiceRows)); }, [invoiceRows]);
+  useEffect(() => { localStorage.setItem('docok_estimateRows', JSON.stringify(estimateRows)); }, [estimateRows]);
+
   const [configKeys, setConfigKeys] = useState<Record<string, string>>({});
   const [yandexConfig, setYandexConfig] = useState<YandexConfig>(() => {
     const saved = localStorage.getItem('docok_yandex_config');
-    return saved ? JSON.parse(saved) : { apiKey: '', folderId: '' };
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        apiKey: parsed.apiKey || '',
+        catalogId: parsed.catalogId || parsed.folderId || ''
+      };
+    }
+    return { apiKey: '', catalogId: '' };
   });
   const [uploadStatuses, setUploadStatuses] = useState<Record<string, { status: string; time: string }>>({});
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
@@ -175,6 +206,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
     const useAi = forceAI || isPdfOrImage;
+
+    const toastId = toast.loading(`Обработка файла ${file.name}...`);
 
     if (!useAi) {
       setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Локальный парсинг...', time: currentTime } }));
@@ -250,13 +283,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
         
         setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+        toast.success(`Файл ${file.name} успешно прочитан локально`, { id: toastId });
       } catch (e: any) {
         setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
+        toast.error(`Ошибка чтения: ${e.message}`, { id: toastId });
       }
       return; 
     }
 
     if (useAi) {
+      if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
+        toast.error('API Ключ или ID каталога не настроены. Проверьте настройки в левой панели.', { id: toastId });
+        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка настроек', time: currentTime } }));
+        return;
+      }
+
       setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Конвертация и Анализ ИИ...', time: currentTime } }));
       const formData = new FormData();
       formData.append('file', file);
@@ -265,43 +306,71 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const res = await fetch('http://localhost:8000/api/process-invoice', {
           method: 'POST',
           body: formData,
+          headers: {
+            'x-api-key': yandexConfig.apiKey,
+            'x-folder-id': yandexConfig.catalogId
+          }
         });
 
         if (!res.ok) {
-          throw new Error(`Ошибка сервера ${res.status}`);
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Ошибка сервера ${res.status}`);
         }
 
         const data = await res.json();
         
         const strToNumOrBlank = (v: any) => {
-           if (!v) return '';
+           if (v === undefined || v === null || v === '') return '';
            const parsed = parseFloat(String(v).replace(/,/g, '.').replace(/\s/g, ''));
            return isNaN(parsed) ? String(v) : String(parsed);
         };
 
-        const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
-           const r = emptyInvoiceRow();
-           r.documentName = data.document?.filename || data.document?.name || file.name;
-           r.isUncertain = Boolean(item.isUncertain);
-           r.article = item.article || '';
-           r.name = item.name || '';
-           r.supplier = data.document?.metadata?.vendor || '';
-           r.quantity = strToNumOrBlank(item.quantity) || '1';
-           r.unit = item.unit || 'шт';
-           r.price = strToNumOrBlank(item.price) || '0';
-           r.total = strToNumOrBlank(item.total) || '0';
-           return r;
-        });
+        if (stage === 'spec') {
+          const aiRows: SpecRow[] = (data.items || []).map((item: any) => ({
+            id: genId(),
+            name: item.name || '',
+            brand: '', // GPT doesn't specifically extract brand usually, or it's in name
+            code: item.article || '',
+            supplier: data.document?.metadata?.vendor || '',
+            unit: item.unit || 'шт',
+            quantity: strToNumOrBlank(item.quantity) || '1',
+            mass: '0',
+            note: item.isUncertain ? 'Требует проверки' : '',
+            originalRowsIds: [],
+            children: []
+          }));
 
-        setInvoiceRows((prev: InvoiceRow[]) => {
-          const filtered = prev.filter((r: InvoiceRow) => r.documentName !== file.name);
-          return [...filtered, ...aiRows];
-        });
+          setSpecRows(aiRows);
+          setIsMerged(false);
+          setBackupSpecRows([]);
+        } else {
+          const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
+            const r = emptyInvoiceRow();
+            r.documentName = data.document?.filename || data.document?.name || file.name;
+            r.isUncertain = Boolean(item.isUncertain);
+            r.article = item.article || '';
+            r.name = item.name || '';
+            r.supplier = data.document?.metadata?.vendor || '';
+            r.quantity = strToNumOrBlank(item.quantity) || '1';
+            r.unit = item.unit || 'шт';
+            r.price = strToNumOrBlank(item.price) || '0';
+            r.total = strToNumOrBlank(item.total) || '0';
+            return r;
+          });
+
+          setInvoiceRows((prev: InvoiceRow[]) => {
+            const filtered = prev.filter((r: InvoiceRow) => r.documentName !== file.name);
+            return [...filtered, ...aiRows];
+          });
+        }
         
         setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+        toast.success(`Файл ${file.name} успешно обработан ИИ`, { id: toastId });
       } catch (e: any) {
+        console.error('AI Processing error:', e);
         setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
+        toast.error(`Ошибка обработки: ${e.message}`, { id: toastId });
       }
     }
   };
@@ -467,6 +536,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         resetData,
         sortRows,
         groupRows,
+        searchQuery,
+        setSearchQuery
       }}
     >
       {children}

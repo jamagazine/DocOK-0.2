@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
@@ -235,8 +235,17 @@ def calculate_uncertainty(struct: dict, global_low_conf: bool):
 
 
 @app.post("/api/process-invoice")
-async def process_invoice(file: UploadFile = File(...)):
+async def process_invoice(
+    file: UploadFile = File(...),
+    x_api_key: str | None = Header(None),
+    x_folder_id: str | None = Header(None)
+):
     api_key, folder_id = get_yandex_keys()
+    
+    # Override with provided keys if present
+    if x_api_key: api_key = x_api_key
+    if x_folder_id: folder_id = x_folder_id
+
     if not api_key or not folder_id:
         raise HTTPException(status_code=400, detail="YANDEX API keys not configured. Please save keys in settings.")
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Toaster } from './components/ui/sonner';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { CenterPanel } from './components/CenterPanel';
@@ -11,7 +12,17 @@ function AppContent() {
   const [leftExpanded, setLeftExpanded] = useState(true);
   const [rightExpanded, setRightExpanded] = useState(true);
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
-  const [projectName, setProjectName] = useState('Проект Торговый Центр "Галактика"');
+  const [projectName, setProjectName] = useState(() => {
+    try {
+      const saved = localStorage.getItem('docok_projectName');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return 'Проект Торговый Центр "Галактика"';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('docok_projectName', JSON.stringify(projectName));
+  }, [projectName]);
 
   const stageOrder: Stage[] = ['spec', 'request', 'invoice', 'estimate'];
   const currentStageIndex = stageOrder.indexOf(currentStage);
@@ -143,9 +154,12 @@ function AppContent() {
   );
 }
 
+
+
 export default function App() {
   return (
     <DataProvider>
+      <Toaster position="top-right" richColors />
       <AppContent />
     </DataProvider>
   );

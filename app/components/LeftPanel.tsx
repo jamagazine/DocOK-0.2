@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Menu, 
   Home, 
@@ -8,11 +8,16 @@ import {
   Circle,
   Briefcase,
   DollarSign,
-  UserCheck
+  UserCheck,
+  Cloud
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Stage, StageInfo } from '../types';
+import { useData } from '../context/DataContext';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -33,6 +38,15 @@ const STAGES: StageInfo[] = [
 ];
 
 export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: LeftPanelProps) {
+  const { yandexConfig, saveYandexConfig } = useData();
+  const [showSettings, setShowSettings] = useState(false);
+
+  const handleConfigChange = (key: 'apiKey' | 'catalogId', value: string) => {
+    saveYandexConfig({
+      ...yandexConfig,
+      [key]: value
+    });
+  };
   const renderStatusIcon = (status: string) => {
     switch (status) {
       case 'done': return <CheckCircle2 className="w-5 h-5 text-emerald-500" />;
@@ -155,9 +169,48 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
         </div>
       </div>
 
+      {/* Settings Panel */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="border-t border-slate-200 bg-slate-50/50 overflow-hidden relative z-50 shadow-inner"
+          >
+            <div className={cn("p-3 flex flex-col gap-2", !expanded && "items-center px-2")}>
+              <div className="flex flex-col w-full">
+                {expanded && <Label htmlFor="api-key" className="text-[9px] text-slate-500 uppercase font-bold px-1 mb-1">API Ключ</Label>}
+                <Input 
+                  id="api-key"
+                  type="password" 
+                  placeholder={expanded ? "Введите ключ..." : "Ключ"}
+                  value={yandexConfig.apiKey}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleConfigChange('apiKey', e.target.value)}
+                  className={cn("h-7 text-xs bg-white focus-visible:ring-1 focus-visible:ring-indigo-300", !expanded && "px-1 text-center")}
+                  title="API Ключ"
+                />
+              </div>
+              <div className="flex flex-col w-full">
+                {expanded && <Label htmlFor="catalog-id" className="text-[9px] text-slate-500 uppercase font-bold px-1 mb-1">ID каталога</Label>}
+                <Input 
+                  id="catalog-id"
+                  placeholder={expanded ? "Введите ID..." : "ID"}
+                  value={yandexConfig.catalogId}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleConfigChange('catalogId', e.target.value)}
+                  className={cn("h-7 text-xs bg-white focus-visible:ring-1 focus-visible:ring-indigo-300", !expanded && "px-1 text-center")}
+                  title="ID каталога"
+                />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Footer - Basement */}
       <div className={cn(
-        "border-t border-slate-200 flex",
+        "border-t border-slate-200 flex shrink-0 relative z-50 bg-white",
         expanded ? "flex-row p-4 items-center" : "flex-col-reverse items-center py-4 gap-4"
       )}>
         {/* Logo */}
@@ -168,15 +221,20 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
           {expanded ? "DocOK" : "DOK"}
         </div>
         
-        {/* API Auth Button */}
+        {/* API Settings Button */}
         <button 
+          onClick={() => setShowSettings(!showSettings)}
           className={cn(
-            "flex items-center justify-center text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors rounded-lg",
+            "flex items-center justify-center transition-colors rounded-lg relative",
+            showSettings ? "bg-indigo-100 text-indigo-600" : "text-slate-500 hover:text-indigo-600 hover:bg-slate-50",
             expanded ? "w-10 h-10 ml-2 shrink-0" : "w-12 h-12"
           )}
-          title="Авторизация API"
+          title="Настройки API"
         >
-          <Briefcase className="w-5 h-5" />
+          <Cloud className="w-5 h-5" />
+          {!!yandexConfig.apiKey && !!yandexConfig.catalogId && (
+            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full shadow-sm" />
+          )}
         </button>
       </div>
     </div>

@@ -36,7 +36,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
   const [filesOpen, setFilesOpen] = React.useState(false);
   const [isDragging, setIsDragging] = React.useState(false);
 
-  const { uploadStatuses, invoiceRows, specRows, requestRows, estimateRows, setInvoiceRows, setSpecRows, setRequestRows, setEstimateRows } = useData();
+  const { uploadStatuses, invoiceRows, specRows, requestRows, estimateRows, setInvoiceRows, setSpecRows, setRequestRows, setEstimateRows, searchQuery, setSearchQuery } = useData();
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, { status: string; time: string }>);
 
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -155,6 +155,8 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Глобальный поиск по разделам..."
               className="w-full bg-slate-100 hover:bg-slate-200 focus:bg-white border border-transparent focus:border-indigo-300 rounded-full pl-10 pr-4 py-2 text-sm text-slate-700 outline-none transition-all shadow-sm focus:shadow-md"
             />
@@ -293,12 +295,22 @@ interface SpecTableProps {
 }
 
 function SpecTable({ handleRowChange }: SpecTableProps) {
-  const { specRows, setSpecRows, handleUnmerge } = useData();
+  const { specRows, setSpecRows, handleUnmerge, searchQuery } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
 
   const toggleExpand = (id: string) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   };
+
+  const filteredRows = React.useMemo(() => {
+    if (!searchQuery) return specRows;
+    const q = searchQuery.toLowerCase();
+    return specRows.filter(r => 
+      (r.name?.toLowerCase().includes(q)) || 
+      (r.code?.toLowerCase().includes(q)) || 
+      (r.supplier?.toLowerCase().includes(q))
+    );
+  }, [specRows, searchQuery]);
 
   const handleDeleteRow = React.useCallback(
     (index: number) => {
@@ -317,7 +329,8 @@ function SpecTable({ handleRowChange }: SpecTableProps) {
     <div className="flex flex-col gap-2">
       <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden min-w-full">
         <TableHeader columns={columnNames} />
-        {specRows.map((row, i) => {
+        {filteredRows.map((row, idxRender) => {
+          const i = specRows.findIndex(r => r.id === row.id);
           const hasChildren = row.children && row.children.length > 1;
           const isExpanded = expandedRows[row.id];
 
@@ -384,7 +397,7 @@ function SpecTable({ handleRowChange }: SpecTableProps) {
             </React.Fragment>
           );
         })}
-        {specRows.length === 0 && (
+        {filteredRows.length === 0 && (
           <div className="p-8 text-center text-slate-400 text-sm">
             Нет добавленных позиций. Загрузите файл или добавьте строку вручную.
           </div>
@@ -402,13 +415,23 @@ function SpecTable({ handleRowChange }: SpecTableProps) {
 }
 
 function RequestTable() {
-  const { requestRows } = useData();
+  const { requestRows, searchQuery } = useData();
   const columns = ['№', 'Наименование', 'Марка', 'Код', 'Поставщик', 'Количество', 'Единица измерения', 'Масса', 'Примечание'];
   
+  const filteredRows = React.useMemo(() => {
+    if (!searchQuery) return requestRows;
+    const q = searchQuery.toLowerCase();
+    return requestRows.filter(r => 
+      (r.name?.toLowerCase().includes(q)) || 
+      (r.code?.toLowerCase().includes(q)) || 
+      (r.supplier?.toLowerCase().includes(q))
+    );
+  }, [requestRows, searchQuery]);
+
   return (
     <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
       <TableHeader columns={columns} />
-      {requestRows.map((row, i) => (
+      {filteredRows.map((row, i) => (
         <div key={row.id} className="grid border-b border-slate-200 hover:bg-amber-50/50 text-sm text-slate-600 transition-colors" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(100px, 1fr))` }}>
           <div className="p-3 border-r border-slate-100 font-medium text-slate-400">{i + 1}</div>
           <div className="p-3 border-r border-slate-100 font-medium text-slate-900 truncate">{row.name}</div>
@@ -421,7 +444,7 @@ function RequestTable() {
           <div className="p-3 text-slate-400 truncate text-xs flex items-center">{row.note}</div>
         </div>
       ))}
-      {requestRows.length === 0 && (
+      {filteredRows.length === 0 && (
         <div className="p-8 text-center text-slate-400 text-sm">
           Нет добавленных запросов.
         </div>
@@ -435,9 +458,19 @@ interface InvoiceTableProps {
 }
 
 function InvoiceTable({ handleRowChange }: InvoiceTableProps) {
-  const { invoiceRows, setInvoiceRows } = useData();
+  const { invoiceRows, setInvoiceRows, searchQuery } = useData();
   const columns = ['№', 'Артикул', 'Наименование', 'Количество', 'Единица измерения', 'НДС (%)', 'Цена (с НДС)', 'Скидка', 'Цена со скидкой', 'Сумма без скидки', 'Сумма (с НДС)'];
   
+  const filteredRows = React.useMemo(() => {
+    if (!searchQuery) return invoiceRows;
+    const q = searchQuery.toLowerCase();
+    return invoiceRows.filter((r: InvoiceRow) => 
+      (r.name?.toLowerCase().includes(q)) || 
+      (r.article?.toLowerCase().includes(q)) || 
+      (r.supplier?.toLowerCase().includes(q))
+    );
+  }, [invoiceRows, searchQuery]);
+
   const handleAddRow = React.useCallback(() => {
     setInvoiceRows([...invoiceRows, emptyInvoiceRow()]);
   }, [invoiceRows, setInvoiceRows]);
@@ -458,8 +491,10 @@ function InvoiceTable({ handleRowChange }: InvoiceTableProps) {
     <div className="flex flex-col gap-2">
       <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
         <TableHeader columns={columns} />
-        {invoiceRows.map((row: InvoiceRow, i: number) => (
-          <div key={row.id} className={cn(
+        {filteredRows.map((row: InvoiceRow, idxRender: number) => {
+          const i = invoiceRows.findIndex((r: InvoiceRow) => r.id === row.id);
+          return (
+            <div key={row.id} className={cn(
             "grid border-b transition-colors text-sm",
             row.isUncertain 
               ? "border-amber-400 bg-amber-50 hover:bg-amber-100" 
@@ -559,8 +594,9 @@ function InvoiceTable({ handleRowChange }: InvoiceTableProps) {
               {row.total ? `${row.total} ₽` : ''}
             </div>
           </div>
-        ))}
-        {invoiceRows.length === 0 && (
+          );
+        })}
+        {filteredRows.length === 0 && (
           <div className="p-8 text-center text-slate-400 text-sm">
             Нет добавленных позиций.
           </div>
@@ -583,9 +619,18 @@ interface EstimateTableProps {
 }
 
 function EstimateTable({ handleRowChange }: EstimateTableProps) {
-  const { estimateRows } = useData();
+  const { estimateRows, searchQuery } = useData();
   const columns = ['№', 'Наименование', 'Кол-во (спец)', 'Ед. изм', 'Цена (счёт)', 'Сумма', 'Поставщик'];
   
+  const filteredRows = React.useMemo(() => {
+    if (!searchQuery) return estimateRows;
+    const q = searchQuery.toLowerCase();
+    return estimateRows.filter(r => 
+      (r.name?.toLowerCase().includes(q)) || 
+      (r.supplier?.toLowerCase().includes(q))
+    );
+  }, [estimateRows, searchQuery]);
+
   return (
     <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
       <div className="grid bg-slate-50 border-b border-slate-200 divide-x divide-slate-200" style={{ gridTemplateColumns: '50px 1.5fr 100px 80px 120px 120px 1fr' }}>
@@ -596,9 +641,11 @@ function EstimateTable({ handleRowChange }: EstimateTableProps) {
         ))}
       </div>
       <div className="divide-y divide-slate-100">
-        {estimateRows.map((row, i) => (
+        {filteredRows.map((row, idxRender) => {
+          const i = estimateRows.findIndex(r => r.id === row.id);
+          return (
           <div key={row.id} className="grid hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors divide-x divide-slate-100" style={{ gridTemplateColumns: '50px 1.5fr 100px 80px 120px 120px 1fr' }}>
-            <div className="p-3 flex items-center justify-center font-medium text-slate-400">{i + 1}</div>
+            <div className="p-3 flex items-center justify-center font-medium text-slate-400">{idxRender + 1}</div>
             
             <div className="p-3 flex items-center font-medium text-slate-800">
               {row.name}
@@ -641,8 +688,9 @@ function EstimateTable({ handleRowChange }: EstimateTableProps) {
                />
             </div>
           </div>
-        ))}
-        {estimateRows.length === 0 && (
+          );
+        })}
+        {filteredRows.length === 0 && (
           <div className="p-8 text-center text-slate-400 text-sm italic">
             Начните со Спецификаций и Счетов, чтобы сформировать смету.
           </div>
