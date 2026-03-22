@@ -145,6 +145,8 @@ interface DataContextType {
   groupRows: (stage: Stage, field: string) => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  completedStages: string[];
+  completeStage: (stageId: string) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -156,7 +158,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     try { const saved = localStorage.getItem('docok_specRows'); if (saved) return JSON.parse(saved); } catch (e) {}
     return [];
   });
-  const [requestRows, setRequestRows] = useState<RequestRow[]>(() => {
+  const [requestRows, setRequestRows] = useState<SpecRow[]>(() => {
     try { const saved = localStorage.getItem('docok_requestRows'); if (saved) return JSON.parse(saved); } catch (e) {}
     return [];
   });
@@ -170,11 +172,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [completedStages, setCompletedStages] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('docok_completed_stages');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
 
   useEffect(() => { localStorage.setItem('docok_specRows', JSON.stringify(specRows)); }, [specRows]);
   useEffect(() => { localStorage.setItem('docok_requestRows', JSON.stringify(requestRows)); }, [requestRows]);
   useEffect(() => { localStorage.setItem('docok_invoiceRows', JSON.stringify(invoiceRows)); }, [invoiceRows]);
   useEffect(() => { localStorage.setItem('docok_estimateRows', JSON.stringify(estimateRows)); }, [estimateRows]);
+  useEffect(() => { localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); }, [completedStages]);
+  useEffect(() => { localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); }, [completedStages]);
 
   const [configKeys, setConfigKeys] = useState<Record<string, string>>({});
   const [yandexConfig, setYandexConfig] = useState<YandexConfig>(() => {
@@ -505,6 +515,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.sum)) || 0), 0).toFixed(2);
   }, [estimateRows]);
 
+  const completeStage = (stageId: string) => {
+    if (!completedStages.includes(stageId)) {
+      setCompletedStages(prev => [...prev, stageId]);
+    }
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -537,7 +553,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         sortRows,
         groupRows,
         searchQuery,
-        setSearchQuery
+        setSearchQuery,
+        completedStages,
+        completeStage
       }}
     >
       {children}
@@ -547,6 +565,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 export function useData() {
   const ctx = useContext(DataContext);
-  if (!ctx) throw new Error('useData must be used within DataProvider');
+  if (!ctx || ctx === null) throw new Error('useData must be used within DataProvider');
   return ctx;
 }

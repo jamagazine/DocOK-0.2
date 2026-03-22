@@ -40,7 +40,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   const { 
     handleFile, isMerged, toggleMerge, pdfGeometry, 
     estimateRows, estimateTotal, specRows, invoiceRows,
-    resetData, sortRows, groupRows, filesMap
+    resetData, sortRows, groupRows, filesMap, completeStage
   } = useData();
 
   const handleExport = () => {
@@ -105,16 +105,16 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
   const renderTabIcon = (tab: RightPanelTab) => {
     switch (tab) {
-      case 'tools': return <Settings2 className="w-5 h-5" />;
-      case 'info': return <Info className="w-5 h-5" />;
-      case 'calc': return <Calculator className="w-5 h-5" />;
+      case 'tools': return <Settings2 className="size-5" />;
+      case 'info': return <Info className="size-5" />;
+      case 'calc': return <Calculator className="size-5" />;
     }
   };
 
   const tabs: { id: RightPanelTab; icon: React.ReactNode; label: string }[] = [
-    { id: 'tools', icon: <Settings2 className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />, label: 'Инструменты' },
-    { id: 'info', icon: <Info className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />, label: 'Информация' },
-    { id: 'calc', icon: <Calculator className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />, label: 'Калькуляторы' },
+    { id: 'tools', icon: <Settings2 className="size-5" />, label: 'Инструменты' },
+    { id: 'info', icon: <Info className="size-5" />, label: 'Информация' },
+    { id: 'calc', icon: <Calculator className="size-5" />, label: 'Конвертеры' },
   ];
 
   return (
@@ -128,15 +128,27 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
       {/* Header - Attic */}
       <div className={cn(
-        "p-4 border-b border-slate-200 flex",
-        expanded ? "flex-row justify-between items-center h-[72px]" : "flex-col items-center gap-4 py-4"
+        "p-4 border-b border-slate-200 h-[72px]",
+        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
       )}>
+        {/* Toggle button always first in collapsed view */}
+        {!expanded && (
+          <button 
+            onClick={onToggle}
+            className="w-12 h-12 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center mb-0"
+            title="Развернуть"
+          >
+            <Menu className="size-5" />
+          </button>
+        )}
+
+        {/* Tab buttons */}
         {tabs.map((tab) => (
           <button 
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              "p-2 rounded-lg transition-colors flex items-center justify-center",
+              "w-9 h-9 rounded-lg transition-colors flex items-center justify-center",
               activeTab === tab.id ? "bg-indigo-100 text-indigo-700" : "hover:bg-slate-100 text-slate-600",
               !expanded && "w-12 h-12"
             )}
@@ -145,16 +157,17 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
             {tab.icon}
           </button>
         ))}
-        <button 
-          onClick={onToggle}
-          className={cn(
-            "p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center ml-auto",
-            !expanded && "w-12 h-12 mt-4 ml-0"
-          )}
-          title="Свернуть/Развернуть"
-        >
-          <Menu className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
-        </button>
+
+        {/* Toggle button always last in expanded view */}
+        {expanded && (
+          <button 
+            onClick={onToggle}
+            className="w-9 h-9 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center"
+            title="Свернуть"
+          >
+            <Menu className="size-5" />
+          </button>
+        )}
       </div>
 
       {/* Middle Content - Switchable based on activeTab */}
@@ -310,7 +323,10 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
       )}>
         {hasNextStage ? (
           <button 
-            onClick={onNextStage}
+            onClick={() => {
+              completeStage(currentStage);
+              onNextStage();
+            }}
             disabled={!canProceed}
             className={cn(
               "w-full flex items-center justify-center gap-2 rounded-lg font-medium transition-all",

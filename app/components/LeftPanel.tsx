@@ -9,7 +9,9 @@ import {
   Briefcase,
   DollarSign,
   UserCheck,
-  Cloud
+  Cloud,
+  XCircle,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -38,7 +40,16 @@ const STAGES: StageInfo[] = [
 ];
 
 export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: LeftPanelProps) {
-  const { yandexConfig, saveYandexConfig } = useData();
+  const { 
+    yandexConfig, 
+    saveYandexConfig, 
+    specRows, 
+    invoiceRows, 
+    estimateRows, 
+    requestRows,
+    completedStages,
+    uploadStatuses
+  } = useData();
   const [showSettings, setShowSettings] = useState(false);
 
   const handleConfigChange = (key: 'apiKey' | 'catalogId', value: string) => {
@@ -47,11 +58,36 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
       [key]: value
     });
   };
-  const renderStatusIcon = (status: string) => {
+  const getStageStatus = (stageId: Stage) => {
+    // 1. Check for errors
+    const hasError = Object.values(uploadStatuses || {}).some((s: any) => 
+      s.status.toLowerCase().includes('ошибк')
+    );
+    if (hasError && currentStage === stageId) return 'error';
+
+    // 2. Check for data presence
+    let hasData = false;
+    if (stageId === 'spec') hasData = specRows.length > 0;
+    if (stageId === 'request') hasData = requestRows.length > 0;
+    if (stageId === 'invoice') hasData = invoiceRows.length > 0;
+    if (stageId === 'estimate') hasData = estimateRows.length > 0;
+
+    if (!hasData) return 'empty';
+
+    // 3. Check for completion
+    if (completedStages.includes(stageId)) return 'done';
+
+    // 4. If has data but not completed
+    return 'pending';
+  };
+
+  const renderStatusIcon = (stageId: Stage) => {
+    const status = getStageStatus(stageId);
     switch (status) {
-      case 'done': return <CheckCircle2 className="w-5 h-5 text-emerald-500" />;
-      case 'partial': return <CircleAlert className="w-5 h-5 text-amber-500" />;
-      default: return <Circle className="w-5 h-5 text-slate-300" />;
+      case 'done': return <CheckCircle2 className="size-5 text-emerald-500" />;
+      case 'pending': return <AlertCircle className="size-5 text-amber-500" />;
+      case 'error': return <XCircle className="size-5 text-rose-500" />;
+      default: return <Circle className="size-5 text-slate-300" />;
     }
   };
 
@@ -64,37 +100,41 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
     >
       {/* Header - Attic */}
       <div className={cn(
-        "p-4 border-b border-slate-200 flex",
-        expanded ? "flex-row justify-between items-center h-[72px]" : "flex-col items-center gap-4 py-4"
+        "p-4 border-b border-slate-200 border-r-0 h-[72px]",
+        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
       )}>
         <button 
           onClick={onToggle}
           className={cn(
-            "p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center",
-            !expanded && "w-12 h-12"
+            "rounded-lg text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center",
+            expanded ? "w-9 h-9" : "w-12 h-12"
           )}
           title="Свернуть/Развернуть"
         >
-          <Menu className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
+          <Menu className="size-5" />
         </button>
         <button 
           className={cn(
-            "p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center",
-             !expanded && "w-12 h-12"
+            "rounded-lg text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center",
+            expanded ? "w-9 h-9" : "w-12 h-12"
           )}
-          title="Главная страница"
+          title="Рабочее пространство"
         >
-          <Home className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
+          <Briefcase className="size-5" />
         </button>
         <button 
           className={cn(
-            "p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center",
-             !expanded && "w-12 h-12"
+            "rounded-lg text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center",
+            expanded ? "w-9 h-9" : "w-12 h-12"
           )}
           title="Список проектов"
         >
-          <FolderOpen className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
+          <FolderOpen className="size-5" />
         </button>
+        
+        {/* Phantom 4th slot to match RightPanel's height and alignment in collapsed mode */}
+        {!expanded && <div className="w-12 h-12" aria-hidden="true" />}
+        {expanded && <div />}
       </div>
 
       {/* Middle Top - Workflow Stages */}
@@ -105,7 +145,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
         {STAGES.map((stage) => (
           <button
             key={stage.id}
-            onClick={() => onSetStage(stage.id)}
+            onClick={() => onSetStage(stage.id as Stage)}
             className={cn(
               "w-full flex items-center px-4 py-3 transition-colors group",
               currentStage === stage.id ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-700",
@@ -114,7 +154,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
             title={!expanded ? stage.label : undefined}
           >
             <div className="shrink-0 flex items-center justify-center relative">
-              {renderStatusIcon(stage.status)}
+              {renderStatusIcon(stage.id as Stage)}
               {currentStage === stage.id && (
                 <span className="absolute -left-4 w-1 h-6 bg-indigo-600 rounded-r-full" />
               )}
@@ -227,13 +267,13 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
           className={cn(
             "flex items-center justify-center transition-colors rounded-lg relative",
             showSettings ? "bg-indigo-100 text-indigo-600" : "text-slate-500 hover:text-indigo-600 hover:bg-slate-50",
-            expanded ? "w-10 h-10 ml-2 shrink-0" : "w-12 h-12"
+            expanded ? "w-9 h-9 ml-2 shrink-0" : "w-12 h-12"
           )}
           title="Настройки API"
         >
-          <Cloud className="w-5 h-5" />
+          <Cloud className="size-5" />
           {!!yandexConfig.apiKey && !!yandexConfig.catalogId && (
-            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full shadow-sm" />
+            <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-500 border-2 border-white rounded-full shadow-sm" />
           )}
         </button>
       </div>
