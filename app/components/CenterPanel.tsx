@@ -35,20 +35,19 @@ interface CenterPanelProps {
 export function CenterPanel({ currentStage, projectName, setProjectName, files }: CenterPanelProps) {
   const [isEditingName, setIsEditingName] = React.useState(false);
   const [filesOpen, setFilesOpen] = React.useState(false);
-  const { 
-    uploadStatuses, 
-    invoiceRows, 
-    specRows, 
-    requestRows, 
-    estimateRows, 
-    setInvoiceRows, 
-    setSpecRows, 
-    setRequestRows, 
-    setEstimateRows, 
-    searchQuery, 
-    setSearchQuery, 
-    handleFile,
-    isDragging 
+  const {
+    uploadStatuses,
+    invoiceRows,
+    specRows,
+    requestRows,
+    estimateRows,
+    setInvoiceRows,
+    setSpecRows,
+    setRequestRows,
+    setEstimateRows,
+    searchQuery,
+    setSearchQuery,
+    handleFile
   } = useData();
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, { status: string; time: string }>);
 
@@ -104,98 +103,94 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
 
   return (
     <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
-      <motion.div 
-        animate={{ opacity: isDragging ? 0 : 1 }}
-        transition={{ duration: 0.2 }}
-        className="flex flex-col h-full"
-      >
-            {/* Header - Attic */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shadow-sm h-[72px] shrink-0">
+      <div className="flex flex-col h-full flex-1 min-h-0">
+        {/* Header - Attic */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shadow-sm h-[72px] shrink-0">
 
-              {/* Left: Project Name */}
-              <div className="flex-1 min-w-0 flex items-center gap-2">
-                {isEditingName ? (
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={projectName}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProjectName(e.target.value)}
-                    onBlur={() => setIsEditingName(false)}
-                    onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && setIsEditingName(false)}
-                    className="text-xl font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
-                  />
-                ) : (
-                  <div
-                    className="group flex items-center gap-2 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
-                    onClick={() => setIsEditingName(true)}
-                    title="Редактировать название"
-                  >
-                    <h1 className="text-xl font-bold text-slate-800 truncate">{projectName}</h1>
-                    <Edit2 className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </div>
-                )}
+          {/* Left: Project Name */}
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            {isEditingName ? (
+              <input
+                ref={inputRef}
+                type="text"
+                value={projectName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProjectName(e.target.value)}
+                onBlur={() => setIsEditingName(false)}
+                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && setIsEditingName(false)}
+                className="text-xl font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
+              />
+            ) : (
+              <div
+                className="group flex items-center gap-2 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
+                onClick={() => setIsEditingName(true)}
+                title="Редактировать название"
+              >
+                <h1 className="text-xl font-bold text-slate-800 truncate">{projectName}</h1>
+                <Edit2 className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
+            )}
+          </div>
 
-              {/* Center: Search */}
-              <div className="flex-1 flex justify-center px-4">
-                <div className="relative w-full max-w-md">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Глобальный поиск по разделам..."
-                    className="w-full bg-slate-100 hover:bg-slate-200 focus:bg-white border border-transparent focus:border-indigo-300 rounded-full pl-10 pr-4 py-2 text-sm text-slate-700 outline-none transition-all shadow-sm focus:shadow-md"
-                  />
-                </div>
-              </div>
-
-              {/* Right: Upload Statuses & Files Button */}
-              <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
-
-                {/* Upload Statuses List */}
-                {fileEntries.length > 0 && (
-                  <div className="flex flex-row-reverse items-center gap-2 overflow-hidden max-w-[250px] mr-2">
-                    {fileEntries.map(([filename, data]) => (
-                      <div key={filename} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 px-2 py-1 rounded-md shrink-0" title={`${filename}: ${data.status}`}>
-                        {data.status.includes('Ошибка') ? <AlertCircle size={14} className="text-red-500 shrink-0" />
-                          : data.status.includes('Готово') ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
-                            : <Clock size={14} className="text-indigo-500 animate-pulse shrink-0" />}
-                        <span className="truncate max-w-[80px] text-slate-700 font-medium">{filename}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setFilesOpen(!filesOpen)}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm border border-slate-200 hover:border-indigo-300",
-                    filesOpen ? "bg-indigo-50 text-indigo-700" : "bg-white text-slate-700 hover:bg-slate-50"
-                  )}
-                  title="Открыть панель файлов"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                  <span>Файлы</span>
-                  {files.length > 0 && (
-                    <span className="flex items-center justify-center bg-indigo-100 text-indigo-700 rounded-full w-5 h-5 text-[10px] ml-1">
-                      {files.length}
-                    </span>
-                  )}
-                </button>
-              </div>
+          {/* Center: Search */}
+          <div className="flex-1 flex justify-center px-4">
+            <div className="relative w-full max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Глобальный поиск по разделам..."
+                className="w-full bg-slate-100 hover:bg-slate-200 focus:bg-white border border-transparent focus:border-indigo-300 rounded-full pl-10 pr-4 py-2 text-sm text-slate-700 outline-none transition-all shadow-sm focus:shadow-md"
+              />
             </div>
+          </div>
 
-            {/* Middle: Table Container */}
-            <div className="flex-1 overflow-auto relative bg-white">
-              <div className="min-w-max h-full">
-                {currentStage === 'spec' && <SpecTable handleRowChange={handleRowChange} />}
-                {currentStage === 'request' && <RequestTable />}
-                {currentStage === 'invoice' && <InvoiceTable handleRowChange={handleRowChange} />}
-                {currentStage === 'estimate' && <EstimateTable handleRowChange={handleRowChange} />}
+          {/* Right: Upload Statuses & Files Button */}
+          <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
+
+            {/* Upload Statuses List */}
+            {fileEntries.length > 0 && (
+              <div className="flex flex-row-reverse items-center gap-2 overflow-hidden max-w-[250px] mr-2">
+                {fileEntries.map(([filename, data]) => (
+                  <div key={filename} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 px-2 py-1 rounded-md shrink-0" title={`${filename}: ${data.status}`}>
+                    {data.status.includes('Ошибка') ? <AlertCircle size={14} className="text-red-500 shrink-0" />
+                      : data.status.includes('Готово') ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+                        : <Clock size={14} className="text-indigo-500 animate-pulse shrink-0" />}
+                    <span className="truncate max-w-[80px] text-slate-700 font-medium">{filename}</span>
+                  </div>
+                ))}
               </div>
-            </div>
-          </motion.div>
+            )}
+
+            <button
+              onClick={() => setFilesOpen(!filesOpen)}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm border border-slate-200 hover:border-indigo-300",
+                filesOpen ? "bg-indigo-50 text-indigo-700" : "bg-white text-slate-700 hover:bg-slate-50"
+              )}
+              title="Открыть панель файлов"
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>Файлы</span>
+              {files.length > 0 && (
+                <span className="flex items-center justify-center bg-indigo-100 text-indigo-700 rounded-full w-5 h-5 text-[10px] ml-1">
+                  {files.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Middle: Table Container */}
+        <div className="flex-1 overflow-auto relative bg-white">
+          <div className="min-w-max h-full">
+            {currentStage === 'spec' && <SpecTable handleRowChange={handleRowChange} />}
+            {currentStage === 'request' && <RequestTable />}
+            {currentStage === 'invoice' && <InvoiceTable handleRowChange={handleRowChange} />}
+            {currentStage === 'estimate' && <EstimateTable handleRowChange={handleRowChange} />}
+          </div>
+        </div>
+      </div>
 
       {/* Footer - Basement */}
       <div className="bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between text-sm text-slate-600">
@@ -252,24 +247,24 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
 function EmptyStateBlock({ handleFile, currentStage }: { handleFile: any, currentStage: string }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   return (
-    <div 
+    <div
       className="m-8 p-12 border-2 border-dashed border-indigo-200 rounded-xl flex flex-col items-center justify-center bg-indigo-50/30 hover:bg-indigo-50/50 cursor-pointer transition-colors"
       onClick={() => fileInputRef.current?.click()}
     >
       <Upload className="w-12 h-12 text-indigo-300 mb-4" />
       <p className="text-slate-700 font-medium mb-2">Нажмите или перетащите файлы для начала работы</p>
       <p className="text-slate-500 text-sm mb-6 text-center max-w-md">Поддерживаются форматы Excel (.xlsx, .xls) и PDF. Можно выбрать несколько файлов одновременно.</p>
-      <input 
-        type="file" 
-        multiple 
-        className="hidden" 
+      <input
+        type="file"
+        multiple
+        className="hidden"
         ref={fileInputRef}
         onChange={(e) => {
           if (e.target.files && e.target.files.length > 0) {
             handleFile(e.target.files, currentStage);
             e.target.value = '';
           }
-        }} 
+        }}
       />
       <div className="px-6 py-2.5 bg-white border border-indigo-200 text-indigo-600 rounded-lg text-sm font-medium hover:border-indigo-400 hover:text-indigo-700 transition-colors shadow-sm">
         Выбрать файлы
