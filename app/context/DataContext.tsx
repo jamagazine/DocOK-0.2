@@ -646,6 +646,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         groupRows,
         searchQuery,
         setSearchQuery,
+        completedStages,
         completeStage,
         isDragging,
         setIsDragging
