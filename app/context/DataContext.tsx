@@ -314,10 +314,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
         toast.error(`Ошибка чтения: ${e.message}`, { id: toastId });
       }
-      return; 
-    }
-
-    if (useAi) {
+    } else if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
         toast.error('API Ключ или ID каталога не настроены. Проверьте настройки в левой панели.', { id: toastId });
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка настроек', time: currentTime } }));
@@ -464,65 +461,59 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const generateEstimate = useCallback(() => {
-    setSpecRows((currentSpecRows: SpecRow[]) => {
-      setInvoiceRows((currentInvoiceRows: InvoiceRow[]) => {
-        const newEstimate = currentSpecRows.map(spec => {
-          // Ищем совпадения в счетах по названию или артикулу/коду
-          const matches = currentInvoiceRows.filter(inv => {
-            const invName = (inv.name || '').toLowerCase();
-            const specName = (spec.name || '').toLowerCase();
-            const invArt = (inv.article || '').toLowerCase();
-            const specCode = (spec.code || '').toLowerCase();
-            
-            return (specName && invName && invName.includes(specName)) || 
-                   (specCode && invArt && invArt === specCode);
-          });
-
-          let bestPrice = '';
-          let bestSupplier = '';
-
-          if (matches.length > 0) {
-            const sorted = matches
-              .map((m: InvoiceRow) => ({
-                p: parseFloat(String(m.price).replace(/\s/g, '').replace(/,/g, '.')) || 0,
-                s: m.supplier
-              }))
-              .filter(m => m.p > 0)
-              .sort((a, b) => a.p - b.p);
-            
-            if (sorted.length > 0) {
-              bestPrice = String(sorted[0].p);
-              bestSupplier = sorted[0].s;
-            }
-          }
-
-          const q = parseFloat(String(spec.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-          const cp = parseFloat(bestPrice) || 0;
-          // По умолчанию наценка 20% для цены заказчика, если есть цена закупки
-          const clp = cp > 0 ? cp * 1.2 : 0;
-          
-          const cs = q * cp;
-          const cls = q * clp;
-
-          return {
-            id: genId(),
-            workType: 'Оборудование и материалы', // Значение по умолчанию
-            name: spec.name,
-            unit: spec.unit,
-            quantity: spec.quantity,
-            costPrice: bestPrice,
-            clientPrice: clp > 0 ? clp.toFixed(2) : '',
-            costSum: cs > 0 ? cs.toFixed(2) : '',
-            clientSum: cls > 0 ? cls.toFixed(2) : '',
-            supplier: bestSupplier
-          };
-        });
-        setEstimateRows(newEstimate);
-        return currentInvoiceRows;
+    const newEstimate = specRows.map((spec: SpecRow) => {
+      // Ищем совпадения в счетах по названию или артикулу/коду
+      const matches = invoiceRows.filter((inv: InvoiceRow) => {
+        const invName = (inv.name || '').toLowerCase();
+        const specName = (spec.name || '').toLowerCase();
+        const invArt = (inv.article || '').toLowerCase();
+        const specCode = (spec.code || '').toLowerCase();
+        
+        return (specName && invName && invName.includes(specName)) || 
+               (specCode && invArt && invArt === specCode);
       });
-      return currentSpecRows;
+
+      let bestPrice = '';
+      let bestSupplier = '';
+
+      if (matches.length > 0) {
+        const sorted = matches
+          .map((m: InvoiceRow) => ({
+            p: parseFloat(String(m.price).replace(/\s/g, '').replace(/,/g, '.')) || 0,
+            s: m.supplier
+          }))
+          .filter((m: any) => m.p > 0)
+          .sort((a: any, b: any) => a.p - b.p);
+        
+        if (sorted.length > 0) {
+          bestPrice = String(sorted[0].p);
+          bestSupplier = sorted[0].s;
+        }
+      }
+
+      const q = parseFloat(String(spec.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+      const cp = parseFloat(bestPrice) || 0;
+      // По умолчанию наценка 20% для цены заказчика, если есть цена закупки
+      const clp = cp > 0 ? cp * 1.2 : 0;
+      
+      const cs = q * cp;
+      const cls = q * clp;
+
+      return {
+        id: genId(),
+        workType: 'Оборудование и материалы', // Значение по умолчанию
+        name: spec.name,
+        unit: spec.unit,
+        quantity: spec.quantity,
+        costPrice: bestPrice,
+        clientPrice: clp > 0 ? clp.toFixed(2) : '',
+        costSum: cs > 0 ? cs.toFixed(2) : '',
+        clientSum: cls > 0 ? cls.toFixed(2) : '',
+        supplier: bestSupplier
+      };
     });
-  }, []);
+    setEstimateRows(newEstimate);
+  }, [specRows, invoiceRows]);
   
   const resetData = useCallback((stage: Stage) => {
     switch(stage) {
