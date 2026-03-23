@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { toast } from 'sonner';
 import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
@@ -160,8 +160,6 @@ interface DataContextType {
   handleSort: (key: string) => void;
   completedStages: string[];
   completeStage: (stageId: string) => void;
-  isMerged: boolean;
-  setIsMerged: (val: boolean) => void;
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;
 }
@@ -203,7 +201,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => { localStorage.setItem('docok_invoiceRows', JSON.stringify(invoiceRows)); }, [invoiceRows]);
   useEffect(() => { localStorage.setItem('docok_estimateRows', JSON.stringify(estimateRows)); }, [estimateRows]);
   useEffect(() => { localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); }, [completedStages]);
-  useEffect(() => { localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); }, [completedStages]);
 
   const [configKeys, setConfigKeys] = useState<Record<string, string>>({});
   const [yandexConfig, setYandexConfig] = useState<YandexConfig>(() => {
@@ -224,14 +221,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [isDragging, setIsDragging] = useState(false);
   const [backupSpecRows, setBackupSpecRows] = useState<SpecRow[]>([]);
 
-  const saveYandexConfig = (config: YandexConfig) => {
+  const saveYandexConfig = useCallback((config: YandexConfig) => {
     setYandexConfig(config);
     localStorage.setItem('docok_yandex_config', JSON.stringify(config));
-  };
+  }, []);
 
-  const handleFile = async (files: FileList | File[], stage: string, forceAI: boolean = false) => {
+  const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
+
+    // Рефакторинг: сбор данных для пакетного обновления
+    const allNewSpecRows: SpecRow[] = [];
+    const allNewInvoiceRows: InvoiceRow[] = [];
 
     for (const file of fileArray) {
       const now = new Date();
@@ -262,23 +263,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
         );
 
         if (stage === 'spec') {
-          const newRows: SpecRow[] = parsedRawRows.map((row) => ({
-            id: genId(),
-            name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
-            brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
-            code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
-            supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
-            unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
-            quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
-            mass: mapping.mass !== undefined ? (row[mapping.mass] || '') : '',
-            note: mapping.note !== undefined ? (row[mapping.note] || '') : '',
-            originalRowsIds: [],
-            children: [],
-          }));
+            const newRows: SpecRow[] = parsedRawRows.map((row) => ({
+              id: genId(),
+              name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
+              brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
+              code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
+              supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
+              unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
+              quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
+              mass: mapping.mass !== undefined ? (row[mapping.mass] || '') : '',
+              note: mapping.note !== undefined ? (row[mapping.note] || '') : '',
+              originalRowsIds: [],
+              children: [],
+            }));
 
-          setSpecRows(prev => [...prev, ...newRows]);
-          setIsMerged(false);
-          setBackupSpecRows(prev => [...prev, ...newRows]);
+            allNewSpecRows.push(...newRows);
+            setIsMerged(false);
+            // backupSpecRows will be updated after the loop
         } else {
           const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
             const r = emptyInvoiceRow();
@@ -303,14 +304,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-          setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...newRowsToAppend]);
-        }
-        
-        setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
-        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+            allNewInvoiceRows.push(...newRowsToAppend);
+          }
+          
+          setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
+          setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
         toast.success(`Файл ${file.name} успешно прочитан локально`, { id: toastId });
       } catch (e: any) {
-        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
         toast.error(`Ошибка чтения: ${e.message}`, { id: toastId });
       }
       return; 
@@ -319,11 +320,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
         toast.error('API Ключ или ID каталога не настроены. Проверьте настройки в левой панели.', { id: toastId });
-        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка настроек', time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка настроек', time: currentTime } }));
         return;
       }
 
-      setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Конвертация и Анализ ИИ...', time: currentTime } }));
+      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Конвертация и Анализ ИИ...', time: currentTime } }));
       const formData = new FormData();
       formData.append('file', file);
 
@@ -365,9 +366,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             children: []
           }));
 
-          setSpecRows(prev => [...prev, ...aiRows]);
-          setIsMerged(false);
-          setBackupSpecRows(prev => [...prev, ...aiRows]);
+            allNewSpecRows.push(...aiRows);
+            setIsMerged(false);
+            // backupSpecRows will be updated after the loop
         } else {
           const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
             const r = emptyInvoiceRow();
@@ -383,144 +384,164 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-          setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...aiRows]);
-        }
-        
-        setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
-        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+            allNewInvoiceRows.push(...aiRows);
+          }
+          
+          setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
+          setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
         toast.success(`Файл ${file.name} успешно обработан ИИ`, { id: toastId });
       } catch (e: any) {
         console.error('AI Processing error:', e);
-        setUploadStatuses(prev => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
         toast.error(`Ошибка обработки: ${e.message}`, { id: toastId });
       }
     }
     } // closes for loop
-  };
 
-  const toggleMerge = () => {
-    if (isMerged) {
-      if (backupSpecRows.length > 0) {
-        setSpecRows(backupSpecRows);
-        setIsMerged(false);
-      }
-    } else {
-      setBackupSpecRows(specRows);
-      const merged = mergeDuplicateMaterials(specRows).map(item => ({
-        ...item,
-        id: (item as any).id || genId()
-      })) as unknown as SpecRow[];
-      setSpecRows(merged);
-      setIsMerged(true);
+    // Финальное пакетное обновление стейта
+    if (allNewSpecRows.length > 0) {
+      setSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
+      setBackupSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
     }
-  };
+    if (allNewInvoiceRows.length > 0) {
+      setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...allNewInvoiceRows]);
+    }
+  }, [yandexConfig]);
 
-  const handleUnmerge = (parentId: string, childId: string) => {
-    const newRows = [...specRows];
-    const parentIndex = newRows.findIndex(r => r.id === parentId);
-    if (parentIndex === -1) return;
-    
-    const parentRow = { ...newRows[parentIndex] };
-    if (!parentRow.children || parentRow.children.length === 0) return;
-    
-    const childIndex = parentRow.children.findIndex((c: SpecRow) => c.id === childId);
-    if (childIndex === -1) return;
-    
-    const extractedChild = parentRow.children[childIndex];
-    
-    parentRow.children = parentRow.children.filter((c: SpecRow) => c.id !== childId);
-    parentRow.originalRowsIds = parentRow.originalRowsIds?.filter(id => id !== childId);
-    
-    const parseQty = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-    const pQty = parseQty(parentRow.quantity);
-    const cQty = parseQty(extractedChild.quantity);
-    const newQty = Math.max(0, pQty - cQty);
-    parentRow.quantity = newQty === 0 ? '' : String(newQty);
-    
-    newRows[parentIndex] = parentRow;
-    
-    const unmergedSpecRow: SpecRow = {
-       ...extractedChild,
-       originalRowsIds: [extractedChild.id],
-       children: [{ ...extractedChild } as SpecRow]
-    };
-    
-    newRows.splice(parentIndex + 1, 0, unmergedSpecRow);
-    setSpecRows(newRows);
-  };
-  const generateEstimate = () => {
-    const newEstimate = specRows.map(spec => {
-      // Ищем совпадения в счетах по названию или артикулу/коду
-      const matches = invoiceRows.filter(inv => {
-        const invName = (inv.name || '').toLowerCase();
-        const specName = (spec.name || '').toLowerCase();
-        const invArt = (inv.article || '').toLowerCase();
-        const specCode = (spec.code || '').toLowerCase();
-        
-        return (specName && invName && invName.includes(specName)) || 
-               (specCode && invArt && invArt === specCode);
-      });
-
-      let bestPrice = '';
-      let bestSupplier = '';
-
-      if (matches.length > 0) {
-        const sorted = matches
-          .map((m: InvoiceRow) => ({
-            p: parseFloat(String(m.price).replace(/\s/g, '').replace(/,/g, '.')) || 0,
-            s: m.supplier
-          }))
-          .filter(m => m.p > 0)
-          .sort((a, b) => a.p - b.p);
-        
-        if (sorted.length > 0) {
-          bestPrice = String(sorted[0].p);
-          bestSupplier = sorted[0].s;
+  const toggleMerge = useCallback(() => {
+    setIsMerged((prev: boolean) => {
+      if (prev) {
+        if (backupSpecRows.length > 0) {
+          setSpecRows(backupSpecRows);
         }
+        return false;
+      } else {
+        setBackupSpecRows(specRows);
+        const merged = mergeDuplicateMaterials(specRows).map(item => ({
+          ...item,
+          id: (item as any).id || genId()
+        })) as unknown as SpecRow[];
+        setSpecRows(merged);
+        return true;
       }
-
-      const q = parseFloat(String(spec.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-      const cp = parseFloat(bestPrice) || 0;
-      // По умолчанию наценка 20% для цены заказчика, если есть цена закупки
-      const clp = cp > 0 ? cp * 1.2 : 0;
-      
-      const cs = q * cp;
-      const cls = q * clp;
-
-      return {
-        id: genId(),
-        workType: 'Оборудование и материалы', // Значение по умолчанию
-        name: spec.name,
-        unit: spec.unit,
-        quantity: spec.quantity,
-        costPrice: bestPrice,
-        clientPrice: clp > 0 ? clp.toFixed(2) : '',
-        costSum: cs > 0 ? cs.toFixed(2) : '',
-        clientSum: cls > 0 ? cls.toFixed(2) : '',
-        supplier: bestSupplier
-      };
     });
-    setEstimateRows(newEstimate);
-  };
+  }, [specRows, backupSpecRows]);
+
+  const handleUnmerge = useCallback((parentId: string, childId: string) => {
+    setSpecRows((prev: SpecRow[]) => {
+      const newRows = [...prev];
+      const parentIndex = newRows.findIndex(r => r.id === parentId);
+      if (parentIndex === -1) return prev;
+      
+      const parentRow = { ...newRows[parentIndex] };
+      if (!parentRow.children || parentRow.children.length === 0) return prev;
+      
+      const childIndex = parentRow.children.findIndex((c: SpecRow) => c.id === childId);
+      if (childIndex === -1) return prev;
+      
+      const extractedChild = parentRow.children[childIndex];
+      
+      parentRow.children = parentRow.children.filter((c: SpecRow) => c.id !== childId);
+      parentRow.originalRowsIds = parentRow.originalRowsIds?.filter(id => id !== childId);
+      
+      const parseQty = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+      const pQty = parseQty(parentRow.quantity);
+      const cQty = parseQty(extractedChild.quantity);
+      const newQty = Math.max(0, pQty - cQty);
+      parentRow.quantity = newQty === 0 ? '' : String(newQty);
+      
+      newRows[parentIndex] = parentRow;
+      
+      const unmergedSpecRow: SpecRow = {
+         ...extractedChild,
+         originalRowsIds: [extractedChild.id],
+         children: [{ ...extractedChild } as SpecRow]
+      };
+      
+      newRows.splice(parentIndex + 1, 0, unmergedSpecRow);
+      return newRows;
+    });
+  }, []);
+
+  const generateEstimate = useCallback(() => {
+    setSpecRows((currentSpecRows: SpecRow[]) => {
+      setInvoiceRows((currentInvoiceRows: InvoiceRow[]) => {
+        const newEstimate = currentSpecRows.map(spec => {
+          // Ищем совпадения в счетах по названию или артикулу/коду
+          const matches = currentInvoiceRows.filter(inv => {
+            const invName = (inv.name || '').toLowerCase();
+            const specName = (spec.name || '').toLowerCase();
+            const invArt = (inv.article || '').toLowerCase();
+            const specCode = (spec.code || '').toLowerCase();
+            
+            return (specName && invName && invName.includes(specName)) || 
+                   (specCode && invArt && invArt === specCode);
+          });
+
+          let bestPrice = '';
+          let bestSupplier = '';
+
+          if (matches.length > 0) {
+            const sorted = matches
+              .map((m: InvoiceRow) => ({
+                p: parseFloat(String(m.price).replace(/\s/g, '').replace(/,/g, '.')) || 0,
+                s: m.supplier
+              }))
+              .filter(m => m.p > 0)
+              .sort((a, b) => a.p - b.p);
+            
+            if (sorted.length > 0) {
+              bestPrice = String(sorted[0].p);
+              bestSupplier = sorted[0].s;
+            }
+          }
+
+          const q = parseFloat(String(spec.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const cp = parseFloat(bestPrice) || 0;
+          // По умолчанию наценка 20% для цены заказчика, если есть цена закупки
+          const clp = cp > 0 ? cp * 1.2 : 0;
+          
+          const cs = q * cp;
+          const cls = q * clp;
+
+          return {
+            id: genId(),
+            workType: 'Оборудование и материалы', // Значение по умолчанию
+            name: spec.name,
+            unit: spec.unit,
+            quantity: spec.quantity,
+            costPrice: bestPrice,
+            clientPrice: clp > 0 ? clp.toFixed(2) : '',
+            costSum: cs > 0 ? cs.toFixed(2) : '',
+            clientSum: cls > 0 ? cls.toFixed(2) : '',
+            supplier: bestSupplier
+          };
+        });
+        setEstimateRows(newEstimate);
+        return currentInvoiceRows;
+      });
+      return currentSpecRows;
+    });
+  }, []);
   
-  const resetData = (stage: Stage) => {
+  const resetData = useCallback((stage: Stage) => {
     switch(stage) {
       case 'spec': setSpecRows([]); break;
       case 'invoice': setInvoiceRows([]); break;
       case 'estimate': setEstimateRows([]); break;
       case 'request': setRequestRows([]); break;
     }
-  };
+  }, []);
 
-  const handleSort = (key: string) => {
-    setSortConfig(prev => {
+  const handleSort = useCallback((key: string) => {
+    setSortConfig((prev: SortConfig) => {
       if (prev.key === key) {
         if (prev.direction === 'asc') return { key, direction: 'desc' };
         if (prev.direction === 'desc') return { key: null, direction: null };
       }
       return { key, direction: 'asc' };
     });
-  };
+  }, []);
 
   const applySortAndFilter = <T extends any>(rows: T[], config: SortConfig, query: string, searchFields: string[]): T[] => {
     let result = rows;
@@ -577,10 +598,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [estimateRows, sortConfig, searchQuery]
   );
 
-  const groupRows = (stage: Stage, field: string) => {
+  const groupRows = useCallback((stage: Stage, field: string) => {
     // Базовая заглушка: просто логируем, так как сложная группировка требует UI-состояния
     console.log(`Grouping ${stage} by ${field}`);
-  };
+  }, []);
 
   const estimateTotal = React.useMemo(() => {
     const cost = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.costSum).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
@@ -591,11 +612,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [estimateRows]);
 
-  const completeStage = (stageId: string) => {
-    if (!completedStages.includes(stageId)) {
-      setCompletedStages(prev => [...prev, stageId]);
-    }
-  };
+  const completeStage = useCallback((stageId: string) => {
+    setCompletedStages((prev: string[]) => {
+      if (!prev.includes(stageId)) {
+        return [...prev, stageId];
+      }
+      return prev;
+    });
+  }, []);
 
   return (
     <DataContext.Provider
