@@ -8,6 +8,11 @@ export interface YandexConfig {
   apiKey: string;
   catalogId: string;
 }
+export interface SortConfig {
+  key: string | null;
+  direction: 'asc' | 'desc' | null;
+}
+
 export function genId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -140,19 +145,25 @@ interface DataContextType {
   setUploadStatuses: React.Dispatch<React.SetStateAction<Record<string, { status: string; time: string }>>>;
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
-  handleFile: (file: File, stage: string, forceAI?: boolean) => Promise<void>;
+  handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
   isMerged: boolean;
+  toggleMerge: () => void;
   handleUnmerge: (parentId: string, childId: string) => void;
   generateEstimate: () => void;
   estimateTotal: { cost: string; client: string };
   resetData: (stage: Stage) => void;
-  sortRows: (stage: Stage, field: string) => void;
   groupRows: (stage: Stage, field: string) => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  sortConfig: SortConfig;
+  handleSort: (key: string) => void;
   completedStages: string[];
   completeStage: (stageId: string) => void;
+  isMerged: boolean;
+  setIsMerged: (val: boolean) => void;
+  isDragging: boolean;
+  setIsDragging: (val: boolean) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -178,6 +189,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: null });
+
   const [completedStages, setCompletedStages] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('docok_completed_stages');
@@ -208,6 +221,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
   const [pdfGeometry, setPdfGeometry] = useState<PdfGeometry | null>(null);
   const [isMerged, setIsMerged] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [backupSpecRows, setBackupSpecRows] = useState<SpecRow[]>([]);
 
   const saveYandexConfig = (config: YandexConfig) => {
@@ -215,8 +229,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('docok_yandex_config', JSON.stringify(config));
   };
 
-  const handleFile = async (file: File, stage: string, forceAI: boolean = false) => {
-    const now = new Date();
+  const handleFile = async (files: FileList | File[], stage: string, forceAI: boolean = false) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    for (const file of fileArray) {
+      const now = new Date();
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
     setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime } }));
 
@@ -258,15 +276,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             children: [],
           }));
 
-          // Автоматическое объединение дубликатов для спецификаций
-          const merged = mergeDuplicateMaterials(newRows).map(item => ({
-             ...item,
-             id: (item as any).id || genId()
-          })) as unknown as SpecRow[];
-
-          setSpecRows(merged);
-          setIsMerged(true);
-          setBackupSpecRows(newRows);
+          setSpecRows(prev => [...prev, ...newRows]);
+          setIsMerged(false);
+          setBackupSpecRows(prev => [...prev, ...newRows]);
         } else {
           const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
             const r = emptyInvoiceRow();
@@ -291,10 +303,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-          setInvoiceRows((prev: InvoiceRow[]) => {
-            const filtered = prev.filter((r: InvoiceRow) => r.documentName !== file.name);
-            return [...filtered, ...newRowsToAppend];
-          });
+          setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...newRowsToAppend]);
         }
         
         setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
@@ -356,9 +365,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             children: []
           }));
 
-          setSpecRows(aiRows);
+          setSpecRows(prev => [...prev, ...aiRows]);
           setIsMerged(false);
-          setBackupSpecRows([]);
+          setBackupSpecRows(prev => [...prev, ...aiRows]);
         } else {
           const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
             const r = emptyInvoiceRow();
@@ -374,10 +383,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-          setInvoiceRows((prev: InvoiceRow[]) => {
-            const filtered = prev.filter((r: InvoiceRow) => r.documentName !== file.name);
-            return [...filtered, ...aiRows];
-          });
+          setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...aiRows]);
         }
         
         setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
@@ -389,6 +395,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         toast.error(`Ошибка обработки: ${e.message}`, { id: toastId });
       }
     }
+    } // closes for loop
   };
 
   const toggleMerge = () => {
@@ -505,19 +512,70 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const sortRows = (stage: Stage, field: string) => {
-    const sortFn = (a: any, b: any) => {
-      const valA = String(a[field as keyof typeof a] || '').toLowerCase();
-      const valB = String(b[field as keyof typeof b] || '').toLowerCase();
-      return valA.localeCompare(valB, 'ru');
-    };
-
-    switch(stage) {
-      case 'spec': setSpecRows((prev: SpecRow[]) => [...prev].sort(sortFn)); break;
-      case 'invoice': setInvoiceRows((prev: InvoiceRow[]) => [...prev].sort(sortFn)); break;
-      case 'estimate': setEstimateRows((prev: EstimateRow[]) => [...prev].sort(sortFn)); break;
-    }
+  const handleSort = (key: string) => {
+    setSortConfig(prev => {
+      if (prev.key === key) {
+        if (prev.direction === 'asc') return { key, direction: 'desc' };
+        if (prev.direction === 'desc') return { key: null, direction: null };
+      }
+      return { key, direction: 'asc' };
+    });
   };
+
+  const applySortAndFilter = <T extends any>(rows: T[], config: SortConfig, query: string, searchFields: string[]): T[] => {
+    let result = rows;
+    
+    // Filter
+    if (query) {
+      const lowQuery = query.toLowerCase();
+      result = result.filter((r: any) => 
+        searchFields.some(field => String(r[field] || '').toLowerCase().includes(lowQuery))
+      );
+    }
+
+    // Sort
+    if (!config.key || !config.direction) return result;
+    
+    return [...result].sort((a: any, b: any) => {
+      let valA = a[config.key!];
+      let valB = b[config.key!];
+
+      // Handle numbers
+      const numA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
+      const numB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
+      
+      if (!isNaN(numA) && !isNaN(numB)) {
+        return config.direction === 'asc' ? numA - numB : numB - numA;
+      }
+
+      // Handle strings
+      const strA = String(valA || '').toLowerCase();
+      const strB = String(valB || '').toLowerCase();
+      
+      if (config.direction === 'asc') {
+        return strA.localeCompare(strB, 'ru');
+      } else {
+        return strB.localeCompare(strA, 'ru');
+      }
+    });
+  };
+
+  const sortedSpecRows = React.useMemo(() => 
+    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier']), 
+    [specRows, sortConfig, searchQuery]
+  );
+  const sortedRequestRows = React.useMemo(() => 
+    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier']), 
+    [requestRows, sortConfig, searchQuery]
+  );
+  const sortedInvoiceRows = React.useMemo(() => 
+    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier']), 
+    [invoiceRows, sortConfig, searchQuery]
+  );
+  const sortedEstimateRows = React.useMemo(() => 
+    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier']), 
+    [estimateRows, sortConfig, searchQuery]
+  );
 
   const groupRows = (stage: Stage, field: string) => {
     // Базовая заглушка: просто логируем, так как сложная группировка требует UI-состояния
@@ -525,8 +583,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const estimateTotal = React.useMemo(() => {
-    const cost = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.costSum)) || 0), 0);
-    const client = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.clientSum)) || 0), 0);
+    const cost = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.costSum).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
+    const client = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.clientSum).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
     return {
       cost: cost.toLocaleString('ru-RU'),
       client: client.toLocaleString('ru-RU')
@@ -544,13 +602,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       value={{
         projectName,
         setProjectName,
-        specRows,
+        specRows: sortedSpecRows,
         setSpecRows,
-        invoiceRows,
+        invoiceRows: sortedInvoiceRows,
         setInvoiceRows,
-        estimateRows,
+        estimateRows: sortedEstimateRows,
         setEstimateRows,
-        requestRows,
+        requestRows: sortedRequestRows,
         setRequestRows,
         configKeys,
         setConfigKeys,
@@ -568,12 +626,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         generateEstimate,
         estimateTotal,
         resetData,
-        sortRows,
+        sortConfig,
+        handleSort,
         groupRows,
         searchQuery,
         setSearchQuery,
-        completedStages,
-        completeStage
+        completeStage,
+        isDragging,
+        setIsDragging
       }}
     >
       {children}

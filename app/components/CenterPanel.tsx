@@ -1,8 +1,8 @@
 import React from 'react';
-import { 
-  Search, 
-  Folder, 
-  Edit2, 
+import {
+  Search,
+  Folder,
+  Edit2,
   Upload,
   GripHorizontal,
   FolderOpen,
@@ -13,12 +13,13 @@ import {
   Clock,
   AlertCircle
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Stage, SpecRow, EstimateRow, UploadedFile } from '../types';
 import { FilesPanel } from './FilesPanel';
 import { useData, genId, emptyInvoiceRow, InvoiceRow, SPEC_COLUMNS, emptySpecRow } from '../context/DataContext';
-import { ChevronDown, ChevronRight, Split } from 'lucide-react';
+import { ChevronDown, ChevronRight, Split, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -34,9 +35,21 @@ interface CenterPanelProps {
 export function CenterPanel({ currentStage, projectName, setProjectName, files }: CenterPanelProps) {
   const [isEditingName, setIsEditingName] = React.useState(false);
   const [filesOpen, setFilesOpen] = React.useState(false);
-  const [isDragging, setIsDragging] = React.useState(false);
-
-  const { uploadStatuses, invoiceRows, specRows, requestRows, estimateRows, setInvoiceRows, setSpecRows, setRequestRows, setEstimateRows, searchQuery, setSearchQuery } = useData();
+  const { 
+    uploadStatuses, 
+    invoiceRows, 
+    specRows, 
+    requestRows, 
+    estimateRows, 
+    setInvoiceRows, 
+    setSpecRows, 
+    setRequestRows, 
+    setEstimateRows, 
+    searchQuery, 
+    setSearchQuery, 
+    handleFile,
+    isDragging 
+  } = useData();
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, { status: string; time: string }>);
 
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -47,39 +60,9 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
     }
   }, [isEditingName]);
 
-  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    
-    // Simulating file upload
-    const droppedFiles = e.dataTransfer.files;
-    if (droppedFiles.length > 0) {
-      // In a real app we'd trigger an upload process
-      console.log('Загружено файлов:', droppedFiles.length);
-      // For now we just show a toast or feedback
-    }
-  };
-
   const handleRowChange = React.useCallback(
     (index: number, field: string, value: string) => {
+      // ... row change logic (keep it same but fix dependencies)
       if (currentStage === 'spec') {
         const updated = [...specRows];
         updated[index] = { ...updated[index], [field]: value };
@@ -88,27 +71,26 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
         const updated = [...invoiceRows];
         updated[index] = { ...updated[index], [field]: value } as InvoiceRow;
 
-        // Расчеты для инвойса
         const qty = parseFloat(String(field === 'quantity' ? value : updated[index].quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         const price = parseFloat(String(field === 'price' ? value : updated[index].price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         const discountStr = String(field === 'discount' ? value : updated[index].discount || '');
         const isPercent = discountStr.includes('%');
         let dVal = parseFloat(discountStr) || 0;
-        
+
         let pad = price;
         if (dVal > 0) {
           pad = isPercent ? price * (1 - dVal / 100) : Math.max(0, price - dVal);
         }
-        
+
         updated[index].priceAfterDiscount = pad.toFixed(2);
         updated[index].totalBeforeDiscount = (qty * price).toFixed(2);
         updated[index].total = (qty * pad).toFixed(2);
-        
+
         setInvoiceRows(updated);
       } else if (currentStage === 'estimate') {
         const updated = [...estimateRows];
         updated[index] = { ...updated[index], [field]: value };
-        
+
         if (field === 'price' || field === 'quantity') {
           const q = parseFloat(String(updated[index].quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
           const p = parseFloat(String(updated[index].price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
@@ -121,118 +103,110 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
   );
 
   return (
-    <div className="flex flex-col flex-1 bg-slate-50 relative min-w-0 h-full">
-      {/* Header - Attic */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shadow-sm h-[72px] shrink-0">
-        
-        {/* Left: Project Name */}
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          {isEditingName ? (
-            <input
-              ref={inputRef}
-              type="text"
-              value={projectName}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProjectName(e.target.value)}
-              onBlur={() => setIsEditingName(false)}
-              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && setIsEditingName(false)}
-              className="text-xl font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
-            />
-          ) : (
-            <div 
-              className="group flex items-center gap-2 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
-              onClick={() => setIsEditingName(true)}
-              title="Редактировать название"
-            >
-              <h1 className="text-xl font-bold text-slate-800 truncate">{projectName}</h1>
-              <Edit2 className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-          )}
-        </div>
-
-        {/* Center: Search */}
-        <div className="flex-1 flex justify-center px-4">
-          <div className="relative w-full max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Глобальный поиск по разделам..."
-              className="w-full bg-slate-100 hover:bg-slate-200 focus:bg-white border border-transparent focus:border-indigo-300 rounded-full pl-10 pr-4 py-2 text-sm text-slate-700 outline-none transition-all shadow-sm focus:shadow-md"
-            />
-          </div>
-        </div>
-
-        {/* Right: Upload Statuses & Files Button */}
-        <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
-          
-          {/* Upload Statuses List */}
-          {fileEntries.length > 0 && (
-            <div className="flex flex-row-reverse items-center gap-2 overflow-hidden max-w-[250px] mr-2">
-              {fileEntries.map(([filename, data]) => (
-                <div key={filename} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 px-2 py-1 rounded-md shrink-0" title={`${filename}: ${data.status}`}>
-                   {data.status.includes('Ошибка') ? <AlertCircle size={14} className="text-red-500 shrink-0" /> 
-                    : data.status.includes('Готово') ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
-                    : <Clock size={14} className="text-indigo-500 animate-pulse shrink-0" />}
-                   <span className="truncate max-w-[80px] text-slate-700 font-medium">{filename}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            onClick={() => setFilesOpen(!filesOpen)}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm border border-slate-200 hover:border-indigo-300",
-              filesOpen ? "bg-indigo-50 text-indigo-700" : "bg-white text-slate-700 hover:bg-slate-50"
-            )}
-            title="Открыть панель файлов"
-          >
-            <FolderOpen className="w-4 h-4" />
-            <span>Файлы</span>
-            {files.length > 0 && (
-              <span className="flex items-center justify-center bg-indigo-100 text-indigo-700 rounded-full w-5 h-5 text-[10px] ml-1">
-                {files.length}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Middle: Table Container */}
-      <div 
-        className="flex-1 overflow-auto relative bg-white m-4 mb-0 rounded-t-xl border-x border-t border-slate-200 shadow-sm"
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
+    <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
+      <motion.div 
+        animate={{ opacity: isDragging ? 0 : 1 }}
+        transition={{ duration: 0.2 }}
+        className="flex flex-col h-full"
       >
-        {isDragging && (
-          <div className="absolute inset-0 bg-indigo-50/90 z-20 flex flex-col items-center justify-center border-2 border-dashed border-indigo-400 rounded-xl transition-all">
-            <Upload className="w-16 h-16 text-indigo-500 mb-4 animate-bounce" />
-            <p className="text-xl font-semibold text-indigo-800">Перетащите файлы сюда</p>
-            <p className="text-sm text-indigo-600 mt-2">для загрузки в текущий раздел</p>
-          </div>
-        )}
+            {/* Header - Attic */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shadow-sm h-[72px] shrink-0">
 
-        <div className="min-w-max p-4 pb-0">
-           {currentStage === 'spec' && <SpecTable handleRowChange={handleRowChange} />}
-           {currentStage === 'request' && <RequestTable />}
-           {currentStage === 'invoice' && <InvoiceTable handleRowChange={handleRowChange} />}
-           {currentStage === 'estimate' && <EstimateTable handleRowChange={handleRowChange} />}
-        </div>
-      </div>
+              {/* Left: Project Name */}
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                {isEditingName ? (
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={projectName}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProjectName(e.target.value)}
+                    onBlur={() => setIsEditingName(false)}
+                    onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && setIsEditingName(false)}
+                    className="text-xl font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
+                  />
+                ) : (
+                  <div
+                    className="group flex items-center gap-2 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
+                    onClick={() => setIsEditingName(true)}
+                    title="Редактировать название"
+                  >
+                    <h1 className="text-xl font-bold text-slate-800 truncate">{projectName}</h1>
+                    <Edit2 className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                )}
+              </div>
+
+              {/* Center: Search */}
+              <div className="flex-1 flex justify-center px-4">
+                <div className="relative w-full max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Глобальный поиск по разделам..."
+                    className="w-full bg-slate-100 hover:bg-slate-200 focus:bg-white border border-transparent focus:border-indigo-300 rounded-full pl-10 pr-4 py-2 text-sm text-slate-700 outline-none transition-all shadow-sm focus:shadow-md"
+                  />
+                </div>
+              </div>
+
+              {/* Right: Upload Statuses & Files Button */}
+              <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
+
+                {/* Upload Statuses List */}
+                {fileEntries.length > 0 && (
+                  <div className="flex flex-row-reverse items-center gap-2 overflow-hidden max-w-[250px] mr-2">
+                    {fileEntries.map(([filename, data]) => (
+                      <div key={filename} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 px-2 py-1 rounded-md shrink-0" title={`${filename}: ${data.status}`}>
+                        {data.status.includes('Ошибка') ? <AlertCircle size={14} className="text-red-500 shrink-0" />
+                          : data.status.includes('Готово') ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+                            : <Clock size={14} className="text-indigo-500 animate-pulse shrink-0" />}
+                        <span className="truncate max-w-[80px] text-slate-700 font-medium">{filename}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setFilesOpen(!filesOpen)}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm border border-slate-200 hover:border-indigo-300",
+                    filesOpen ? "bg-indigo-50 text-indigo-700" : "bg-white text-slate-700 hover:bg-slate-50"
+                  )}
+                  title="Открыть панель файлов"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>Файлы</span>
+                  {files.length > 0 && (
+                    <span className="flex items-center justify-center bg-indigo-100 text-indigo-700 rounded-full w-5 h-5 text-[10px] ml-1">
+                      {files.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Middle: Table Container */}
+            <div className="flex-1 overflow-auto relative bg-white">
+              <div className="min-w-max h-full">
+                {currentStage === 'spec' && <SpecTable handleRowChange={handleRowChange} />}
+                {currentStage === 'request' && <RequestTable />}
+                {currentStage === 'invoice' && <InvoiceTable handleRowChange={handleRowChange} />}
+                {currentStage === 'estimate' && <EstimateTable handleRowChange={handleRowChange} />}
+              </div>
+            </div>
+          </motion.div>
 
       {/* Footer - Basement */}
-      <div className="mx-4 mb-4 bg-white border border-slate-200 border-t-0 rounded-b-xl px-6 py-3 flex items-center justify-between text-sm text-slate-600 shadow-sm">
+      <div className="bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between text-sm text-slate-600">
         {/* Left: Row Count */}
         <div className="flex items-center gap-4">
           <span className="text-slate-400 whitespace-nowrap">
             Всего строк: <span className="font-semibold text-slate-700">
               {currentStage === 'spec' ? specRows.length :
-               currentStage === 'request' ? requestRows.length :
-               currentStage === 'invoice' ? invoiceRows.length :
-               estimateRows.length}
+                currentStage === 'request' ? requestRows.length :
+                  currentStage === 'invoice' ? invoiceRows.length :
+                    estimateRows.length}
             </span>
           </span>
           <div className="w-px h-4 bg-slate-200" />
@@ -275,17 +249,90 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
   );
 }
 
+function EmptyStateBlock({ handleFile, currentStage }: { handleFile: any, currentStage: string }) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  return (
+    <div 
+      className="m-8 p-12 border-2 border-dashed border-indigo-200 rounded-xl flex flex-col items-center justify-center bg-indigo-50/30 hover:bg-indigo-50/50 cursor-pointer transition-colors"
+      onClick={() => fileInputRef.current?.click()}
+    >
+      <Upload className="w-12 h-12 text-indigo-300 mb-4" />
+      <p className="text-slate-700 font-medium mb-2">Нажмите или перетащите файлы для начала работы</p>
+      <p className="text-slate-500 text-sm mb-6 text-center max-w-md">Поддерживаются форматы Excel (.xlsx, .xls) и PDF. Можно выбрать несколько файлов одновременно.</p>
+      <input 
+        type="file" 
+        multiple 
+        className="hidden" 
+        ref={fileInputRef}
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            handleFile(e.target.files, currentStage);
+            e.target.value = '';
+          }
+        }} 
+      />
+      <div className="px-6 py-2.5 bg-white border border-indigo-200 text-indigo-600 rounded-lg text-sm font-medium hover:border-indigo-400 hover:text-indigo-700 transition-colors shadow-sm">
+        Выбрать файлы
+      </div>
+    </div>
+  );
+}
+
 // Subcomponents for tables
 
-function TableHeader({ columns }: { columns: string[] }) {
+interface Column {
+  key: string;
+  label: string;
+  align?: 'left' | 'center' | 'right';
+  sortable?: boolean;
+}
+
+function TableHeader({ columns }: { columns: Column[] }) {
+  const { sortConfig, handleSort } = useData();
+
   return (
-    <div className="grid border-b border-slate-300 bg-slate-100 rounded-t-lg font-semibold text-slate-700 text-sm sticky top-0" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(100px, 1fr))` }}>
-      {columns.map((col, idx) => (
-        <div key={idx} className="p-3 border-r border-slate-200 last:border-0 truncate flex items-center">
-           {col === '№' ? <GripHorizontal className="w-4 h-4 text-slate-400 mr-2 opacity-50" /> : null}
-           {col}
-        </div>
-      ))}
+    <div
+      className="flex bg-slate-100/80 backdrop-blur sticky top-0 z-10 border-b border-slate-300 h-12"
+    >
+      {columns.map((col, idx) => {
+        const isActive = sortConfig.key === col.key;
+        const isSortable = col.sortable !== false;
+
+        return (
+          <div
+            key={col.key}
+            className={cn(
+              "px-4 py-3 font-normal text-slate-700 text-sm flex items-center gap-2 select-none overflow-hidden border-r border-slate-200 last:border-0 transition-all",
+              col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start",
+              isSortable ? "cursor-pointer hover:bg-slate-200/50 group" : "cursor-default"
+            )}
+            style={{
+              flex: col.key === 'name' || col.label === 'Наименование' ? '2' :
+                col.key === '№' ? '0 0 60px' :
+                  col.key === 'unit' ? '0 0 100px' :
+                    col.key === 'quantity' ? '0 0 100px' : '1',
+              minWidth: col.key === '№' ? '60px' :
+                col.key === 'unit' ? '100px' :
+                  col.key === 'quantity' ? '100px' : '100px'
+            }}
+            onClick={() => isSortable && handleSort(col.key)}
+          >
+            <span className="truncate">{col.label}</span>
+            {isSortable && (
+              <div className={cn(
+                "shrink-0 transition-opacity",
+                isActive ? "opacity-100 text-indigo-600" : "opacity-0 group-hover:opacity-100 text-slate-400"
+              )}>
+                {isActive ? (
+                  sortConfig.direction === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                ) : (
+                  <ArrowUpDown className="w-3 h-3" />
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -295,160 +342,219 @@ interface SpecTableProps {
 }
 
 function SpecTable({ handleRowChange }: SpecTableProps) {
-  const { specRows, setSpecRows, handleUnmerge, searchQuery } = useData();
+  const { specRows, setSpecRows, handleUnmerge, handleFile } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
 
   const toggleExpand = (id: string) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const filteredRows = React.useMemo(() => {
-    if (!searchQuery) return specRows;
-    const q = searchQuery.toLowerCase();
-    return specRows.filter(r => 
-      (r.name?.toLowerCase().includes(q)) || 
-      (r.code?.toLowerCase().includes(q)) || 
-      (r.supplier?.toLowerCase().includes(q))
-    );
-  }, [specRows, searchQuery]);
+  const columns: Column[] = [
+    { key: '№', label: '№', align: 'center', sortable: false },
+    { key: 'name', label: 'Наименование' },
+    { key: 'brand', label: 'Марка' },
+    { key: 'code', label: 'Код' },
+    { key: 'supplier', label: 'Поставщик' },
+    { key: 'unit', label: 'Ед. изм', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', align: 'right' },
+    { key: 'mass', label: 'Масса', align: 'left' },
+    { key: 'note', label: 'Прим.' }
+  ];
 
-  const handleDeleteRow = React.useCallback(
-    (index: number) => {
-      setSpecRows(specRows.filter((_, i) => i !== index));
-    },
-    [specRows, setSpecRows]
-  );
+  const handleDeleteRow = (index: number) => {
+    setSpecRows(specRows.filter((_, i) => i !== index));
+  };
 
-  const handleAddRow = React.useCallback(() => {
+  const handleAddRow = () => {
     setSpecRows([...specRows, emptySpecRow()]);
-  }, [specRows, setSpecRows]);
-
-  const columnNames = ['№', ...SPEC_COLUMNS.map(c => c.label)];
+  };
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden min-w-full">
-        <TableHeader columns={columnNames} />
-        {filteredRows.map((row, idxRender) => {
-          const i = specRows.findIndex(r => r.id === row.id);
-          const hasChildren = row.children && row.children.length > 1;
-          const isExpanded = expandedRows[row.id];
+    <div className="flex flex-col">
+      <div className="bg-white min-w-full">
+        <TableHeader columns={columns} />
+        <div className="divide-y divide-slate-100">
+          {specRows.map((row, idxRender) => {
+            const hasChildren = row.children && row.children.length > 1;
+            const isExpanded = !!expandedRows[row.id];
 
-          return (
-            <React.Fragment key={row.id}>
-              <div className={cn(
-                "grid border-b border-slate-200 hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors",
-                hasChildren && "bg-slate-50/50"
-              )} style={{ gridTemplateColumns: `80px repeat(${SPEC_COLUMNS.length}, minmax(150px, 1fr))` }}>
-                
-                <div className="p-3 border-r border-slate-100 flex items-center justify-between group">
-                  <div className="flex items-center gap-1">
-                    {hasChildren && (
-                      <button onClick={() => toggleExpand(row.id)} className="p-0.5 hover:bg-slate-200 rounded text-slate-500">
-                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      </button>
-                    )}
-                    <span className="font-medium text-slate-400">{i + 1}</span>
-                  </div>
-                  <button onClick={() => handleDeleteRow(i)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-
-                {SPEC_COLUMNS.map(col => (
-                  <div key={col.key} className="p-3 border-r border-slate-100 flex items-center">
-                    <input 
-                      type="text"
+            return (
+              <React.Fragment key={row.id}>
+                <div
+                  className={cn(
+                    "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50/80 transition-colors group h-12",
+                    hasChildren && "bg-slate-50/30"
+                  )}
+                >
+                  {columns.map(col => (
+                    <div
+                      key={col.key}
                       className={cn(
-                        "w-full bg-transparent outline-none",
-                        col.key === 'name' ? "font-medium text-slate-900" : "text-slate-600",
-                        (col.key === 'quantity' || col.key === 'mass') && "text-right"
+                        "px-4 py-2 overflow-hidden border-r border-slate-100 last:border-0 h-full flex items-center",
+                        col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
                       )}
-                      value={(row as any)[col.key] || ''}
-                      onChange={(e) => handleRowChange(i, col.key, e.target.value)}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {hasChildren && isExpanded && (
-                <div className="bg-white border-b border-slate-100">
-                  {row.children?.map((child, childIdx) => (
-                    <div key={child.id} className="grid text-xs text-slate-500 border-b border-slate-50 hover:bg-slate-50 pl-8" style={{ gridTemplateColumns: `80px repeat(${SPEC_COLUMNS.length}, minmax(150px, 1fr))` }}>
-                      <div className="p-2 border-r border-slate-50 flex items-center justify-between group">
-                        <span>{i + 1}.{childIdx + 1}</span>
-                        <button 
-                          onClick={() => handleUnmerge(row.id, child.id)}
-                          className="opacity-0 group-hover:opacity-100 text-indigo-400 hover:text-indigo-600 transition-opacity p-0.5"
-                          title="Вынести из группы"
-                        >
-                          <Split size={12} />
-                        </button>
-                      </div>
-                      {SPEC_COLUMNS.map(col => (
-                        <div key={col.key} className="p-2 border-r border-slate-50 italic">
-                          {(child as any)[col.key]}
+                      style={{
+                        flex: col.key === 'name' ? '2' :
+                          col.key === '№' ? '0 0 60px' :
+                            col.key === 'unit' ? '0 0 100px' :
+                              col.key === 'quantity' ? '0 0 100px' : '1',
+                        minWidth: col.key === '№' ? '60px' :
+                          col.key === 'unit' ? '100px' :
+                            col.key === 'quantity' ? '100px' : '100px'
+                      }}
+                    >
+                      {col.key === '№' ? (
+                        <div className="relative w-full h-full flex items-center justify-center">
+                          {hasChildren && (
+                            <button
+                              onClick={() => toggleExpand(row.id)}
+                              className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
+                            >
+                              {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
+                            </button>
+                          )}
+                          <span className="text-slate-400 tabular-nums">{(idxRender + 1).toString().padStart(2, '0')}</span>
                         </div>
-                      ))}
+                      ) : col.key === 'name' ? (
+                        <div className="flex items-center justify-between w-full gap-2 overflow-hidden">
+                          <input
+                            className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-900 truncate"
+                            value={row.name || ''}
+                            onChange={(e) => handleRowChange(idxRender, col.key, e.target.value)}
+                          />
+                          <button onClick={() => handleDeleteRow(idxRender)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity shrink-0">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <input
+                          className={cn(
+                            "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-600 truncate",
+                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                          )}
+                          value={String((row as any)[col.key] || '')}
+                          onChange={(e) => handleRowChange(idxRender, col.key, e.target.value)}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
-              )}
-            </React.Fragment>
-          );
-        })}
-        {filteredRows.length === 0 && (
-          <div className="p-8 text-center text-slate-400 text-sm">
-            Нет добавленных позиций. Загрузите файл или добавьте строку вручную.
-          </div>
-        )}
+
+                {isExpanded && row.children?.map((child, childIdx) => (
+                  <div key={child.id} className="flex items-center text-xs bg-slate-50/20 border-b border-slate-100 h-10 italic group/child">
+                    {columns.map(col => (
+                      <div
+                        key={col.key}
+                        className={cn(
+                          "px-4 py-1 overflow-hidden border-r border-slate-100/50 last:border-0 h-full flex items-center",
+                          col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
+                        )}
+                        style={{
+                          flex: col.key === 'name' ? '2' :
+                            col.key === '№' ? '0 0 60px' :
+                              col.key === 'unit' ? '0 0 100px' :
+                                col.key === 'quantity' ? '0 0 100px' : '1',
+                          minWidth: col.key === '№' ? '60px' :
+                            col.key === 'unit' ? '100px' :
+                              col.key === 'quantity' ? '100px' : '100px'
+                        }}
+                      >
+                        {col.key === '№' ? (
+                          <div className="flex items-center gap-2 pl-6">
+                            <span className="text-slate-300 tabular-nums">{(childIdx + 1)}</span>
+                          </div>
+                        ) : col.key === 'name' ? (
+                          <div className="flex items-center justify-between w-full pr-2">
+                            <span className="text-slate-500 truncate">{child.name}</span>
+                            <button
+                              onClick={() => handleUnmerge(row.id, child.id)}
+                              title="Разделить позицию"
+                              className="opacity-0 group-hover/child:opacity-100 p-1 hover:bg-indigo-100 text-indigo-500 rounded transition-all"
+                            >
+                              <Split className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 truncate">{String((child as any)[col.key] || '')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </React.Fragment>
+            );
+          })}
+          {specRows.length === 0 && (
+            <div className="p-4">
+              <EmptyStateBlock handleFile={handleFile} currentStage="spec" />
+            </div>
+          )}
+        </div>
       </div>
-      <button 
-        onClick={handleAddRow}
-        className="self-start flex items-center gap-2 px-4 py-2 mt-2 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200"
-      >
-        <Plus className="w-4 h-4" />
-        Добавить строку спецификации
-      </button>
+      {specRows.length > 0 && (
+        <button
+          onClick={handleAddRow}
+          className="self-start flex items-center gap-2 px-4 py-2 mt-4 ml-4 mb-4 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 shadow-sm"
+        >
+          <Plus className="w-4 h-4" />
+          Добавить строку спецификации
+        </button>
+      )}
     </div>
   );
 }
 
 function RequestTable() {
-  const { requestRows, searchQuery } = useData();
-  const columns = ['№', 'Наименование', 'Марка', 'Код', 'Поставщик', 'Количество', 'Единица измерения', 'Масса', 'Примечание'];
-  
-  const filteredRows = React.useMemo(() => {
-    if (!searchQuery) return requestRows;
-    const q = searchQuery.toLowerCase();
-    return requestRows.filter(r => 
-      (r.name?.toLowerCase().includes(q)) || 
-      (r.code?.toLowerCase().includes(q)) || 
-      (r.supplier?.toLowerCase().includes(q))
-    );
-  }, [requestRows, searchQuery]);
+  const { requestRows, handleFile } = useData();
+
+  const columns: Column[] = [
+    { key: '№', label: '№', align: 'center', sortable: false },
+    { key: 'name', label: 'Наименование' },
+    { key: 'brand', label: 'Марка' },
+    { key: 'code', label: 'Код' },
+    { key: 'supplier', label: 'Поставщик' },
+    { key: 'unit', label: 'Ед. изм', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', align: 'right' }
+  ];
 
   return (
-    <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
+    <div className="bg-white">
       <TableHeader columns={columns} />
-      {filteredRows.map((row, i) => (
-        <div key={row.id} className="grid border-b border-slate-200 hover:bg-amber-50/50 text-sm text-slate-600 transition-colors" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(100px, 1fr))` }}>
-          <div className="p-3 border-r border-slate-100 font-medium text-slate-400">{i + 1}</div>
-          <div className="p-3 border-r border-slate-100 font-medium text-slate-900 truncate">{row.name}</div>
-          <div className="p-3 border-r border-slate-100 truncate">{row.brand}</div>
-          <div className="p-3 border-r border-slate-100 truncate">{row.code}</div>
-          <div className="p-3 border-r border-slate-100 truncate text-amber-600 font-medium">{row.supplier || 'Ожидание...'}</div>
-          <div className="p-3 border-r border-slate-100 text-right">{row.quantity}</div>
-          <div className="p-3 border-r border-slate-100 text-center">{row.unit}</div>
-          <div className="p-3 border-r border-slate-100 text-right">{row.mass}</div>
-          <div className="p-3 text-slate-400 truncate text-xs flex items-center">{row.note}</div>
-        </div>
-      ))}
-      {filteredRows.length === 0 && (
-        <div className="p-8 text-center text-slate-400 text-sm">
-          Нет добавленных запросов.
-        </div>
-      )}
+      <div className="divide-y divide-slate-100">
+        {requestRows.map((row, i) => (
+          <div key={row.id} className="flex items-center text-sm border-b border-slate-50 hover:bg-slate-50 transition-colors group h-12">
+            {columns.map(col => (
+              <div
+                key={col.key}
+                className={cn(
+                  "px-4 py-2 border-r border-slate-100 last:border-0 h-full flex items-center",
+                  col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
+                )}
+                style={{
+                  flex: col.key === 'name' ? '2' :
+                    col.key === '№' ? '0 0 60px' :
+                      col.key === 'unit' ? '0 0 100px' :
+                        col.key === 'quantity' ? '0 0 100px' : '1',
+                  minWidth: col.key === '№' ? '60px' :
+                    col.key === 'unit' ? '100px' :
+                      col.key === 'quantity' ? '100px' : '100px'
+                }}
+              >
+                {col.key === '№' ? (
+                  <span className="text-slate-400 tabular-nums">{(i + 1).toString().padStart(2, '0')}</span>
+                ) : (
+                  <span className="text-slate-600 truncate">{String((row as any)[col.key] || '')}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
+        {requestRows.length === 0 && (
+          <div className="p-4">
+            <EmptyStateBlock handleFile={handleFile} currentStage="request" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -458,158 +564,103 @@ interface InvoiceTableProps {
 }
 
 function InvoiceTable({ handleRowChange }: InvoiceTableProps) {
-  const { invoiceRows, setInvoiceRows, searchQuery } = useData();
-  const columns = ['№', 'Артикул', 'Наименование', 'Количество', 'Единица измерения', 'НДС (%)', 'Цена (с НДС)', 'Скидка', 'Цена со скидкой', 'Сумма без скидки', 'Сумма (с НДС)'];
-  
-  const filteredRows = React.useMemo(() => {
-    if (!searchQuery) return invoiceRows;
-    const q = searchQuery.toLowerCase();
-    return invoiceRows.filter((r: InvoiceRow) => 
-      (r.name?.toLowerCase().includes(q)) || 
-      (r.article?.toLowerCase().includes(q)) || 
-      (r.supplier?.toLowerCase().includes(q))
-    );
-  }, [invoiceRows, searchQuery]);
+  const { invoiceRows, setInvoiceRows, handleFile } = useData();
 
-  const handleAddRow = React.useCallback(() => {
+  const columns: Column[] = [
+    { key: '№', label: '№', align: 'center', sortable: false },
+    { key: 'name', label: 'Наименование' },
+    { key: 'article', label: 'Артикул' },
+    { key: 'supplier', label: 'Поставщик' },
+    { key: 'quantity', label: 'Кол-во', align: 'right' },
+    { key: 'unit', label: 'Ед. изм', align: 'center' },
+    { key: 'price', label: 'Цена', align: 'right' },
+    { key: 'total', label: 'Итого', align: 'right' }
+  ];
+
+  const handleAddRow = () => {
     setInvoiceRows([...invoiceRows, emptyInvoiceRow()]);
-  }, [invoiceRows, setInvoiceRows]);
+  };
 
-  const handleDeleteRow = React.useCallback((index: number) => {
-    setInvoiceRows(invoiceRows.filter((_, i: number) => i !== index));
-  }, [invoiceRows, setInvoiceRows]);
-
-  // If table is totally empty, optionally show one row
-  React.useEffect(() => {
-    if (invoiceRows.length === 0) {
-      setInvoiceRows([emptyInvoiceRow()]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const handleDeleteRow = (index: number) => {
+    setInvoiceRows(invoiceRows.filter((_, i) => i !== index));
+  };
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
+    <div className="flex flex-col">
+      <div className="bg-white">
         <TableHeader columns={columns} />
-        {filteredRows.map((row: InvoiceRow, idxRender: number) => {
-          const i = invoiceRows.findIndex((r: InvoiceRow) => r.id === row.id);
-          return (
-            <div key={row.id} className={cn(
-            "grid border-b transition-colors text-sm",
-            row.isUncertain 
-              ? "border-amber-400 bg-amber-50 hover:bg-amber-100" 
-              : "border-slate-200 hover:bg-emerald-50/50 text-slate-600"
-          )} style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(100px, 1fr))` }}>
-            <div className="p-3 border-r flex items-center justify-between group" style={{ borderColor: 'inherit' }}>
-              <span className={cn(row.isUncertain ? "text-amber-700 font-bold flex items-center gap-1" : "text-slate-400 font-medium")}>
-                {row.isUncertain && <AlertTriangle className="w-4 h-4 text-amber-500" />}
-                {i + 1}
-              </span>
-              <button 
-                onClick={() => handleDeleteRow(i)} 
-                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity"
-                title="Удалить строку"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+        <div className="divide-y divide-slate-100">
+          {invoiceRows.map((row, i) => (
+            <div
+              key={row.id}
+              className={cn(
+                "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50 transition-colors group h-12",
+                row.isUncertain && "bg-amber-50/50"
+              )}
+            >
+              {columns.map(col => (
+                <div
+                  key={col.key}
+                  className={cn(
+                    "px-4 py-2 border-r border-slate-100 last:border-0 h-full flex items-center",
+                    col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
+                  )}
+                  style={{
+                    flex: col.key === 'name' ? '2' :
+                      col.key === '№' ? '0 0 60px' :
+                        col.key === 'unit' ? '0 0 100px' :
+                          col.key === 'quantity' ? '0 0 100px' : '1',
+                    minWidth: col.key === '№' ? '60px' :
+                      col.key === 'unit' ? '100px' :
+                        col.key === 'quantity' ? '100px' : '100px'
+                  }}
+                >
+                  {col.key === '№' ? (
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      {row.isUncertain && <AlertTriangle className="absolute left-1 w-3 h-3 text-amber-500 shrink-0" />}
+                      <span className="text-slate-400 tabular-nums">{(i + 1).toString().padStart(2, '0')}</span>
+                    </div>
+                  ) : col.key === 'name' ? (
+                    <div className="flex items-center justify-between w-full gap-2 overflow-hidden">
+                      <input
+                        className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-900 truncate"
+                        value={row.name || ''}
+                        onChange={(e) => handleRowChange(i, 'name', e.target.value)}
+                      />
+                      <button onClick={() => handleDeleteRow(i)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity shrink-0">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      className={cn(
+                        "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-600 truncate",
+                        col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                      )}
+                      value={String((row as any)[col.key] || '')}
+                      onChange={(e) => handleRowChange(i, col.key, e.target.value)}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
-            
-            <div className="p-3 border-r font-mono text-xs flex items-center" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className="w-full bg-transparent outline-none truncate text-inherit" 
-                value={row.article || ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'article', e.target.value)} 
-                placeholder="Артикул..."
-              />
+          ))}
+          {invoiceRows.length === 0 && (
+            <div className="p-4">
+              <EmptyStateBlock handleFile={handleFile} currentStage="invoice" />
             </div>
-            
-            <div className="p-3 border-r font-medium flex items-center" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className={cn("w-full bg-transparent outline-none truncate", !row.isUncertain && "text-slate-900")} 
-                value={row.name || ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'name', e.target.value)} 
-                placeholder="Наименование..."
-              />
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-end" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className="w-full bg-transparent outline-none text-right" 
-                value={row.quantity !== undefined ? row.quantity : ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'quantity', e.target.value)} 
-                placeholder="Кол-во"
-              />
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-center" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className="w-full bg-transparent outline-none text-center" 
-                value={row.unit || ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'unit', e.target.value)} 
-              />
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-center" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className="w-full bg-transparent outline-none text-center opacity-70" 
-                value={row.vatRate || ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'vatRate', e.target.value)} 
-              />
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-end" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className="w-full bg-transparent outline-none text-right" 
-                value={row.price !== undefined ? row.price : ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'price', e.target.value)} 
-                placeholder="0.00"
-              />
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-end" style={{ borderColor: 'inherit' }}>
-              <input 
-                type="text" 
-                className="w-full bg-transparent outline-none text-right text-emerald-600 font-medium" 
-                value={row.discount || ''} 
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'discount', e.target.value)} 
-                placeholder="Скидка"
-              />
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-end font-medium" style={{ borderColor: 'inherit' }}>
-              {row.priceAfterDiscount ? `${row.priceAfterDiscount} ₽` : ''}
-            </div>
-            
-            <div className="p-3 border-r flex items-center justify-end" style={{ borderColor: 'inherit' }}>
-              {row.totalBeforeDiscount ? `${row.totalBeforeDiscount} ₽` : ''}
-            </div>
-            
-            <div className={cn("p-3 flex items-center justify-end font-bold", row.isUncertain ? "text-amber-900 bg-amber-200/50" : "text-slate-900 bg-slate-50")}>
-              {row.total ? `${row.total} ₽` : ''}
-            </div>
-          </div>
-          );
-        })}
-        {filteredRows.length === 0 && (
-          <div className="p-8 text-center text-slate-400 text-sm">
-            Нет добавленных позиций.
-          </div>
-        )}
+          )}
+        </div>
       </div>
-      
-      <button 
-        onClick={handleAddRow}
-        className="self-start flex items-center gap-2 px-4 py-2 mt-2 text-sm font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors border border-emerald-200"
-      >
-        <Plus className="w-4 h-4" />
-        Добавить позицию
-      </button>
+      {invoiceRows.length > 0 && (
+        <button
+          onClick={handleAddRow}
+          className="self-start flex items-center gap-2 px-4 py-2 mt-4 ml-4 mb-4 text-sm font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors border border-emerald-200 shadow-sm"
+        >
+          <Plus className="w-4 h-4" />
+          Добавить позицию из счета
+        </button>
+      )}
     </div>
   );
 }
@@ -619,101 +670,86 @@ interface EstimateTableProps {
 }
 
 function EstimateTable({ handleRowChange }: EstimateTableProps) {
-  const { estimateRows, searchQuery } = useData();
-  const columns = ['№', 'Вид работы', 'Наименование', 'Ед. изм.', 'Количество', 'Себестоимость', 'Цена заказчика'];
-  
-  const filteredRows = React.useMemo(() => {
-    if (!searchQuery) return estimateRows;
-    const q = searchQuery.toLowerCase();
-    return estimateRows.filter(r => 
-      (r.name?.toLowerCase().includes(q)) || 
-      (r.workType?.toLowerCase().includes(q)) || 
-      (r.supplier?.toLowerCase().includes(q))
-    );
-  }, [estimateRows, searchQuery]);
+  const { estimateRows, handleFile } = useData();
+
+  const columns: Column[] = [
+    { key: '№', label: '№', align: 'center', sortable: false },
+    { key: 'workType', label: 'Вид работы' },
+    { key: 'name', label: 'Наименование' },
+    { key: 'unit', label: 'Ед. изм', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', align: 'right' },
+    { key: 'costPrice', label: 'Себестоимость', align: 'right' },
+    { key: 'clientPrice', label: 'Цена заказчика', align: 'right' }
+  ];
 
   return (
-    <div className="border border-slate-200 rounded-lg shadow-sm bg-white overflow-hidden">
-      <div className="grid bg-slate-50 border-b border-slate-200 divide-x divide-slate-200" style={{ gridTemplateColumns: '50px 180px 1.5fr 80px 100px 120px 120px' }}>
-        {columns.map((col, idx) => (
-          <div key={idx} className="p-3 text-xs font-bold text-slate-500 uppercase flex items-center justify-center text-center">
-            {col}
+    <div className="bg-white min-w-full">
+      <TableHeader columns={columns} />
+      <div className="divide-y divide-slate-100">
+        {estimateRows.map((row, i) => (
+          <div key={row.id} className="flex items-center text-sm border-b border-slate-50 hover:bg-slate-50 transition-colors group h-14">
+            {columns.map(col => (
+              <div
+                key={col.key}
+                className={cn(
+                  "px-4 py-2 border-r border-slate-100 last:border-0 h-full flex items-center",
+                  col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
+                )}
+                style={{
+                  flex: col.key === 'name' ? '2' :
+                    col.key === '№' ? '0 0 60px' :
+                      col.key === 'unit' ? '0 0 100px' :
+                        col.key === 'quantity' ? '0 0 100px' : '1',
+                  minWidth: col.key === '№' ? '60px' :
+                    col.key === 'unit' ? '100px' :
+                      col.key === 'quantity' ? '100px' : '100px'
+                }}
+              >
+                {col.key === '№' ? (
+                  <span className="text-slate-400 tabular-nums">{(i + 1).toString().padStart(2, '0')}</span>
+                ) : col.key === 'workType' ? (
+                  <input
+                    className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-500 text-xs"
+                    value={row.workType || ''}
+                    onChange={(e) => handleRowChange(i, 'workType', e.target.value)}
+                  />
+                ) : col.key === 'name' ? (
+                  <input
+                    className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-900 truncate"
+                    value={row.name || ''}
+                    onChange={(e) => handleRowChange(i, 'name', e.target.value)}
+                  />
+                ) : col.key === 'costPrice' || col.key === 'clientPrice' ? (
+                  <div className="flex flex-col items-end w-full">
+                    <input
+                      className={cn(
+                        "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-right",
+                        col.key === 'costPrice' ? "text-blue-600" : "text-emerald-600"
+                      )}
+                      value={String((row as any)[col.key] || '')}
+                      onChange={(e) => handleRowChange(i, col.key, e.target.value)}
+                    />
+                    <span className="text-[10px] text-slate-400 px-1 antialiased">
+                      {col.key === 'costPrice' ? row.costSum : row.clientSum} ₽
+                    </span>
+                  </div>
+                ) : (
+                  <input
+                    className={cn(
+                      "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-600 truncate",
+                      col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                    )}
+                    value={String((row as any)[col.key] || '')}
+                    onChange={(e) => handleRowChange(i, col.key, e.target.value)}
+                  />
+                )}
+              </div>
+            ))}
           </div>
         ))}
-      </div>
-      <div className="divide-y divide-slate-100">
-        {filteredRows.map((row, idxRender) => {
-          const i = estimateRows.findIndex(r => r.id === row.id);
-          return (
-          <div key={row.id} className="grid hover:bg-indigo-50/30 text-sm text-slate-600 transition-colors divide-x divide-slate-100" style={{ gridTemplateColumns: '50px 180px 1.5fr 80px 100px 120px 120px' }}>
-            <div className="p-3 flex items-center justify-center font-medium text-slate-400">{idxRender + 1}</div>
-            
-            <div className="p-3 flex items-center">
-              <input 
-                 type="text"
-                 className="w-full bg-transparent outline-none text-slate-700"
-                 value={row.workType || ''}
-                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'workType', e.target.value)}
-                 placeholder="Вид работы..."
-               />
-            </div>
-
-            <div className="p-3 flex items-center font-medium text-slate-800">
-              <input 
-                 type="text"
-                 className="w-full bg-transparent outline-none font-medium text-slate-800"
-                 value={row.name || ''}
-                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'name', e.target.value)}
-                 placeholder="Наименование..."
-               />
-            </div>
-            
-            <div className="p-3 flex items-center justify-center text-slate-500 italic">
-               <input 
-                 type="text"
-                 className="w-full bg-transparent text-center outline-none"
-                 value={row.unit || ''}
-                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'unit', e.target.value)}
-                 placeholder="ед."
-               />
-            </div>
-
-            <div className="p-3 flex items-center justify-center">
-              <input 
-                type="text"
-                className="w-full bg-transparent text-center outline-none"
-                value={row.quantity}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'quantity', e.target.value)}
-              />
-            </div>
-            
-            <div className="p-3 flex flex-col items-end justify-center">
-               <input 
-                 type="text"
-                 className="w-full bg-transparent text-right outline-none font-semibold text-blue-600"
-                 value={row.costPrice}
-                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'costPrice', e.target.value)}
-                 placeholder="0.00"
-               />
-               <span className="text-[10px] text-slate-400 font-bold">{row.costSum} ₽</span>
-            </div>
-            
-            <div className="p-3 flex flex-col items-end justify-center bg-indigo-50/20">
-               <input 
-                 type="text"
-                 className="w-full bg-transparent text-right outline-none font-bold text-emerald-600"
-                 value={row.clientPrice}
-                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRowChange(i, 'clientPrice', e.target.value)}
-                 placeholder="0.00"
-               />
-               <span className="text-[10px] text-emerald-500/70 font-bold">{row.clientSum} ₽</span>
-            </div>
-          </div>
-          );
-        })}
-        {filteredRows.length === 0 && (
-          <div className="p-8 text-center text-slate-400 text-sm italic">
-            Начните со Спецификаций и Счетов, чтобы сформировать смету.
+        {estimateRows.length === 0 && (
+          <div className="p-4">
+            <EmptyStateBlock handleFile={handleFile} currentStage="estimate" />
           </div>
         )}
       </div>
