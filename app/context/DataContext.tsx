@@ -308,6 +308,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
+    // Reset search filter so new rows are visible
+    setSearchQuery('');
+
     // Рефакторинг: сбор данных для пакетного обновления
     const allNewSpecRows: SpecRow[] = [];
     const allNewInvoiceRows: InvoiceRow[] = [];
@@ -400,17 +403,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
             allNewInvoiceRows.push(...newRowsToAppend);
           }
           
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Готово (Локально)', time: currentTime } }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
         // Sync status 'ok' to server
         updateFileStatusOnServer(file.name, 'ok');
       } catch (e: any) {
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: e.message, time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
       }
     } else if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
-        return;
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
+        continue;
       }
 
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Конвертация и Анализ ИИ...', time: currentTime } }));
@@ -493,19 +496,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
         updateFileStatusOnServer(file.name, 'ok');
       } catch (e: any) {
         console.error('AI Processing error:', e);
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: e.message, time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
       }
     }
     } // closes for loop
 
-    // Финальное пакетное обновление стейта
-    if (allNewSpecRows.length > 0) {
-      setSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
-      setBackupSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
-    }
-    if (allNewInvoiceRows.length > 0) {
-      setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...allNewInvoiceRows]);
-    }
+    // Финальное пакетное обновление стейта (всегда вызываем — пустые массивы безопасны)
+    setSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
+    setBackupSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
+    setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...allNewInvoiceRows]);
   }, [yandexConfig, updateFileStatusOnServer]);
 
   const toggleMerge = useCallback(() => {

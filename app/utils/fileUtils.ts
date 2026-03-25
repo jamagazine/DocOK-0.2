@@ -35,7 +35,7 @@ export async function parseFile(file: File): Promise<ParsedFile> {
         if (file.name.toLowerCase().endsWith('.csv')) {
           workbook = XLSX.read(data as string, { type: 'string' });
         } else {
-          workbook = XLSX.read(data, { type: 'binary' });
+          workbook = XLSX.read(data, { type: 'array' });
         }
 
         const firstSheetName = workbook.SheetNames[0];
@@ -105,7 +105,7 @@ export async function parseFile(file: File): Promise<ParsedFile> {
     if (file.name.toLowerCase().endsWith('.csv')) {
       reader.readAsText(file, 'utf-8');
     } else {
-      reader.readAsBinaryString(file);
+      reader.readAsArrayBuffer(file);
     }
   });
 }

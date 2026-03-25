@@ -609,7 +609,7 @@ async def storage_delete(name: str):
     disk_name = None
     for k, v in manifest.items():
         if isinstance(v, dict):
-            if v.get("original_name") == name:
+            if v.get("originalName") == name:
                 disk_name = k
                 break
         elif v == name:
@@ -642,7 +642,7 @@ async def storage_get(name: str):
     disk_name = None
     for k, v in manifest.items():
         if isinstance(v, dict):
-            if v.get("original_name") == name:
+            if v.get("originalName") == name:
                 disk_name = k
                 break
         elif v == name:
