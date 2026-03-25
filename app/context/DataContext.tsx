@@ -431,7 +431,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } else if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
-        continue;
+        return;
       }
 
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
