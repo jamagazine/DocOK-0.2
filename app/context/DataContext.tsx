@@ -252,6 +252,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
   
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
 
+  // Load files from storage on mount
+  useEffect(() => {
+    const fetchStorageFiles = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/storage/files');
+        if (res.ok) {
+          const files = await res.json();
+          const restoredStatuses: Record<string, UploadStatus> = {};
+          files.forEach((f: any) => {
+            restoredStatuses[f.name] = {
+              status: 'Готово (Хранилище)',
+              time: f.time,
+              size: f.size
+            };
+          });
+          setUploadStatuses(prev => ({ ...prev, ...restoredStatuses }));
+        }
+      } catch (e) {
+        console.error('Failed to fetch storage files:', e);
+      }
+    };
+    fetchStorageFiles();
+  }, []);
+
   // Reset pagination and selection on stage change
   useEffect(() => {
     setCurrentPage(1);
@@ -274,11 +298,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     for (const file of fileArray) {
       const now = new Date();
-    const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
-    setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime, size: file.size } }));
+      const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
+      setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime, size: file.size } }));
 
-    const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
-    const useAi = forceAI || isPdfOrImage;
+      // Upload to physical storage
+      try {
+        const uploadData = new FormData();
+        uploadData.append('file', file);
+        await fetch('http://localhost:8000/api/storage/upload', {
+          method: 'POST',
+          body: uploadData,
+        });
+      } catch (e) {
+        console.error('Failed to upload file to storage:', e);
+      }
+
+      const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
+      const useAi = forceAI || isPdfOrImage;
 
     if (!useAi) {
       setUploadStatuses((prev: Record<string, any>) => ({ 
@@ -701,6 +737,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       delete next[fileName];
       return next;
     });
+
+    // Delete from physical storage
+    fetch(`http://localhost:8000/api/storage/files/${fileName}`, { method: 'DELETE' })
+      .catch(e => console.error('Failed to delete file from storage:', e));
 
     // 2. Remove specRows (including cascade in merged groups)
     setSpecRows(prev => {

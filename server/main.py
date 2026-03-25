@@ -27,9 +27,11 @@ app.add_middleware(
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 TEMP_INPUT_DIR = os.path.join(os.path.dirname(__file__), "temp_output")
+STORAGE_DIR = os.path.join(os.path.dirname(__file__), "storage")
 
-# Ensure temp dir exists
+# Ensure dirs exist
 os.makedirs(TEMP_INPUT_DIR, exist_ok=True)
+os.makedirs(STORAGE_DIR, exist_ok=True)
 
 def get_yandex_keys():
     if not os.path.exists(CONFIG_FILE):
@@ -416,4 +418,60 @@ async def process_invoice(
         # if os.path.exists(temp_path):
         #     os.remove(temp_path)
         pass
+
+
+def secure_filename(filename: str) -> str:
+    """
+    Sanitize filename to prevent directory traversal.
+    """
+    filename = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
+    return filename
+
+
+@app.post("/api/storage/upload")
+async def storage_upload(file: UploadFile = File(...)):
+    filename = secure_filename(file.filename)
+    dest_path = os.path.join(STORAGE_DIR, filename)
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"status": "success", "filename": filename}
+
+
+@app.get("/api/storage/files")
+async def storage_list():
+    files = []
+    if os.path.exists(STORAGE_DIR):
+        for f in os.listdir(STORAGE_DIR):
+            path = os.path.join(STORAGE_DIR, f)
+            if os.path.isfile(path):
+                stat = os.stat(path)
+                from datetime import datetime
+                dt = datetime.fromtimestamp(stat.st_mtime)
+                time_str = dt.strftime("%H:%M | %d.%m.%y")
+                files.append({
+                    "name": f,
+                    "size": stat.st_size,
+                    "time": time_str
+                })
+    return files
+
+
+@app.delete("/api/storage/files/{name}")
+async def storage_delete(name: str):
+    filename = secure_filename(name)
+    path = os.path.join(STORAGE_DIR, filename)
+    if os.path.exists(path):
+        os.remove(path)
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/api/storage/files/{name}")
+async def storage_get(name: str):
+    from fastapi.responses import FileResponse
+    filename = secure_filename(name)
+    path = os.path.join(STORAGE_DIR, filename)
+    if os.path.exists(path):
+        return FileResponse(path, filename=filename)
+    raise HTTPException(status_code=404, detail="File not found")
 

@@ -47,6 +47,23 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
     await handleFile([file], currentStage, true);
   };
 
+  const handleRestore = async (fileName: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/storage/files/${fileName}`);
+      if (!res.ok) throw new Error('Failed to fetch file from storage');
+      const blob = await res.blob();
+      const file = new File([blob], fileName, { type: blob.type });
+      
+      // We don't need to manually update filesMap here because handleFile does it 
+      // when it completes successfully (line 352/437 of DataContext.tsx)
+      // but wait, handleFile in DataContext doesn't update filesMap UNTIL it finishes.
+      // Actually, it's better to just call handleFile with the restored file.
+      await handleFile([file], currentStage, false);
+    } catch (e) {
+      console.error('Restore failed:', e);
+    }
+  };
+
   return (
     <>
       {/* Backdrop */}
@@ -200,8 +217,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                         </div>
                       )}
 
-                      {/* Retry */}
-                      {file && (
+                      {/* Restore / Retry */}
+                      {file ? (
                         <button
                           onClick={() => retryFile(fileName, currentStage)}
                           className={cn(
@@ -209,6 +226,15 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                             isReset ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
                           )}
                           title={isReset ? "Восстановить данные" : "Повторить загрузку"}
+                          disabled={isLoading}
+                        >
+                          <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleRestore(fileName)}
+                          className="p-1.5 rounded-md text-amber-600 bg-amber-50 hover:bg-amber-100 transition-colors"
+                          title="Восстановить из хранилища"
                           disabled={isLoading}
                         >
                           <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
