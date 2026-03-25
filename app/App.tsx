@@ -10,7 +10,7 @@ import { Upload } from 'lucide-react';
 function AppContent() {
   const [leftExpanded, setLeftExpanded] = useState(true);
   const [rightExpanded, setRightExpanded] = useState(true);
-  const [currentStage, setCurrentStage] = useState<Stage>('spec');
+  const { currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging } = useData();
   const [projectName, setProjectName] = useState(() => {
     try {
       const saved = localStorage.getItem('docok_projectName');
@@ -34,8 +34,6 @@ function AppContent() {
     }
   };
 
-  const { invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging } = useData();
-  
   useEffect(() => {
     if (currentStage === 'estimate') {
       generateEstimate();

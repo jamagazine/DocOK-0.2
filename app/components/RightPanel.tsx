@@ -13,7 +13,11 @@ import {
   Calculator as CalcIcon,
   Percent,
   CheckCircle2,
-  Merge
+  Merge,
+  CheckSquare,
+  XSquare,
+  Trash2,
+  Filter
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -40,7 +44,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   const { 
     handleFile, isMerged, toggleMerge, pdfGeometry, 
     estimateRows, estimateTotal, specRows, invoiceRows,
-    resetData, sortRows, groupRows, filesMap, completeStage
+    resetData, sortRows, groupRows, filesMap, completeStage,
+    selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
+    isOnlySelectedView, setIsOnlySelectedView
   } = useData();
 
   const handleExport = () => {
@@ -233,6 +239,45 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   onClick={() => sortRows(currentStage, 'name')}
                   className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
                   <ArrowUpDown className="w-4 h-4 text-slate-500" /> Сортировка
+                </button>
+
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-4 mb-2">Выделение</div>
+                <button 
+                  onClick={selectAllRows}
+                  className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-md transition-colors text-sm">
+                  <CheckSquare className="w-4 h-4 text-slate-500" /> Выбрать все
+                </button>
+                <button 
+                  onClick={() => setSelectedIds([])}
+                  disabled={selectedIds.length === 0}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-2 rounded-md transition-colors text-sm",
+                    selectedIds.length === 0 ? "bg-slate-50 text-slate-300 cursor-not-allowed" : "bg-slate-50 hover:bg-slate-100 text-slate-700"
+                  )}>
+                  <XSquare className="w-4 h-4" /> Сброс выделения
+                </button>
+                <button 
+                  onClick={deleteSelectedRows}
+                  disabled={selectedIds.length === 0}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-2 rounded-md transition-colors text-sm",
+                    selectedIds.length === 0 ? "bg-slate-50 text-slate-300 cursor-not-allowed" : "bg-red-50 hover:bg-red-100 text-red-600"
+                  )}>
+                  <Trash2 className="w-4 h-4" /> Удалить выбранные
+                </button>
+                <button 
+                  onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
+                  disabled={selectedIds.length === 0 && !isOnlySelectedView}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-2 rounded-md transition-colors text-sm w-full",
+                    isOnlySelectedView 
+                      ? "bg-indigo-50 text-indigo-700 font-semibold" 
+                      : selectedIds.length === 0 
+                        ? "bg-slate-50 text-slate-300 cursor-not-allowed" 
+                        : "bg-slate-50 hover:bg-slate-100 text-slate-700"
+                  )}>
+                  <Filter className="w-4 h-4" />
+                  {isOnlySelectedView ? 'Показать все' : 'Оставить выделенные'}
                 </button>
               </>
             ) : (

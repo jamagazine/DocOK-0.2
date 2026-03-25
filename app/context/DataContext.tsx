@@ -162,6 +162,22 @@ interface DataContextType {
   completeStage: (stageId: string) => void;
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;
+  selectedIds: string[];
+  setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
+  toggleRowSelection: (id: string, isCellClick: boolean) => void;
+  toggleSelectAllPage: (ids: string[]) => void;
+  selectAllRows: () => void;
+  deleteSelectedRows: () => void;
+  currentPage: number;
+  setCurrentPage: (page: number) => void;
+  rowsPerPage: number;
+  setRowsPerPage: (rows: number) => void;
+  isOnlySelectedView: boolean;
+  setIsOnlySelectedView: (val: boolean) => void;
+  handleRowChange: (stage: Stage, rowId: string, field: string, value: string) => void;
+  currentStage: Stage;
+  setCurrentStage: (stage: Stage) => void;
+  getCurrentRows: () => any[];
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -220,6 +236,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [isMerged, setIsMerged] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [backupSpecRows, setBackupSpecRows] = useState<SpecRow[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [isOnlySelectedView, setIsOnlySelectedView] = useState(false);
+  
+  const [currentStage, setCurrentStage] = useState<Stage>('spec');
+
+  // Reset pagination and selection on stage change
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds([]);
+    setIsOnlySelectedView(false);
+  }, [currentStage]);
 
   const saveYandexConfig = useCallback((config: YandexConfig) => {
     setYandexConfig(config);
@@ -534,10 +563,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const applySortAndFilter = <T extends any>(rows: T[], config: SortConfig, query: string, searchFields: string[]): T[] => {
+  const applySortAndFilter = <T extends { id: string }>(rows: T[], config: SortConfig, query: string, searchFields: string[], selectedIds: string[], isOnlySelected: boolean): T[] => {
     let result = rows;
     
-    // Filter
+    // Filter by "Only Selected"
+    if (isOnlySelected) {
+      result = result.filter(r => selectedIds.includes(r.id));
+    }
+
+    // Search Filter
     if (query) {
       const lowQuery = query.toLowerCase();
       result = result.filter((r: any) => 
@@ -573,20 +607,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const sortedSpecRows = React.useMemo(() => 
-    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier']), 
-    [specRows, sortConfig, searchQuery]
+    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView), 
+    [specRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
   const sortedRequestRows = React.useMemo(() => 
-    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier']), 
-    [requestRows, sortConfig, searchQuery]
+    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView), 
+    [requestRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
   const sortedInvoiceRows = React.useMemo(() => 
-    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier']), 
-    [invoiceRows, sortConfig, searchQuery]
+    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier'], selectedIds, isOnlySelectedView), 
+    [invoiceRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
   const sortedEstimateRows = React.useMemo(() => 
-    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier']), 
-    [estimateRows, sortConfig, searchQuery]
+    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier'], selectedIds, isOnlySelectedView), 
+    [estimateRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
 
   const groupRows = useCallback((stage: Stage, field: string) => {
@@ -611,6 +645,124 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return prev;
     });
   }, []);
+
+  const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: string) => {
+    if (stage === 'spec') {
+      setSpecRows(prev => prev.map(row => {
+        if (row.id !== rowId) return row;
+        return { ...row, [field]: value };
+      }));
+    } else if (stage === 'invoice') {
+      setInvoiceRows(prev => prev.map(row => {
+        if (row.id !== rowId) return row;
+        const updatedRow = { ...row, [field]: value } as InvoiceRow;
+        
+        // Recalculate totals
+        const qty = parseFloat(String(field === 'quantity' ? value : updatedRow.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const price = parseFloat(String(field === 'price' ? value : updatedRow.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const discountStr = String(field === 'discount' ? value : updatedRow.discount || '');
+        const isPercent = discountStr.includes('%');
+        let dVal = parseFloat(discountStr) || 0;
+
+        let pad = price;
+        if (dVal > 0) {
+          pad = isPercent ? price * (1 - dVal / 100) : Math.max(0, price - dVal);
+        }
+
+        updatedRow.priceAfterDiscount = pad.toFixed(2);
+        updatedRow.totalBeforeDiscount = (qty * price).toFixed(2);
+        updatedRow.total = (qty * pad).toFixed(2);
+
+        return updatedRow;
+      }));
+    } else if (stage === 'estimate') {
+      setEstimateRows(prev => prev.map(row => {
+        if (row.id !== rowId) return row;
+        const updatedRow = { ...row, [field]: value };
+
+        if (field === 'price' || field === 'quantity' || field === 'clientPrice') {
+          const q = parseFloat(String(updatedRow.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const p = parseFloat(String(field === 'costPrice' ? value : updatedRow.costPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const cp = parseFloat(String(field === 'clientPrice' ? value : updatedRow.clientPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          
+          updatedRow.costSum = (q * p).toFixed(2);
+          updatedRow.clientSum = (q * cp).toFixed(2);
+        }
+        return updatedRow;
+      }));
+    }
+  }, []);
+
+  const toggleRowSelection = useCallback((id: string, isCellClick: boolean) => {
+    setSelectedIds(prev => {
+      const isSelected = prev.includes(id);
+      if (isSelected) {
+        if (!isCellClick && prev.length === 1) return prev;
+        return prev.filter(rowId => rowId !== id);
+      } else {
+        if (prev.length === 0 && !isCellClick) return prev;
+        return [...prev, id];
+      }
+    });
+  }, []);
+
+  const toggleSelectAllPage = useCallback((pageIds: string[]) => {
+    if (pageIds.length === 0) return;
+    const allSelected = pageIds.every(id => selectedIds.includes(id));
+    
+    setSelectedIds(prev => {
+      if (allSelected) {
+        return prev.filter(id => !pageIds.includes(id));
+      } else {
+        const next = [...prev];
+        pageIds.forEach(id => {
+          if (!next.includes(id)) {
+            next.push(id);
+          }
+        });
+        return next;
+      }
+    });
+  }, [selectedIds]);
+
+  const selectAllRows = useCallback(() => {
+    let rows: { id: string }[] = [];
+    switch (currentStage) {
+      case 'spec': rows = specRows; break;
+      case 'request': rows = requestRows; break;
+      case 'invoice': rows = invoiceRows; break;
+      case 'estimate': rows = estimateRows; break;
+    }
+    const allIds = rows.map(r => r.id);
+    setSelectedIds(prev => {
+      const next = [...prev];
+      allIds.forEach(id => {
+        if (!next.includes(id)) next.push(id);
+      });
+      return next;
+    });
+  }, [currentStage, specRows, requestRows, invoiceRows, estimateRows]);
+
+  const deleteSelectedRows = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    const idsToDelete = new Set(selectedIds);
+    switch (currentStage) {
+      case 'spec':
+        setSpecRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
+        break;
+      case 'request':
+        setRequestRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
+        break;
+      case 'invoice':
+        setInvoiceRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
+        break;
+      case 'estimate':
+        setEstimateRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
+        break;
+    }
+    setSelectedIds([]);
+    setIsOnlySelectedView(false);
+  }, [selectedIds, currentStage]);
 
   return (
     <DataContext.Provider
@@ -649,7 +801,31 @@ export function DataProvider({ children }: { children: ReactNode }) {
         completedStages,
         completeStage,
         isDragging,
-        setIsDragging
+        setIsDragging,
+        selectedIds,
+        setSelectedIds,
+        toggleRowSelection,
+        toggleSelectAllPage,
+        selectAllRows,
+        deleteSelectedRows,
+        currentPage,
+        setCurrentPage,
+        rowsPerPage,
+        setRowsPerPage,
+        isOnlySelectedView,
+        setIsOnlySelectedView,
+        handleRowChange,
+        currentStage,
+        setCurrentStage,
+        getCurrentRows: () => {
+          switch (currentStage) {
+            case 'spec': return sortedSpecRows;
+            case 'request': return sortedRequestRows;
+            case 'invoice': return sortedInvoiceRows;
+            case 'estimate': return sortedEstimateRows;
+            default: return [];
+          }
+        }
       }}
     >
       {children}
