@@ -72,9 +72,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
     
     // Real cost if already processed by AI (cost > 0)
     const realCost = (data.cost && data.cost > 0) ? data.cost : null;
-    // Pre-estimation for AI processing (only for Excel files not yet AI-processed, with no real cost)
-    const preEstimate = isExcel(fileName) && !isAiProcessed && !realCost
-      ? (( (fileSize || 5000) / 6 / 4) * 1.2 / 1000).toFixed(1)
+    // Pre-estimation for AI processing
+    const preEstimate = (!isAiProcessed && !realCost && data.estimated_cost !== undefined && data.estimated_cost > 0)
+      ? Number(data.estimated_cost).toFixed(2)
       : null;
 
     return (
@@ -135,14 +135,21 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   </>
                 )}
                 
-                {(method === 'AI' || data.cost !== undefined) && (
+                {method === 'AI' && (data.cost !== undefined && data.cost > 0) ? (
                   <>
                     <span className="text-xs text-slate-400">•</span>
-                    <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+                    <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold" title="Итоговая цена парсинга">
                       {data.cost || 0} ₽
                     </span>
                   </>
-                )}
+                ) : (data.estimated_cost !== undefined && data.estimated_cost > 0) && method !== 'AI' ? (
+                  <>
+                    <span className="text-xs text-slate-400">•</span>
+                    <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-medium" title="Прогноз цены AI-парсинга">
+                      ~{Number(data.estimated_cost).toFixed(2)} ₽
+                    </span>
+                  </>
+                ) : null}
               </div>
               {isError && data.error && (
                 <span className="text-[10px] text-red-500 mt-1 line-clamp-1 truncate" title={data.error}>

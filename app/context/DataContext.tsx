@@ -281,6 +281,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               // Preserve cost and tokens from server
               cost: f.cost || 0,
               tokens: f.tokens || 0,
+              estimated_cost: f.estimated_cost || 0,
             };
           });
           setUploadStatuses(prev => ({ ...prev, ...restoredStatuses }));
@@ -324,10 +325,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
       try {
         const uploadData = new FormData();
         uploadData.append('file', file);
-        await fetch('http://localhost:8000/api/storage/upload', {
+        const res = await fetch('http://localhost:8000/api/storage/upload', {
           method: 'POST',
           body: uploadData,
         });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.estimated_cost !== undefined) {
+             setUploadStatuses((prev: any) => ({
+               ...prev,
+               [file.name]: { ...prev[file.name], estimated_cost: resData.estimated_cost }
+             }));
+          }
+        }
       } catch (e) {
         console.error('Failed to upload file to storage:', e);
       }

@@ -131,7 +131,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
 
     return "".join(text_parts), has_low_confidence
 
-async def gpt_yandex(text: str, api_key: str, folder_id: str):
+async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = "lite"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     headers = {
         "Authorization": f"Api-Key {api_key}",
@@ -190,8 +190,9 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str):
     except Exception as e:
         print(f"Failed to save debug prompt: {e}")
 
+    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt/latest"
     payload = {
-        "modelUri": f"gpt://{folder_id}/yandexgpt/latest",
+        "modelUri": model_uri,
         "completionOptions": {
             "stream": False,
             "temperature": 0.1,
@@ -213,6 +214,29 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str):
     return data['result']['alternatives'][0]['message']['text'], total_tokens
 
 
+async def get_token_count(text: str, model_type: str, api_key: str, folder_id: str) -> int:
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
+    headers = {
+        "Authorization": f"Api-Key {api_key}",
+        "x-folder-id": folder_id,
+        "Content-Type": "application/json"
+    }
+    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt/latest"
+    payload = {
+        "modelUri": model_uri,
+        "text": text
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                return len(data.get("tokens", []))
+    except Exception as e:
+        print(f"Tokenize API error: {e}")
+    return 0
+
+
 def parse_gpt_json(text: str):
     try:
         clean_text = text.strip().replace("```json", "").replace("```", "").strip()
@@ -221,7 +245,7 @@ def parse_gpt_json(text: str):
         print(f"JSON Parse Error: {e}")
         return None
 
-async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
+async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, model_type: str = "lite"):
     """
     Splits text into chunks of 25 lines (plus header) if it's too large.
     """
@@ -236,7 +260,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
     
     # If small, process normally
     if len(data_lines) <= CHUNK_SIZE:
-        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id)
+        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type)
         parsed = parse_gpt_json(raw_res)
         if not parsed:
             return None, tokens, None
@@ -249,7 +273,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
     for i, chunk in enumerate(chunks):
         chunk_text = header + "\n" + "\n".join(chunk)
         # We might need to handle per-chunk errors here, but for now let it propagate
-        raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id)
+        raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type)
         total_tokens += tokens
         parsed = parse_gpt_json(raw_res)
         
@@ -330,6 +354,7 @@ async def process_invoice(
     extracted_text = ""
     has_low_confidence = False
     parse_method = "direct_text"
+    num_pages = 0
     
     try:
         if filename.endswith(".pdf"):
@@ -365,6 +390,7 @@ async def process_invoice(
                 print("No text layer found or text too short. Falling back to OCR.")
                 parse_method = "ocr_table"
                 extracted_text = "" # Reset
+                num_pages = len(doc)
                 for i in range(len(doc)):
                     page = doc.load_page(i)
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
@@ -381,6 +407,7 @@ async def process_invoice(
             
         elif filename.endswith((".png", ".jpg", ".jpeg")):
             parse_method = "ocr_table"
+            num_pages = 1
             with open(temp_path, "rb") as fimg:
                 b64_str = base64.b64encode(fimg.read()).decode('utf-8')
             txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
@@ -411,7 +438,8 @@ async def process_invoice(
              raise HTTPException(status_code=400, detail="No readable text found in document.")
              
         # Call GPT to structure the data using chunking
-        all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id))
+        model_type = "pro" if parse_method == "ocr_table" else "lite"
+        all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type)
         
         if all_items is None or main_doc_info is None:
             raise HTTPException(status_code=422, detail="ИИ вернул невалидный ответ")
@@ -434,27 +462,33 @@ async def process_invoice(
             print(f"calculate_uncertainty error: {e}")
             final_struct = merged_struct
         
-        # Pro rate: 1.2 RUB per 1000 tokens
-        cost = round((total_tokens * 1.2) / 1000, 2)
+        # Pro rate: 1.2 RUB per 1000 tokens, Lite: 0.2 RUB per 1000 tokens
+        model_rate = 1.2 if model_type == "pro" else 0.2
+        cost = round((total_tokens * model_rate) / 1000, 2)
+        if parse_method == "ocr_table":
+            cost += round(num_pages * 1.22, 2)
         
         # Add usage and cost to the final return
         final_struct["usage"] = {"total_tokens": total_tokens}
-        final_struct["cost"] = cost
+        final_struct["cost"] = round(cost, 2)
         final_struct["method"] = parse_method
+        final_struct["model"] = model_type
         
         # Persist cost + tokens to manifest
         original_name = file.filename
         manifest = _load_manifest()
         for k, v in manifest.items():
             if isinstance(v, dict) and v.get("originalName") == original_name:
-                v["cost"] = cost
+                v["cost"] = round(cost, 2)
                 v["tokens"] = total_tokens
                 v["method"] = parse_method
+                v["model"] = model_type
                 break
             elif isinstance(v, dict) and v.get("original_name") == original_name:
-                v["cost"] = cost
+                v["cost"] = round(cost, 2)
                 v["tokens"] = total_tokens
                 v["method"] = parse_method
+                v["model"] = model_type
                 break
         _save_manifest(manifest)
         
@@ -503,6 +537,46 @@ async def storage_upload(file: UploadFile = File(...)):
     dest_path = os.path.join(STORAGE_DIR, secured_name)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
+        
+    estimated_cost = 0.0
+    estimated_tokens = 0
+    api_key, folder_id = get_yandex_keys()
+    
+    if api_key and folder_id:
+        try:
+            ext_text = ""
+            if original_filename.lower().endswith(".pdf"):
+                doc = fitz.open(dest_path)
+                try:
+                    for page in doc:
+                        ext_text += page.get_text()
+                    if not ext_text.strip():
+                        # OCR estimate: 1.22 per page
+                        estimated_cost = round(len(doc) * 1.22, 2)
+                finally:
+                    doc.close()
+            elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
+                estimated_cost = 1.22 # OCR estimate 1 page
+            elif original_filename.lower().endswith((".xlsx", ".xls", ".csv")):
+                if original_filename.lower().endswith(".csv"):
+                    df = pd.read_csv(dest_path)
+                elif original_filename.lower().endswith(".xls"):
+                    df = pd.read_excel(dest_path, engine='xlrd')
+                else:
+                    df = pd.read_excel(dest_path, engine='openpyxl')
+                header = " | ".join(map(str, df.columns))
+                rows = []
+                for _, row in df.iterrows():
+                    rows.append(" | ".join(map(str, row.values)))
+                ext_text = header + "\n" + "\n".join(rows)
+                
+            if ext_text.strip():
+                # Limit text to avoid payload too large
+                limit_text = ext_text[:30000]
+                estimated_tokens = await get_token_count(limit_text, "lite", api_key, folder_id)
+                estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+        except Exception as e:
+            print(f"Error estimating cost: {e}")
     
     # Update manifest
     manifest = _load_manifest()
@@ -513,10 +587,13 @@ async def storage_upload(file: UploadFile = File(...)):
         "status": "ok",
         "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
         "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
+        "model": existing.get("model", "") if isinstance(existing, dict) else "",
+        "method": existing.get("method", "") if isinstance(existing, dict) else "",
+        "estimated_cost": estimated_cost
     }
     _save_manifest(manifest)
     
-    return {"status": "success", "filename": secured_name}
+    return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost}
 
 
 @app.get("/api/storage/files")
@@ -543,12 +620,18 @@ async def storage_list():
                     status = entry.get("status", "ok")
                     cost = entry.get("cost", 0)
                     tokens = entry.get("tokens", 0)
+                    estimated_cost = entry.get("estimated_cost", 0)
+                    model = entry.get("model", "")
+                    method = entry.get("method", "")
                 else:
                     # Backward compatibility: plain string value
                     display_name = entry if entry else f
                     status = "ok"
                     cost = 0
                     tokens = 0
+                    estimated_cost = 0
+                    model = ""
+                    method = ""
                 
                 files.append({
                     "name": display_name,
@@ -558,6 +641,9 @@ async def storage_list():
                     "status": status,
                     "cost": cost,
                     "tokens": tokens,
+                    "estimated_cost": estimated_cost,
+                    "model": model,
+                    "method": method,
                 })
     return files
 
