@@ -7,7 +7,8 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Circle
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -94,9 +95,11 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               const statusStr = data.status;
               const isOk = statusStr.includes('Готово');
               const isError = statusStr.includes('Ошибка');
-              const isLoading = !isOk && !isError;
+              const isLoading = !isOk && !isError && statusStr !== 'reset';
+              const isReset = statusStr === 'reset';
               const method = statusStr.includes('ИИ') ? 'AI' : 'Local';
               const isAiProcessed = method === 'AI';
+              const file = filesMap[fileName];
               const fileSize = data.size || 0;
               
               // Pre-estimation for AI processing (only for Excel files not yet AI-processed)
@@ -114,6 +117,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                       {/* Status Icon */}
                       <div className="shrink-0 mt-1">
                         {isOk && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                        {isReset && <Circle className="w-5 h-5 text-slate-300" />}
                         {isLoading && <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin" />}
                         {isError && (
                           <div title={data.error || statusStr}>
@@ -143,7 +147,11 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                             {method}
                           </span>
                           <span className="text-xs text-slate-400">•</span>
-                          <span className="text-xs text-slate-500">{data.time}</span>
+                          {isReset ? (
+                            <span className="text-xs text-slate-400 font-medium italic">Данные сброшены</span>
+                          ) : (
+                            <span className="text-xs text-slate-500">{data.time}</span>
+                          )}
                           
                           {method === 'AI' && data.tokens && (
                             <>
@@ -196,8 +204,11 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                       {file && (
                         <button
                           onClick={() => retryFile(fileName, currentStage)}
-                          className="p-1.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                          title="Повторить загрузку (локально)"
+                          className={cn(
+                            "p-1.5 rounded-md transition-colors",
+                            isReset ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                          )}
+                          title={isReset ? "Восстановить данные" : "Повторить загрузку"}
                           disabled={isLoading}
                         >
                           <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />

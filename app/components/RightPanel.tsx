@@ -46,7 +46,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     estimateRows, estimateTotal, specRows, invoiceRows,
     resetData, sortRows, groupRows, filesMap, completeStage,
     selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
-    isOnlySelectedView, setIsOnlySelectedView
+    isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen
   } = useData();
 
   const handleExport = () => {
@@ -193,7 +193,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   <Download className="w-4 h-4 text-slate-500" /> Экспорт таблицы
                 </button>
                 <button 
-                  onClick={() => resetData(currentStage)}
+                  onClick={() => setIsResetConfirmOpen(true)}
                   className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-red-600 rounded-md transition-colors text-sm">
                   <RotateCcw className="w-4 h-4 text-red-500" /> Сброс
                 </button>

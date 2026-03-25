@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { toast } from 'sonner';
 import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
-import { Stage } from '../types';
+import { Stage, FileStatus, UploadStatus } from '../types';
 
 export interface YandexConfig {
   apiKey: string;
@@ -144,22 +144,11 @@ interface DataContextType {
   setConfigKeys: (keys: Record<string, string>) => void;
   yandexConfig: YandexConfig;
   saveYandexConfig: (config: YandexConfig) => void;
-  uploadStatuses: Record<string, { 
-    status: string; 
-    time: string; 
-    tokens?: number; 
-    cost?: number; 
-    error?: string;
-    chunks?: { current: number; total: number };
-  }>;
-  setUploadStatuses: React.Dispatch<React.SetStateAction<Record<string, { 
-    status: string; 
-    time: string; 
-    tokens?: number; 
-    cost?: number; 
-    error?: string;
-    chunks?: { current: number; total: number };
-  }>>>;
+  uploadStatuses: Record<string, UploadStatus>;
+  setUploadStatuses: React.Dispatch<React.SetStateAction<Record<string, UploadStatus>>>;
+  isResetConfirmOpen: boolean;
+  setIsResetConfirmOpen: (isOpen: boolean) => void;
+  resetProjectData: () => void;
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
@@ -249,13 +238,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
     return { apiKey: '', catalogId: '' };
   });
-  const [uploadStatuses, setUploadStatuses] = useState<Record<string, { 
-    status: string; 
-    time: string; 
-    tokens?: number; 
-    cost?: number; 
-    chunks?: { current: number; total: number };
-  }>>({});
+  const [uploadStatuses, setUploadStatuses] = useState<Record<string, UploadStatus>>({});
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
   const [pdfGeometry, setPdfGeometry] = useState<PdfGeometry | null>(null);
   const [isMerged, setIsMerged] = useState(false);
@@ -587,6 +571,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const resetProjectData = useCallback(() => {
+    setSpecRows([]);
+    setInvoiceRows([]);
+    setEstimateRows([]);
+    setRequestRows([]);
+    setCompletedStages([]);
+    setSelectedIds([]);
+    
+    setUploadStatuses((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach(fileName => {
+        if (!next[fileName].status.includes('Ошибка') && !next[fileName].status.includes('Старт')) {
+          next[fileName] = { ...next[fileName], status: 'reset' };
+        }
+      });
+      return next;
+    });
+    
+    setIsResetConfirmOpen(false);
+    toast.success('Все данные таблиц сброшены. Файлы сохранены.');
+  }, []);
+
   const handleSort = useCallback((key: string) => {
     setSortConfig((prev: SortConfig) => {
       if (prev.key === key) {
@@ -878,6 +884,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses,
         filesMap,
         setFilesMap,
+        isResetConfirmOpen,
+        setIsResetConfirmOpen,
+        resetProjectData,
         handleFile,
         removeFile,
         retryFile,

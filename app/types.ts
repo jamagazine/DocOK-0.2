@@ -10,10 +10,22 @@ export interface StageInfo {
 
 export type RightPanelTab = 'tools' | 'info' | 'calc';
 
+export type FileStatus = 'ok' | 'loading' | 'error' | 'reset' | 'Старт...' | 'Локальный парсинг...' | 'Конвертация и Анализ ИИ...' | string;
+
+export interface UploadStatus {
+  status: FileStatus;
+  time: string;
+  size?: number;
+  tokens?: number;
+  cost?: number;
+  error?: string;
+  chunks?: { current: number; total: number };
+}
+
 export interface UploadedFile {
   id: string;
   name: string;
-  status: 'ok' | 'loading' | 'error';
+  status: 'ok' | 'loading' | 'error' | 'reset';
   method: 'Local' | 'AI';
   uploadTime: string;
 }

@@ -3,6 +3,7 @@ import { Toaster } from './components/ui/sonner';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { CenterPanel } from './components/CenterPanel';
+import { ResetConfirmation } from './components/ResetConfirmation';
 import type { Stage, UploadedFile } from './types';
 import { DataProvider, useData } from './context/DataContext';
 import { Upload } from 'lucide-react';
@@ -137,6 +138,7 @@ function AppContent() {
           </p>
         </div>
       </div>
+      <ResetConfirmation />
       <div className="flex h-screen w-screen overflow-hidden bg-slate-50 font-sans text-slate-900">
         <LeftPanel 
           expanded={leftExpanded} 
