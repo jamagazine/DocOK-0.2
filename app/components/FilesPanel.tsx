@@ -53,15 +53,166 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
       if (!res.ok) throw new Error('Failed to fetch file from storage');
       const blob = await res.blob();
       const file = new File([blob], fileName, { type: blob.type });
-      
-      // We don't need to manually update filesMap here because handleFile does it 
-      // when it completes successfully (line 352/437 of DataContext.tsx)
-      // but wait, handleFile in DataContext doesn't update filesMap UNTIL it finishes.
-      // Actually, it's better to just call handleFile with the restored file.
       await handleFile([file], currentStage, false);
     } catch (e) {
       console.error('Restore failed:', e);
     }
+  };
+
+  const renderFileItem = (fileName: string, data: any, isResetItem: boolean) => {
+    const statusStr = data.status || '';
+    const isOk = statusStr.includes('Готово');
+    const isError = statusStr.includes('Ошибка');
+    const isLoading = !isOk && !isError && statusStr !== 'reset';
+    const isReset = statusStr === 'reset';
+    const method = statusStr.includes('ИИ') ? 'AI' : 'Local';
+    const isAiProcessed = method === 'AI';
+    const file = filesMap[fileName];
+    const fileSize = data.size || 0;
+    
+    // Real cost if already processed by AI (cost > 0)
+    const realCost = (data.cost && data.cost > 0) ? data.cost : null;
+    // Pre-estimation for AI processing (only for Excel files not yet AI-processed, with no real cost)
+    const preEstimate = isExcel(fileName) && !isAiProcessed && !realCost
+      ? (( (fileSize || 5000) / 6 / 4) * 1.2 / 1000).toFixed(1)
+      : null;
+
+    return (
+      <div
+        key={fileName}
+        className={cn(
+          "group flex flex-col p-3 rounded-lg border border-slate-200 bg-white shadow-sm hover:border-indigo-300 transition-all",
+          isResetItem && "opacity-60"
+        )}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-start gap-3 flex-1 overflow-hidden">
+            {/* Status Icon */}
+            <div className="shrink-0 mt-1">
+              {isOk && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+              {isReset && <Circle className="w-5 h-5 text-slate-300" />}
+              {isLoading && <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin" />}
+              {isError && (
+                <div title={data.error || statusStr}>
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                </div>
+              )}
+            </div>
+
+            {/* File Details */}
+            <div className="flex flex-col flex-1 min-w-0">
+              <span className="font-medium text-slate-900 truncate" title={fileName}>
+                {fileName}
+              </span>
+              
+              {/* Inline Progress Bar for Loading State */}
+              {isLoading && (
+                <div className="h-1 w-24 bg-slate-100 rounded-full mt-1 overflow-hidden">
+                  <div className="h-full bg-indigo-500 animate-progress-indeterminate" />
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
+                <span className={cn(
+                  "px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase",
+                  method === 'AI' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                )}>
+                  {method}
+                </span>
+                <span className="text-xs text-slate-400">•</span>
+                {isReset ? (
+                  <span className="text-xs text-slate-400 font-medium italic">Данные сброшены</span>
+                ) : (
+                  <span className="text-xs text-slate-500">{data.time}</span>
+                )}
+                
+                {method === 'AI' && data.tokens && (
+                  <>
+                    <span className="text-xs text-slate-400">•</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                      {data.tokens} токенов
+                    </span>
+                  </>
+                )}
+                
+                {(method === 'AI' || data.cost !== undefined) && (
+                  <>
+                    <span className="text-xs text-slate-400">•</span>
+                    <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+                      {data.cost || 0} ₽
+                    </span>
+                  </>
+                )}
+              </div>
+              {isError && data.error && (
+                <span className="text-[10px] text-red-500 mt-1 line-clamp-1 truncate" title={data.error}>
+                  {data.error}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+            {/* Sparkles: AI re-process for Excel only */}
+            {isExcel(fileName) && file && method !== 'AI' && (
+              <div className="flex items-center gap-1">
+                {realCost !== null ? (
+                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">
+                    {realCost} ₽
+                  </span>
+                ) : preEstimate && (
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    (прибл. {preEstimate} ₽)
+                  </span>
+                )}
+                <button
+                  onClick={() => handleAiProcess(fileName)}
+                  className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                  title="Обработать через ИИ"
+                  disabled={isLoading}
+                >
+                  <Sparkles className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Restore / Retry */}
+            {file ? (
+              <button
+                onClick={() => retryFile(fileName, currentStage)}
+                className={cn(
+                  "p-1.5 rounded-md transition-colors",
+                  isReset ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                )}
+                title={isReset ? "Восстановить данные" : "Повторить загрузку"}
+                disabled={isLoading}
+              >
+                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+              </button>
+            ) : (
+              <button
+                onClick={() => handleRestore(fileName)}
+                className="p-1.5 rounded-md text-amber-600 bg-amber-50 hover:bg-amber-100 transition-colors"
+                title="Восстановить из хранилища"
+                disabled={isLoading}
+              >
+                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+              </button>
+            )}
+
+            {/* Delete */}
+            <button
+              onClick={() => setPendingDelete(fileName)}
+              className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+              title="Удалить файл и связанные данные"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -108,152 +259,34 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               <p className="text-sm">Нет загруженных файлов</p>
             </div>
           ) : (
-            fileEntries.map(([fileName, data]) => {
-              const statusStr = data.status;
-              const isOk = statusStr.includes('Готово');
-              const isError = statusStr.includes('Ошибка');
-              const isLoading = !isOk && !isError && statusStr !== 'reset';
-              const isReset = statusStr === 'reset';
-              const method = statusStr.includes('ИИ') ? 'AI' : 'Local';
-              const isAiProcessed = method === 'AI';
-              const file = filesMap[fileName];
-              const fileSize = data.size || 0;
-              
-              // Pre-estimation for AI processing (only for Excel files not yet AI-processed)
-              const preEstimate = isExcel(fileName) && !isAiProcessed 
-                ? (( (fileSize || 5000) / 6 / 4) * 1.2 / 1000).toFixed(1)
-                : null;
+            <>
+              {/* Active Files */}
+              {fileEntries
+                .filter(([_, data]: [string, any]) => data.status !== 'reset')
+                .map(([fileName, data]: [string, any]) => {
+                  return renderFileItem(fileName, data, false);
+                })}
 
-              return (
-                <div
-                  key={fileName}
-                  className="group flex flex-col p-3 rounded-lg border border-slate-200 bg-white shadow-sm hover:border-indigo-300 transition-all"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3 flex-1 overflow-hidden">
-                      {/* Status Icon */}
-                      <div className="shrink-0 mt-1">
-                        {isOk && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                        {isReset && <Circle className="w-5 h-5 text-slate-300" />}
-                        {isLoading && <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin" />}
-                        {isError && (
-                          <div title={data.error || statusStr}>
-                            <AlertCircle className="w-5 h-5 text-red-500" />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* File Details */}
-                      <div className="flex flex-col flex-1 min-w-0">
-                        <span className="font-medium text-slate-900 truncate" title={fileName}>
-                          {fileName}
-                        </span>
-                        
-                        {/* Inline Progress Bar for Loading State */}
-                        {isLoading && (
-                          <div className="h-1 w-24 bg-slate-100 rounded-full mt-1 overflow-hidden">
-                            <div className="h-full bg-indigo-500 animate-progress-indeterminate" />
-                          </div>
-                        )}
-
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
-                          <span className={cn(
-                            "px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase",
-                            method === 'AI' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
-                          )}>
-                            {method}
-                          </span>
-                          <span className="text-xs text-slate-400">•</span>
-                          {isReset ? (
-                            <span className="text-xs text-slate-400 font-medium italic">Данные сброшены</span>
-                          ) : (
-                            <span className="text-xs text-slate-500">{data.time}</span>
-                          )}
-                          
-                          {method === 'AI' && data.tokens && (
-                            <>
-                              <span className="text-xs text-slate-400">•</span>
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
-                                {data.tokens} токенов
-                              </span>
-                            </>
-                          )}
-                          
-                          {(method === 'AI' || data.cost !== undefined) && (
-                            <>
-                              <span className="text-xs text-slate-400">•</span>
-                              <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
-                                {data.cost || 0} ₽
-                              </span>
-                            </>
-                          )}
-                        </div>
-                        {isError && data.error && (
-                          <span className="text-[10px] text-red-500 mt-1 line-clamp-1 truncate" title={data.error}>
-                            {data.error}
-                          </span>
-                        )}
-                      </div>
+              {/* Reset Files Divider */}
+              {fileEntries.some(([_, data]: [string, any]) => data.status === 'reset') && (
+                <>
+                  {fileEntries.some(([_, data]: [string, any]) => data.status !== 'reset') && (
+                    <div className="flex items-center gap-2 py-2">
+                      <hr className="flex-1 border-slate-200" />
+                      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                        Сброшенные данные
+                      </span>
+                      <hr className="flex-1 border-slate-200" />
                     </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-                      {/* Sparkles: AI re-process for Excel only */}
-                      {isExcel(fileName) && file && method !== 'AI' && (
-                        <div className="flex items-center gap-1">
-                          {preEstimate && (
-                            <span className="text-[10px] text-slate-400 font-medium">
-                              (прибл. {preEstimate} ₽)
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleAiProcess(fileName)}
-                            className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
-                            title="Обработать через ИИ"
-                            disabled={isLoading}
-                          >
-                            <Sparkles className="w-4 h-4" />
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Restore / Retry */}
-                      {file ? (
-                        <button
-                          onClick={() => retryFile(fileName, currentStage)}
-                          className={cn(
-                            "p-1.5 rounded-md transition-colors",
-                            isReset ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-                          )}
-                          title={isReset ? "Восстановить данные" : "Повторить загрузку"}
-                          disabled={isLoading}
-                        >
-                          <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleRestore(fileName)}
-                          className="p-1.5 rounded-md text-amber-600 bg-amber-50 hover:bg-amber-100 transition-colors"
-                          title="Восстановить из хранилища"
-                          disabled={isLoading}
-                        >
-                          <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-                        </button>
-                      )}
-
-                      {/* Delete */}
-                      <button
-                        onClick={() => setPendingDelete(fileName)}
-                        className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                        title="Удалить файл и связанные данные"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+                  )}
+                  {fileEntries
+                    .filter(([_, data]: [string, any]) => data.status === 'reset')
+                    .map(([fileName, data]: [string, any]) => {
+                      return renderFileItem(fileName, data, true);
+                    })}
+                </>
+              )}
+            </>
           )}
         </div>
 
@@ -264,12 +297,25 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-medium">
                   <span className="text-slate-600">Общий прогресс обработки</span>
-                  <span className="text-indigo-600">{Math.round((fileEntries.filter(([_, d]) => d.status.includes('Готово')).length / fileEntries.length) * 100)}%</span>
+                  <span className="text-indigo-600">
+                    {Math.round(
+                      (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово')).length /
+                        fileEntries.length) *
+                        100
+                    )}
+                    %
+                  </span>
                 </div>
                 <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className="h-full bg-indigo-500 transition-all duration-500 ease-out"
-                    style={{ width: `${(fileEntries.filter(([_, d]) => d.status.includes('Готово')).length / fileEntries.length) * 100}%` }}
+                    style={{
+                      width: `${
+                        (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово')).length /
+                          fileEntries.length) *
+                        100
+                      }%`,
+                    }}
                   />
                 </div>
               </div>
@@ -277,7 +323,10 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               <div className="flex items-center justify-between pt-1 border-t border-slate-200">
                 <span className="text-xs font-semibold text-slate-700">Итого за проект:</span>
                 <span className="text-sm font-bold text-indigo-700">
-                  {fileEntries.reduce((acc, [_, d]) => acc + (d.cost || 0), 0).toFixed(2)} ₽
+                  {fileEntries
+                    .reduce((acc: number, [_, d]: [string, any]) => acc + (d.cost || 0), 0)
+                    .toFixed(2)}{' '}
+                  ₽
                 </span>
               </div>
             </>

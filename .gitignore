@@ -46,6 +46,7 @@ pids
 *.seed
 *.pid.lock
 _legacy/
+server/storage/
 
 # --- Логи и отладка ---
 logs

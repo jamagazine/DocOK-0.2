@@ -252,6 +252,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
   
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
 
+  // Helper to sync status (and optionally other fields) with server
+  const updateFileStatusOnServer = async (fileName: string, status: 'ok' | 'reset') => {
+    try {
+      await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+    } catch (e) {
+      console.error(`Failed to update status for ${fileName}:`, e);
+    }
+  };
+
   // Load files from storage on mount
   useEffect(() => {
     const fetchStorageFiles = async () => {
@@ -262,9 +275,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
           const restoredStatuses: Record<string, UploadStatus> = {};
           files.forEach((f: any) => {
             restoredStatuses[f.name] = {
-              status: 'Готово (Хранилище)',
+              status: f.status === 'reset' ? 'reset' : 'Готово (Хранилище)',
               time: f.time,
-              size: f.size
+              size: f.size,
+              // Preserve cost and tokens from server
+              cost: f.cost || 0,
+              tokens: f.tokens || 0,
             };
           });
           setUploadStatuses(prev => ({ ...prev, ...restoredStatuses }));
@@ -386,6 +402,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+        // Sync status 'ok' to server
+        updateFileStatusOnServer(file.name, 'ok');
       } catch (e: any) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: e.message, time: currentTime } }));
       }
@@ -471,6 +489,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           } 
         }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+        // Sync status 'ok' to server
+        updateFileStatusOnServer(file.name, 'ok');
       } catch (e: any) {
         console.error('AI Processing error:', e);
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: e.message, time: currentTime } }));
@@ -486,7 +506,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (allNewInvoiceRows.length > 0) {
       setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...allNewInvoiceRows]);
     }
-  }, [yandexConfig]);
+  }, [yandexConfig, updateFileStatusOnServer]);
 
   const toggleMerge = useCallback(() => {
     setIsMerged((prev: boolean) => {
@@ -620,6 +640,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       Object.keys(next).forEach(fileName => {
         if (!next[fileName].status.includes('Ошибка') && !next[fileName].status.includes('Старт')) {
           next[fileName] = { ...next[fileName], status: 'reset' };
+          // Sync status 'reset' to server
+          updateFileStatusOnServer(fileName, 'reset');
         }
       });
       return next;
@@ -627,7 +649,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     
     setIsResetConfirmOpen(false);
     toast.success('Все данные таблиц сброшены. Файлы сохранены.');
-  }, []);
+  }, [updateFileStatusOnServer]);
 
   const handleSort = useCallback((key: string) => {
     setSortConfig((prev: SortConfig) => {
@@ -783,6 +805,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (!file) return;
     removeFile(fileName);
     await handleFile([file], stage, false);
+    // handleFile will call updateFileStatusOnServer(fileName, 'ok') on success
   }, [filesMap, removeFile, handleFile]);
 
   const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: string) => {

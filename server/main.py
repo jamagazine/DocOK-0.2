@@ -33,6 +33,24 @@ STORAGE_DIR = os.path.join(os.path.dirname(__file__), "storage")
 os.makedirs(TEMP_INPUT_DIR, exist_ok=True)
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
+MANIFEST_FILE = os.path.join(STORAGE_DIR, "manifest.json")
+
+def _load_manifest():
+    if not os.path.exists(MANIFEST_FILE):
+        return {}
+    try:
+        with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def _save_manifest(manifest):
+    try:
+        with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"Error saving manifest: {e}")
+
 def get_yandex_keys():
     if not os.path.exists(CONFIG_FILE):
         return None, None
@@ -195,15 +213,13 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str):
     return data['result']['alternatives'][0]['message']['text'], total_tokens
 
 
-def parse_gpt_json(raw_text: str):
-    # Cleanup markdown if GPT hallucinated it
-    clean = re.sub(r'```json\s*', '', raw_text)
-    clean = re.sub(r'```\s*', '', clean)
-    # Filter only contents within { } if there's surrounding text
-    match = re.search(r'(\{.*\})', clean, re.DOTALL)
-    if match:
-        clean = match.group(1)
-    return json.loads(clean.strip())
+def parse_gpt_json(text: str):
+    try:
+        clean_text = text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_text)
+    except Exception as e:
+        print(f"JSON Parse Error: {e}")
+        return None
 
 async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
     """
@@ -222,6 +238,8 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
     if len(data_lines) <= CHUNK_SIZE:
         raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id)
         parsed = parse_gpt_json(raw_res)
+        if not parsed:
+            return None, tokens, None
         return parsed.get('items', []), tokens, parsed.get('document', {})
 
     # Split into chunks
@@ -235,10 +253,15 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
         total_tokens += tokens
         parsed = parse_gpt_json(raw_res)
         
-        all_items.extend(parsed.get('items', []))
-        if not main_doc:
-            main_doc = parsed.get('document', {})
+        if parsed:
+            all_items.extend(parsed.get('items', []))
+            if not main_doc:
+                main_doc = parsed.get('document', {})
             
+    # If all chunks returned None, parsed fails
+    if not all_items and not main_doc:
+        return None, total_tokens, None
+        
     return all_items, total_tokens, main_doc
 
 def to_float(val) -> float:
@@ -306,6 +329,7 @@ async def process_invoice(
         
     extracted_text = ""
     has_low_confidence = False
+    parse_method = "direct_text"
     
     try:
         if filename.endswith(".pdf"):
@@ -339,6 +363,7 @@ async def process_invoice(
             # 2. If no text layer OR very little text found, fallback to OCR
             if not text_layer_found or len(extracted_text.strip()) < 50:
                 print("No text layer found or text too short. Falling back to OCR.")
+                parse_method = "ocr_table"
                 extracted_text = "" # Reset
                 for i in range(len(doc)):
                     page = doc.load_page(i)
@@ -355,6 +380,7 @@ async def process_invoice(
             doc.close()
             
         elif filename.endswith((".png", ".jpg", ".jpeg")):
+            parse_method = "ocr_table"
             with open(temp_path, "rb") as fimg:
                 b64_str = base64.b64encode(fimg.read()).decode('utf-8')
             txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
@@ -366,8 +392,10 @@ async def process_invoice(
         elif filename.endswith((".xlsx", ".xls", ".csv")):
             if filename.endswith(".csv"):
                 df = pd.read_csv(temp_path)
+            elif filename.endswith(".xls"):
+                df = pd.read_excel(temp_path, engine='xlrd')
             else:
-                df = pd.read_excel(temp_path)
+                df = pd.read_excel(temp_path, engine='openpyxl')
             # Serialize with | for GPT consistency
             header = " | ".join(map(str, df.columns))
             rows = []
@@ -385,6 +413,9 @@ async def process_invoice(
         # Call GPT to structure the data using chunking
         all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id))
         
+        if all_items is None or main_doc_info is None:
+            raise HTTPException(status_code=422, detail="ИИ вернул невалидный ответ")
+        
         # Merge into a single struct for compatibility with existing calculate_uncertainty
         merged_struct = {
             "document": main_doc_info or {"name": file.filename, "metadata": {}},
@@ -397,7 +428,11 @@ async def process_invoice(
         else:
              merged_struct["document"]["filename"] = file.filename
              
-        final_struct = calculate_uncertainty(merged_struct, has_low_confidence)
+        try:
+            final_struct = calculate_uncertainty(merged_struct, has_low_confidence)
+        except Exception as e:
+            print(f"calculate_uncertainty error: {e}")
+            final_struct = merged_struct
         
         # Pro rate: 1.2 RUB per 1000 tokens
         cost = round((total_tokens * 1.2) / 1000, 2)
@@ -405,19 +440,48 @@ async def process_invoice(
         # Add usage and cost to the final return
         final_struct["usage"] = {"total_tokens": total_tokens}
         final_struct["cost"] = cost
+        final_struct["method"] = parse_method
+        
+        # Persist cost + tokens to manifest
+        original_name = file.filename
+        manifest = _load_manifest()
+        for k, v in manifest.items():
+            if isinstance(v, dict) and v.get("originalName") == original_name:
+                v["cost"] = cost
+                v["tokens"] = total_tokens
+                v["method"] = parse_method
+                break
+            elif isinstance(v, dict) and v.get("original_name") == original_name:
+                v["cost"] = cost
+                v["tokens"] = total_tokens
+                v["method"] = parse_method
+                break
+        _save_manifest(manifest)
         
         return final_struct
 
+    except HTTPException:
+        # Re-raise HTTP exceptions directly
+        raise
     except Exception as e:
-        print(f"Error in processing: {e}")
         import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         # DEBUG: Disabled cleanup per user request to inspect temp files
         # if os.path.exists(temp_path):
         #     os.remove(temp_path)
         pass
+
+
+def transliterate(text: str) -> str:
+    ru = "абвгдёезийклмнопрстуфхцчшщъыьэюяАБВГДЁЕЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+    en = [
+        "a", "b", "v", "g", "d", "yo", "e", "z", "i", "j", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya",
+        "A", "B", "V", "G", "D", "Yo", "E", "Z", "I", "J", "K", "L", "M", "N", "O", "P", "R", "S", "T", "U", "F", "H", "Ts", "Ch", "Sh", "Shch", "", "Y", "", "E", "Yu", "Ya"
+    ]
+    mapping = {ru[i]: en[i] for i in range(len(ru))}
+    return "".join(mapping.get(c, c) for c in text)
 
 
 def secure_filename(filename: str) -> str:
@@ -430,38 +494,141 @@ def secure_filename(filename: str) -> str:
 
 @app.post("/api/storage/upload")
 async def storage_upload(file: UploadFile = File(...)):
-    filename = secure_filename(file.filename)
-    dest_path = os.path.join(STORAGE_DIR, filename)
+    original_filename = file.filename
+    # 1. Transliterate to Latin
+    transliterated = transliterate(original_filename)
+    # 2. Secure filename
+    secured_name = secure_filename(transliterated)
+    
+    dest_path = os.path.join(STORAGE_DIR, secured_name)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    return {"status": "success", "filename": filename}
+    
+    # Update manifest
+    manifest = _load_manifest()
+    # Preserve existing cost/tokens if re-uploading
+    existing = manifest.get(secured_name, {})
+    manifest[secured_name] = {
+        "originalName": original_filename,
+        "status": "ok",
+        "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
+        "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
+    }
+    _save_manifest(manifest)
+    
+    return {"status": "success", "filename": secured_name}
 
 
 @app.get("/api/storage/files")
 async def storage_list():
+    manifest = _load_manifest()
     files = []
+    
     if os.path.exists(STORAGE_DIR):
         for f in os.listdir(STORAGE_DIR):
+            if f == "manifest.json" or f.startswith('.'):
+                continue
             path = os.path.join(STORAGE_DIR, f)
             if os.path.isfile(path):
                 stat = os.stat(path)
                 from datetime import datetime
                 dt = datetime.fromtimestamp(stat.st_mtime)
                 time_str = dt.strftime("%H:%M | %d.%m.%y")
+                
+                # Get all details from manifest
+                entry = manifest.get(f, {})
+                if isinstance(entry, dict):
+                    # Support both old 'original_name' and new 'originalName' keys
+                    display_name = entry.get("originalName") or entry.get("original_name", f)
+                    status = entry.get("status", "ok")
+                    cost = entry.get("cost", 0)
+                    tokens = entry.get("tokens", 0)
+                else:
+                    # Backward compatibility: plain string value
+                    display_name = entry if entry else f
+                    status = "ok"
+                    cost = 0
+                    tokens = 0
+                
                 files.append({
-                    "name": f,
+                    "name": display_name,
+                    "disk_name": f,
                     "size": stat.st_size,
-                    "time": time_str
+                    "time": time_str,
+                    "status": status,
+                    "cost": cost,
+                    "tokens": tokens,
                 })
     return files
 
 
+@app.patch("/api/storage/files/{name}")
+async def storage_update_file(name: str, update_data: dict):
+    """
+    Update any field(s) of a file entry in the manifest.
+    'name' is the original filename.
+    Allowed fields: status, cost, tokens.
+    """
+    allowed_fields = {"status", "cost", "tokens"}
+    fields_to_update = {k: v for k, v in update_data.items() if k in allowed_fields}
+    if not fields_to_update:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    manifest = _load_manifest()
+    
+    # Find disk name by original name (supports both key formats)
+    disk_name = None
+    for k, v in manifest.items():
+        if isinstance(v, dict):
+            orig = v.get("originalName") or v.get("original_name")
+            if orig == name:
+                disk_name = k
+                break
+        elif v == name:
+            disk_name = k
+            break
+
+    if not disk_name:
+        raise HTTPException(status_code=404, detail="File not found in manifest")
+
+    # Migrate plain-string entry to dict if needed
+    if not isinstance(manifest[disk_name], dict):
+        manifest[disk_name] = {"originalName": name, "status": "ok", "cost": 0, "tokens": 0}
+
+    manifest[disk_name].update(fields_to_update)
+    _save_manifest(manifest)
+    return {"updated": True, "file": name, "fields": fields_to_update}
+
+
 @app.delete("/api/storage/files/{name}")
 async def storage_delete(name: str):
-    filename = secure_filename(name)
-    path = os.path.join(STORAGE_DIR, filename)
+    # 'name' is the original filename in the UI
+    manifest = _load_manifest()
+    
+    # Find disk name by original name
+    disk_name = None
+    for k, v in manifest.items():
+        if isinstance(v, dict):
+            if v.get("original_name") == name:
+                disk_name = k
+                break
+        elif v == name:
+            disk_name = k
+            break
+
+    # If not found by original name, try it as a disk name (fallback)
+    if not disk_name:
+        disk_name = secure_filename(name)
+        
+    path = os.path.join(STORAGE_DIR, disk_name)
     if os.path.exists(path):
         os.remove(path)
+        
+        # Remove from manifest
+        if disk_name in manifest:
+            del manifest[disk_name]
+            _save_manifest(manifest)
+            
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="File not found")
 
@@ -469,9 +636,24 @@ async def storage_delete(name: str):
 @app.get("/api/storage/files/{name}")
 async def storage_get(name: str):
     from fastapi.responses import FileResponse
-    filename = secure_filename(name)
-    path = os.path.join(STORAGE_DIR, filename)
+    # 'name' is the original filename in the UI
+    manifest = _load_manifest()
+    
+    disk_name = None
+    for k, v in manifest.items():
+        if isinstance(v, dict):
+            if v.get("original_name") == name:
+                disk_name = k
+                break
+        elif v == name:
+            disk_name = k
+            break
+            
+    if not disk_name:
+        disk_name = secure_filename(name)
+
+    path = os.path.join(STORAGE_DIR, disk_name)
     if os.path.exists(path):
-        return FileResponse(path, filename=filename)
+        return FileResponse(path, filename=disk_name)
     raise HTTPException(status_code=404, detail="File not found")
 
