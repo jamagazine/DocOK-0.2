@@ -153,7 +153,7 @@ interface DataContextType {
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
-  removeFile: (fileName: string) => void;
+  removeFile: (fileName: string, nuclear?: boolean) => void;
   retryFile: (fileName: string, stage: Stage) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
   isMerged: boolean;
@@ -315,14 +315,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // Reset search filter so new rows are visible
     setSearchQuery('');
 
-    // Рефакторинг: сбор данных для пакетного обновления
-    const allNewSpecRows: SpecRow[] = [];
-    const allNewInvoiceRows: InvoiceRow[] = [];
+    const now = new Date();
+    const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
 
-    for (const file of fileArray) {
-      const now = new Date();
-      const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
-      setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime, size: file.size } }));
+    // Set all initial statuses to render instantly
+    const initialStatuses: Record<string, any> = {};
+    for (const f of fileArray) {
+      initialStatuses[f.name] = { status: 'Ожидание...', time: currentTime, size: f.size };
+    }
+    setUploadStatuses((prev: any) => ({ ...prev, ...initialStatuses }));
+
+    // Start async processing for all files concurrently
+    fileArray.forEach(async (file) => {
+      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...' } }));
 
       // Upload to physical storage
       try {
@@ -385,9 +390,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
               children: [],
             }));
 
-            allNewSpecRows.push(...newRows);
+            setSpecRows((prev) => [...prev, ...newRows]);
+            setBackupSpecRows((prev) => [...prev, ...newRows]);
             setIsMerged(false);
-            // backupSpecRows will be updated after the loop
         } else {
           const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
             const r = emptyInvoiceRow();
@@ -413,7 +418,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-            allNewInvoiceRows.push(...newRowsToAppend);
+            setInvoiceRows((prev) => [...prev, ...newRowsToAppend]);
           }
           
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Готово (Локально)', time: currentTime } }));
@@ -429,7 +434,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         continue;
       }
 
-      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Конвертация и Анализ ИИ...', time: currentTime } }));
+      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
       const formData = new FormData();
       formData.append('file', file);
 
@@ -474,7 +479,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
             children: []
           }));
 
-          allNewSpecRows.push(...aiRows);
+          setSpecRows((prev) => [...prev, ...aiRows]);
+          setBackupSpecRows((prev) => [...prev, ...aiRows]);
           setIsMerged(false);
         } else {
           const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
@@ -492,7 +498,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-          allNewInvoiceRows.push(...aiRows);
+          setInvoiceRows((prev) => [...prev, ...aiRows]);
         }
           
         setUploadStatuses((prev: any) => ({ 
@@ -514,12 +520,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
       }
     }
-    } // closes for loop
+    }); // closes forEach
 
-    // Финальное пакетное обновление стейта (всегда вызываем — пустые массивы безопасны)
-    setSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
-    setBackupSpecRows((prev: SpecRow[]) => [...prev, ...allNewSpecRows]);
-    setInvoiceRows((prev: InvoiceRow[]) => [...prev, ...allNewInvoiceRows]);
   }, [yandexConfig, updateFileStatusOnServer]);
 
   const toggleMerge = useCallback(() => {
@@ -761,7 +763,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Helper: parse quantity to float
   const parseQtyNum = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
 
-  const removeFile = useCallback((fileName: string) => {
+  const removeFile = useCallback((fileName: string, nuclear: boolean = false) => {
     // 1. Remove from uploadStatuses and filesMap
     setUploadStatuses(prev => {
       const next = { ...prev };
@@ -775,7 +777,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
 
     // Delete from physical storage
-    fetch(`http://localhost:8000/api/storage/files/${fileName}`, { method: 'DELETE' })
+    fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}?nuclear=${nuclear}`, { method: 'DELETE' })
       .catch(e => console.error('Failed to delete file from storage:', e));
 
     // 2. Remove specRows (including cascade in merged groups)

@@ -26,7 +26,7 @@ interface FilesPanelProps {
 
 export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const { uploadStatuses, filesMap, removeFile, retryFile, handleFile, currentStage, resetFileData } = useData();
-  const [pendingDelete, setPendingDelete] = React.useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
 
   if (!isOpen) return null;
 
@@ -36,7 +36,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
   const handleDeleteConfirm = () => {
     if (pendingDelete) {
-      removeFile(pendingDelete);
+      removeFile(pendingDelete.name, pendingDelete.nuclear);
       setPendingDelete(null);
     }
   };
@@ -109,7 +109,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               {/* Inline Progress Bar for Loading State */}
               {isLoading && (
                 <div className="h-1 w-24 bg-slate-100 rounded-full mt-1 overflow-hidden">
-                  <div className="h-full bg-indigo-500 animate-progress-indeterminate" />
+                  <div className={cn("h-full bg-indigo-500", statusStr.includes('ИИ') ? "animate-progress-indeterminate" : "w-[90%] transition-all duration-[2000ms] ease-out")} />
                 </div>
               )}
 
@@ -143,7 +143,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                       "text-[10px] px-1.5 py-0.5 rounded font-mono",
                       data.model === 'CACHED' ? "bg-amber-100 text-amber-700 font-bold" : "bg-slate-100 text-slate-600"
                     )}>
-                      {data.model} • {data.method} {data.model === 'CACHED' ? '(из кэша)' : ''}
+                      {data.model === 'CACHED' ? 'из памяти' : data.model === 'lite' ? 'lite • ИИ текст' : data.model === 'pro' ? 'pro • ИИ зрение' : `${data.model} • ${data.method}`}
                     </span>
                   </>
                 )}
@@ -234,9 +234,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
             {/* Delete */}
             <button
-              onClick={() => setPendingDelete(fileName)}
+              onClick={(e) => setPendingDelete({ name: fileName, nuclear: e.shiftKey })}
               className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-              title="Удалить файл и связанные данные"
+              title="Удалить файл и связанные данные (Shift + Click для Ядерного удаления из истории)"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -330,7 +330,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   <span className="text-slate-600">Общий прогресс обработки</span>
                   <span className="text-indigo-600">
                     {Math.round(
-                      (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово')).length /
+                      (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово') || d.status === 'reset').length /
                         fileEntries.length) *
                         100
                     )}
@@ -342,7 +342,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                     className="h-full bg-indigo-500 transition-all duration-500 ease-out"
                     style={{
                       width: `${
-                        (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово')).length /
+                        (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово') || d.status === 'reset').length /
                           fileEntries.length) *
                         100
                       }%`,
@@ -354,9 +354,24 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               <div className="flex items-center justify-between pt-1 border-t border-slate-200">
                 <span className="text-xs font-semibold text-slate-700 flex items-center gap-2">
                   Итого за проект:
-                  <a href="http://localhost:8000/api/storage/history/export" download="history.txt" title="Скачать финансовую детализацию (TXT)" className="p-1 ml-1 rounded hover:bg-slate-200 text-slate-500 hover:text-indigo-600 transition-colors">
+                  <button 
+                    onClick={async () => {
+                      try {
+                        const res = await fetch('http://localhost:8000/api/storage/history/export_xlsx');
+                        const blob = await res.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `Детализация - ${new Date().toLocaleDateString('ru-RU')}.xlsx`;
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                      } catch(e) { console.error('Failed to download XLSX', e); }
+                    }} 
+                    title="Скачать финансовую детализацию (XLSX) через Blob" 
+                    className="p-1 ml-1 rounded hover:bg-slate-200 text-slate-500 hover:text-indigo-600 transition-colors"
+                  >
                     <FileText className="w-4 h-4" />
-                  </a>
+                  </button>
                 </span>
                 <span className="text-sm font-bold text-indigo-700">
                   {fileEntries
@@ -386,9 +401,14 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 <p className="text-sm text-slate-500 mt-0.5">Все данные, загруженные из этого файла, будут удалены из таблицы.</p>
               </div>
             </div>
-            <p className="text-sm font-medium text-slate-700 bg-slate-50 rounded-lg px-3 py-2 mb-5 truncate" title={pendingDelete}>
-              {pendingDelete}
+            <p className="text-sm font-medium text-slate-700 bg-slate-50 rounded-lg px-3 py-2 mb-2 truncate" title={pendingDelete.name}>
+              {pendingDelete.name}
             </p>
+            {pendingDelete.nuclear && (
+              <p className="text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5 mb-3 leading-tight">
+                ⚠️ ВНИМАНИЕ: Запрошено ЯДЕРНОЕ удаление. Файл будет безвозвратно стерт из финансовой истории (history.json).
+              </p>
+            )}
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setPendingDelete(null)}

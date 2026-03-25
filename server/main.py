@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Body, Request, Header
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
@@ -13,6 +13,7 @@ import pandas as pd, io
 import fitz  # PyMuPDF
 import pdfplumber
 import datetime
+from urllib.parse import quote
 
 app = FastAPI()
 
@@ -110,6 +111,72 @@ async def export_history():
         return PlainTextResponse("\n".join(lines))
     except Exception as e:
         return PlainTextResponse(f"Ошибка чтения: {e}")
+
+@app.get("/api/storage/history/export_xlsx")
+async def export_history_xlsx():
+    if not os.path.exists(HISTORY_FILE):
+        return PlainTextResponse("История пуста")
+        
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+            
+        if not history:
+            return PlainTextResponse("История пуста")
+            
+        df = pd.DataFrame(history)
+        
+        # Rename columns to Russian
+        rename_map = {
+            'timestamp': 'Дата',
+            'fileName': 'Файл',
+            'model': 'Модель',
+            'method': 'Режим',
+            'cost': 'Цена',
+            'tokens': 'Токены',
+            'status': 'Статус'
+        }
+        df = df.rename(columns=rename_map)
+        
+        # Keep only known columns if history json has others
+        cols = [c for c in rename_map.values() if c in df.columns]
+        df = df[cols]
+        
+        # Make cost numeric and sum it
+        if 'Цена' in df.columns:
+            df['Цена'] = pd.to_numeric(df['Цена'], errors='coerce').fillna(0)
+            total_cost = df['Цена'].sum()
+            
+            # Append TOTAL row
+            total_row = {col: '' for col in df.columns}
+            total_row['Дата'] = 'ИТОГО'
+            total_row['Цена'] = total_cost
+            
+            df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+            
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='История')
+            
+        output.seek(0)
+        
+        now = datetime.datetime.now()
+        filename = f"Детализация по API - {now.strftime('%d.%m.%y')} - {now.strftime('%H-%M')}.xlsx"
+        
+        headers = {
+            "Content-Disposition": f"attachment; filename*=utf-8''{quote(filename)}"
+        }
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers
+        )
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return PlainTextResponse(f"Ошибка создания XLSX: {e}")
 
 @app.get("/api/config")
 async def get_config():
@@ -222,7 +289,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
-    user_text = f"Текст документа:\n{text[:8000]}"
+    user_text = f"Текст документа:\n{text}"
     
     # DEBUG: Save last prompt
     try:
@@ -292,8 +359,22 @@ def parse_gpt_json(text: str):
 
 async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, model_type: str = "lite"):
     """
-    Splits text into chunks of 25 lines (plus header) if it's too large.
+    Inteligently splits text into chunks if it exceeds token limits, otherwise sends the whole document.
     """
+    # 1. Inteligently check full token size
+    initial_tokens = await get_token_count(full_text, model_type, api_key, folder_id)
+    
+    # Send full if fits comfortably (leave ~1000 tokens for system prompt & response)
+    if initial_tokens < 7000:
+        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type)
+        parsed = parse_gpt_json(raw_res)
+        if not parsed:
+            return None, tokens, None
+        return parsed.get('items', []), tokens, parsed.get('document', {})
+
+    print(f"Document exceeds 7000 tokens ({initial_tokens} tokens). Falling back to line chunking.")
+
+    # 2. Fallback to 25 chunking logic
     lines = full_text.split('\n')
     header = lines[0] if lines else ""
     data_lines = lines[1:] if len(lines) > 1 else []
@@ -302,14 +383,6 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     all_items = []
     total_tokens = 0
     main_doc = {}
-    
-    # If small, process normally
-    if len(data_lines) <= CHUNK_SIZE:
-        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type)
-        parsed = parse_gpt_json(raw_res)
-        if not parsed:
-            return None, tokens, None
-        return parsed.get('items', []), tokens, parsed.get('document', {})
 
     # Split into chunks
     chunks = [data_lines[i:i + CHUNK_SIZE] for i in range(0, len(data_lines), CHUNK_SIZE)]
@@ -794,7 +867,7 @@ async def storage_update_file(name: str, update_data: dict):
 
 
 @app.delete("/api/storage/files/{name}")
-async def storage_delete(name: str):
+async def storage_delete(name: str, nuclear: bool = False):
     # 'name' is the original filename in the UI
     manifest = _load_manifest()
     
@@ -822,6 +895,19 @@ async def storage_delete(name: str):
             del manifest[disk_name]
             _save_manifest(manifest)
             
+        if nuclear:
+            if os.path.exists(HISTORY_FILE):
+                try:
+                    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                        history = json.load(f)
+                    
+                    new_history = [r for r in history if r.get("fileName") != name]
+                    
+                    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                        json.dump(new_history, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"Nuclear delete history error: {e}")
+
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="File not found")
 
