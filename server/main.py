@@ -175,7 +175,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str):
         "completionOptions": {
             "stream": False,
             "temperature": 0.1,
-            "maxTokens": "2000"
+            "maxTokens": "4000"
         },
         "messages": [
             {"role": "system", "text": system_prompt},
@@ -188,14 +188,56 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str):
         resp.raise_for_status()
         data = resp.json()
         
-    return data['result']['alternatives'][0]['message']['text']
+    usage = data.get('result', {}).get('usage', {})
+    total_tokens = int(usage.get('totalTokens', 0))
+    return data['result']['alternatives'][0]['message']['text'], total_tokens
 
 
 def parse_gpt_json(raw_text: str):
     # Cleanup markdown if GPT hallucinated it
     clean = re.sub(r'```json\s*', '', raw_text)
     clean = re.sub(r'```\s*', '', clean)
+    # Filter only contents within { } if there's surrounding text
+    match = re.search(r'(\{.*\})', clean, re.DOTALL)
+    if match:
+        clean = match.group(1)
     return json.loads(clean.strip())
+
+async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str):
+    """
+    Splits text into chunks of 25 lines (plus header) if it's too large.
+    """
+    lines = full_text.split('\n')
+    header = lines[0] if lines else ""
+    data_lines = lines[1:] if len(lines) > 1 else []
+    
+    CHUNK_SIZE = 25
+    all_items = []
+    total_tokens = 0
+    main_doc = {}
+    
+    # If small, process normally
+    if len(data_lines) <= CHUNK_SIZE:
+        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id)
+        parsed = parse_gpt_json(raw_res)
+        return parsed.get('items', []), tokens, parsed.get('document', {})
+
+    # Split into chunks
+    chunks = [data_lines[i:i + CHUNK_SIZE] for i in range(0, len(data_lines), CHUNK_SIZE)]
+    print(f"Document split into {len(chunks)} chunks.")
+    
+    for i, chunk in enumerate(chunks):
+        chunk_text = header + "\n" + "\n".join(chunk)
+        # We might need to handle per-chunk errors here, but for now let it propagate
+        raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id)
+        total_tokens += tokens
+        parsed = parse_gpt_json(raw_res)
+        
+        all_items.extend(parsed.get('items', []))
+        if not main_doc:
+            main_doc = parsed.get('document', {})
+            
+    return all_items, total_tokens, main_doc
 
 def to_float(val) -> float:
     if not val: return 0.0
@@ -338,19 +380,29 @@ async def process_invoice(
         if not extracted_text.strip():
              raise HTTPException(status_code=400, detail="No readable text found in document.")
              
-        # Call GPT to structure the data
-        gpt_json_str = await gpt_yandex(extracted_text, str(api_key), str(folder_id))
+        # Call GPT to structure the data using chunking
+        all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id))
         
-        # Parse and calculate uncertainty
-        struct = parse_gpt_json(str(gpt_json_str))
+        # Merge into a single struct for compatibility with existing calculate_uncertainty
+        merged_struct = {
+            "document": main_doc_info or {"name": file.filename, "metadata": {}},
+            "items": all_items
+        }
         
         # Override document name for UI grouping if GPT couldn't figure it out
-        if "document" not in struct or not struct["document"].get("name"):
-             struct["document"] = {"name": file.filename, "metadata": {}}
+        if not merged_struct["document"].get("name"):
+             merged_struct["document"]["name"] = file.filename
         else:
-             struct["document"]["filename"] = file.filename
+             merged_struct["document"]["filename"] = file.filename
              
-        final_struct = calculate_uncertainty(struct, has_low_confidence)
+        final_struct = calculate_uncertainty(merged_struct, has_low_confidence)
+        
+        # Pro rate: 1.2 RUB per 1000 tokens
+        cost = round((total_tokens * 1.2) / 1000, 2)
+        
+        # Add usage and cost to the final return
+        final_struct["usage"] = {"total_tokens": total_tokens}
+        final_struct["cost"] = cost
         
         return final_struct
 

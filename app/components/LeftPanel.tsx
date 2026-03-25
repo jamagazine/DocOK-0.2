@@ -269,8 +269,8 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage }: Left
 
       {/* Footer - Basement */}
       <div className={cn(
-        "border-t border-slate-200 flex shrink-0 relative z-50 bg-white",
-        expanded ? "flex-row p-4 items-center" : "flex-col-reverse items-center py-4 gap-4"
+        "border-t border-slate-200 flex shrink-0 relative z-50 bg-white h-16",
+        expanded ? "flex-row px-4 items-center" : "flex-col-reverse items-center py-4 gap-4"
       )}>
         {/* Logo */}
         <div className={cn(

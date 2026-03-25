@@ -21,6 +21,7 @@ export function genId(): string {
 
 export interface SpecRow extends MaterialPosition {
   id: string;
+  fileId?: string;
   originalRowsIds?: string[];
   children?: SpecRow[];
 }
@@ -30,9 +31,9 @@ export const SPEC_COLUMNS = [
   { key: 'brand', label: 'Марка', width: 130 },
   { key: 'code', label: 'Код', width: 110 },
   { key: 'supplier', label: 'Поставщик', width: 140 },
-  { key: 'unit', label: 'Ед.', width: 80, align: 'center' },
+  { key: 'unit', label: 'Ед.', width: 100, align: 'center' },
   { key: 'quantity', label: 'Кол-во', width: 100, type: 'number', align: 'right' },
-  { key: 'mass', label: 'Масса', width: 100, type: 'number', align: 'right' },
+  { key: 'mass', label: 'Масса', width: 120, type: 'number', align: 'right' },
   { key: 'note', label: 'Прим.', width: 180 },
 ];
 
@@ -49,6 +50,7 @@ export const SPEC_TARGET_FIELDS = [
 
 export interface InvoiceRow {
   id: string;
+  fileId?: string;
   documentName?: string;
   isUncertain?: boolean;
   article: string;
@@ -115,6 +117,7 @@ export function emptyEstimateRow(): EstimateRow {
 
 export interface EstimateRow {
   id: string;
+  fileId?: string;
   workType: string;
   name: string;
   unit: string;
@@ -141,11 +144,27 @@ interface DataContextType {
   setConfigKeys: (keys: Record<string, string>) => void;
   yandexConfig: YandexConfig;
   saveYandexConfig: (config: YandexConfig) => void;
-  uploadStatuses: Record<string, { status: string; time: string }>;
-  setUploadStatuses: React.Dispatch<React.SetStateAction<Record<string, { status: string; time: string }>>>;
+  uploadStatuses: Record<string, { 
+    status: string; 
+    time: string; 
+    tokens?: number; 
+    cost?: number; 
+    error?: string;
+    chunks?: { current: number; total: number };
+  }>;
+  setUploadStatuses: React.Dispatch<React.SetStateAction<Record<string, { 
+    status: string; 
+    time: string; 
+    tokens?: number; 
+    cost?: number; 
+    error?: string;
+    chunks?: { current: number; total: number };
+  }>>>;
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
+  removeFile: (fileName: string) => void;
+  retryFile: (fileName: string, stage: Stage) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
   isMerged: boolean;
   toggleMerge: () => void;
@@ -230,7 +249,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
     return { apiKey: '', catalogId: '' };
   });
-  const [uploadStatuses, setUploadStatuses] = useState<Record<string, { status: string; time: string }>>({});
+  const [uploadStatuses, setUploadStatuses] = useState<Record<string, { 
+    status: string; 
+    time: string; 
+    tokens?: number; 
+    cost?: number; 
+    chunks?: { current: number; total: number };
+  }>>({});
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
   const [pdfGeometry, setPdfGeometry] = useState<PdfGeometry | null>(null);
   const [isMerged, setIsMerged] = useState(false);
@@ -266,15 +291,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     for (const file of fileArray) {
       const now = new Date();
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
-    setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime } }));
+    setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Старт...', time: currentTime, size: file.size } }));
 
     const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
     const useAi = forceAI || isPdfOrImage;
 
-    const toastId = toast.loading(`Обработка файла ${file.name}...`);
-
     if (!useAi) {
-      setUploadStatuses((prev: Record<string, any>) => ({ ...prev, [file.name]: { status: 'Локальный парсинг...', time: currentTime } }));
+      setUploadStatuses((prev: Record<string, any>) => ({ 
+        ...prev, 
+        [file.name]: { ...prev[file.name], status: 'Локальный парсинг...' } 
+      }));
       try {
         const { headers, rows: parsedRawRows, gridX } = await parseFile(file);
         
@@ -294,6 +320,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (stage === 'spec') {
             const newRows: SpecRow[] = parsedRawRows.map((row) => ({
               id: genId(),
+              fileId: file.name,
               name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
               brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
               code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
@@ -312,6 +339,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         } else {
           const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
             const r = emptyInvoiceRow();
+            r.fileId = file.name;
             r.documentName = file.name;
             if (mapping.article !== undefined) r.article = row[mapping.article] || '';
             if (mapping.name !== undefined) r.name = row[mapping.name] || '';
@@ -336,17 +364,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
             allNewInvoiceRows.push(...newRowsToAppend);
           }
           
-          setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
-          setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-        toast.success(`Файл ${file.name} успешно прочитан локально`, { id: toastId });
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (Локально)', time: currentTime } }));
+        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
       } catch (e: any) {
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
-        toast.error(`Ошибка чтения: ${e.message}`, { id: toastId });
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: e.message, time: currentTime } }));
       }
     } else if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
-        toast.error('API Ключ или ID каталога не настроены. Проверьте настройки в левой панели.', { id: toastId });
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка настроек', time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
         return;
       }
 
@@ -370,6 +395,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
 
         const data = await res.json();
+        const tokens = data.usage?.total_tokens || 0;
+        const cost = data.cost || 0;
         
         const strToNumOrBlank = (v: any) => {
            if (v === undefined || v === null || v === '') return '';
@@ -380,8 +407,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (stage === 'spec') {
           const aiRows: SpecRow[] = (data.items || []).map((item: any) => ({
             id: genId(),
+            fileId: file.name,
             name: item.name || '',
-            brand: '', // GPT doesn't specifically extract brand usually, or it's in name
+            brand: '',
             code: item.article || '',
             supplier: data.document?.metadata?.vendor || '',
             unit: item.unit || 'шт',
@@ -392,12 +420,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
             children: []
           }));
 
-            allNewSpecRows.push(...aiRows);
-            setIsMerged(false);
-            // backupSpecRows will be updated after the loop
+          allNewSpecRows.push(...aiRows);
+          setIsMerged(false);
         } else {
           const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
             const r = emptyInvoiceRow();
+            r.fileId = file.name;
             r.documentName = data.document?.filename || data.document?.name || file.name;
             r.isUncertain = Boolean(item.isUncertain);
             r.article = item.article || '';
@@ -410,16 +438,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return r;
           });
 
-            allNewInvoiceRows.push(...aiRows);
-          }
+          allNewInvoiceRows.push(...aiRows);
+        }
           
-          setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Готово (ИИ)', time: currentTime } }));
-          setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-        toast.success(`Файл ${file.name} успешно обработан ИИ`, { id: toastId });
+        setUploadStatuses((prev: any) => ({ 
+          ...prev, 
+          [file.name]: { 
+            status: `Готово (ИИ${tokens > 0 ? `, ${tokens} токенов` : ''})`, 
+            time: currentTime,
+            tokens,
+            cost
+          } 
+        }));
+        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
       } catch (e: any) {
         console.error('AI Processing error:', e);
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', time: currentTime } }));
-        toast.error(`Ошибка обработки: ${e.message}`, { id: toastId });
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { status: 'Ошибка', error: e.message, time: currentTime } }));
       }
     }
     } // closes for loop
@@ -646,6 +680,65 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Helper: parse quantity to float
+  const parseQtyNum = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+
+  const removeFile = useCallback((fileName: string) => {
+    // 1. Remove from uploadStatuses and filesMap
+    setUploadStatuses(prev => {
+      const next = { ...prev };
+      delete next[fileName];
+      return next;
+    });
+    setFilesMap(prev => {
+      const next = { ...prev };
+      delete next[fileName];
+      return next;
+    });
+
+    // 2. Remove specRows (including cascade in merged groups)
+    setSpecRows(prev => {
+      const filtered: SpecRow[] = [];
+      for (const row of prev) {
+        if (row.children && row.children.length > 0) {
+          // Merged group: filter children by fileId
+          const keptChildren = row.children.filter((c: SpecRow) => c.fileId !== fileName);
+          if (keptChildren.length === 0) {
+            // All children removed — drop the parent too
+            continue;
+          }
+          if (keptChildren.length === row.children.length) {
+            // Nothing changed in this group
+            filtered.push(row);
+          } else {
+            // Recalculate parent quantity as sum of remaining children
+            const newQty = keptChildren.reduce((acc, c) => acc + parseQtyNum(c.quantity), 0);
+            filtered.push({ ...row, children: keptChildren, quantity: String(newQty > 0 ? newQty : '') });
+          }
+        } else if (row.fileId !== fileName) {
+          filtered.push(row);
+        }
+      }
+      return filtered;
+    });
+
+    // 3. Remove requestRows
+    setRequestRows(prev => prev.filter((r: SpecRow) => r.fileId !== fileName));
+
+    // 4. Remove invoiceRows
+    setInvoiceRows(prev => prev.filter((r: InvoiceRow) => r.fileId !== fileName));
+
+    // 5. Remove estimateRows
+    setEstimateRows(prev => prev.filter((r: EstimateRow) => r.fileId !== fileName));
+  }, [setUploadStatuses, setFilesMap, setSpecRows, setRequestRows, setInvoiceRows, setEstimateRows]);
+
+  const retryFile = useCallback(async (fileName: string, stage: Stage) => {
+    const file = filesMap[fileName];
+    if (!file) return;
+    removeFile(fileName);
+    await handleFile([file], stage, false);
+  }, [filesMap, removeFile, handleFile]);
+
   const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: string) => {
     if (stage === 'spec') {
       setSpecRows(prev => prev.map(row => {
@@ -786,6 +879,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         filesMap,
         setFilesMap,
         handleFile,
+        removeFile,
+        retryFile,
         pdfGeometry,
         isMerged,
         toggleMerge,

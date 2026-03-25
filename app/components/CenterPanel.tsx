@@ -29,7 +29,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import type { Stage, SpecRow, EstimateRow, UploadedFile } from '../types';
+import type { Stage, SpecRow, EstimateRow } from '../types';
 import { FilesPanel } from './FilesPanel';
 import { useData, genId, emptyInvoiceRow, InvoiceRow, SPEC_COLUMNS, emptySpecRow } from '../context/DataContext';
 
@@ -37,14 +37,57 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+interface AutoResizingTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  value: string;
+}
+
+const AutoResizingTextarea = React.forwardRef<HTMLTextAreaElement, AutoResizingTextareaProps>(
+  ({ className, value, ...props }, ref) => {
+    const internalRef = React.useRef<HTMLTextAreaElement>(null);
+    const combinedRef = (ref as React.RefObject<HTMLTextAreaElement>) || internalRef;
+
+    const adjustHeight = React.useCallback(() => {
+      const textarea = combinedRef.current;
+      if (textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = `${textarea.scrollHeight}px`;
+      }
+    }, [combinedRef]);
+
+    React.useEffect(() => {
+      adjustHeight();
+      const timer = setTimeout(adjustHeight, 10);
+      return () => clearTimeout(timer);
+    }, [value, adjustHeight]);
+
+    return (
+      <textarea
+        ref={combinedRef}
+        value={value}
+        className={cn(
+          "bg-transparent border-none focus:ring-0 rounded-none px-1 w-full text-slate-900 resize-none overflow-hidden py-0 block min-h-[1.5rem] antialiased",
+          props.readOnly && "cursor-default",
+          className
+        )}
+        rows={1}
+        onInput={(e) => {
+          adjustHeight();
+          props.onInput?.(e);
+        }}
+        {...props}
+      />
+    );
+  }
+);
+AutoResizingTextarea.displayName = 'AutoResizingTextarea';
+
 interface CenterPanelProps {
   currentStage: Stage;
   projectName: string;
   setProjectName: (name: string) => void;
-  files: UploadedFile[];
 }
 
-export function CenterPanel({ currentStage, projectName, setProjectName, files }: CenterPanelProps) {
+export function CenterPanel({ currentStage, projectName, setProjectName }: CenterPanelProps) {
   const {
     uploadStatuses,
     invoiceRows,
@@ -140,19 +183,6 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
           {/* Right: Upload Statuses & Files Button */}
           <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
 
-            {/* Upload Statuses List */}
-            {fileEntries.length > 0 && (
-              <div className="flex flex-row-reverse items-center gap-2 overflow-hidden max-w-[250px] mr-2">
-                {fileEntries.map(([filename, data]) => (
-                  <div key={filename} className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 px-2 py-1 rounded-md shrink-0" title={`${filename}: ${data.status}`}>
-                    {data.status.includes('Ошибка') ? <AlertCircle size={14} className="text-red-500 shrink-0" />
-                      : data.status.includes('Готово') ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
-                        : <Clock size={14} className="text-indigo-500 animate-pulse shrink-0" />}
-                    <span className="truncate max-w-[80px] text-slate-700 font-medium">{filename}</span>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <button
               onClick={() => setFilesOpen(!filesOpen)}
@@ -164,9 +194,9 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
             >
               <FolderOpen className="w-4 h-4" />
               <span>Файлы</span>
-              {files.length > 0 && (
+              {fileEntries.length > 0 && (
                 <span className="flex items-center justify-center bg-indigo-100 text-indigo-700 rounded-full w-5 h-5 text-[10px] ml-1">
-                  {files.length}
+                  {fileEntries.length}
                 </span>
               )}
             </button>
@@ -188,7 +218,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName, files }
       <Footer />
 
       {/* Slide-in Files Overlay */}
-      <FilesPanel isOpen={filesOpen} onClose={() => setFilesOpen(false)} files={files} />
+      <FilesPanel isOpen={filesOpen} onClose={() => setFilesOpen(false)} />
     </div>
   );
 }
@@ -216,28 +246,18 @@ function Footer() {
   };
 
   return (
-    <div className="h-14 border-t border-slate-200 bg-white px-6 grid grid-cols-3 items-center">
+    <div className="h-16 border-t border-slate-200 bg-white px-6 grid grid-cols-3 items-center">
       <div className="flex items-center gap-4 text-sm min-w-[200px]">
-        <div className="flex items-center gap-1.5 text-slate-400 whitespace-nowrap">
+        <div className="flex items-center gap-1 text-slate-400 whitespace-nowrap">
           <span>Всего строк:</span>
           <span className="font-semibold text-slate-700">{totalRows}</span>
-          
+
           {selectedIds.length > 0 && (
             <>
-              <span className="mx-0.5">/</span>
-              <button
-                onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
-                className={cn(
-                  "px-1.5 py-0.5 rounded transition-all group",
-                  isOnlySelectedView 
-                    ? "bg-indigo-600 text-white shadow-sm" 
-                    : "text-slate-700 hover:bg-slate-100 font-semibold"
-                )}
-                title={isOnlySelectedView ? "Показать все" : "Показать только выбранные"}
-              >
+              <span>/</span>
+              <span className="font-semibold text-slate-700">
                 {selectedIds.length}
-                {isOnlySelectedView && <Search className="w-3 h-3 inline-block ml-1 mb-0.5" />}
-              </button>
+              </span>
             </>
           )}
         </div>
@@ -266,20 +286,20 @@ function Footer() {
           {(() => {
             const pages: (number | string)[] = [];
             const maxVisible = 7;
-            
+
             if (totalPages <= maxVisible) {
               for (let i = 1; i <= totalPages; i++) pages.push(i);
             } else {
               pages.push(1);
               if (currentPage > 3) pages.push('...');
-              
+
               const start = Math.max(2, currentPage - 1);
               const end = Math.min(totalPages - 1, currentPage + 1);
-              
+
               for (let i = start; i <= end; i++) {
                 if (!pages.includes(i)) pages.push(i);
               }
-              
+
               if (currentPage < totalPages - 2) pages.push('...');
               pages.push(totalPages);
             }
@@ -324,10 +344,10 @@ function Footer() {
       </div>
 
       {/* Right: Rows per page */}
-      <div className="flex items-center justify-end gap-3 text-xs text-slate-400">
+      <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
         <span className="hidden sm:inline">Строк на странице:</span>
         <select
-          className="bg-transparent border-none focus:ring-0 text-slate-600 font-medium cursor-pointer py-0"
+          className="bg-transparent border-none focus:ring-0 text-slate-700 font-semibold cursor-pointer py-0"
           value={rowsPerPage}
           onChange={(e) => {
             setRowsPerPage(Number(e.target.value));
@@ -418,12 +438,12 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
             onMouseLeave={() => idx === 0 && setIsHovered(false)}
           >
             {idx === 0 && col.key === '№' ? (
-              <div 
+              <div
                 className="flex items-center justify-center w-full"
                 onClick={(e) => e.stopPropagation()}
               >
                 {(isHovered || isAllSelected || isSomeSelected) ? (
-                  <div 
+                  <div
                     className="relative flex items-center justify-center cursor-pointer"
                     onClick={() => toggleSelectAllPage(pageIds)}
                   >
@@ -434,7 +454,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
                         isSomeSelected && "opacity-100"
                       )}
                       checked={isAllSelected}
-                      onChange={() => {}} // Обработка в onClick выше для стоп-пропагейшн
+                      onChange={() => { }} // Обработка в onClick выше для стоп-пропагейшн
                       ref={(el) => {
                         if (el) el.indeterminate = isSomeSelected;
                       }}
@@ -445,7 +465,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
                 )}
               </div>
             ) : (
-              <span className="truncate">{col.label}</span>
+              <span className="break-words whitespace-normal">{col.label}</span>
             )}
 
             {isSortable && col.key !== '№' && (
@@ -481,9 +501,9 @@ function SpecTable() {
     { key: 'brand', label: 'Марка', width: '120px' },
     { key: 'code', label: 'Код', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
-    { key: 'unit', label: 'Ед. изм', width: '80px', align: 'center' },
-    { key: 'quantity', label: 'Кол-во', width: '90px', align: 'right' },
-    { key: 'mass', label: 'Масса, 1 ед., кг', width: '100px', align: 'left' },
+    { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' },
+    { key: 'mass', label: 'Масса, 1 ед,кг', width: '150px', align: 'left' },
     { key: 'note', label: 'Примечание', width: '150px' }
   ];
 
@@ -529,95 +549,64 @@ function SpecTable() {
                           toggleRowSelection(row.id, true);
                         } : undefined}
                       >
-                          {col.key === '№' ? (
-                            <div className="relative w-full h-full flex items-center justify-center font-medium">
-                              {hasChildren && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleExpand(row.id);
-                                  }}
-                                  className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
-                                >
-                                  {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
-                                </button>
-                              )}
-                              {isSelected ? (
+                        {col.key === '№' ? (
+                          <div className="relative w-full h-full flex items-center justify-center font-medium">
+                            {hasChildren && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleExpand(row.id);
+                                }}
+                                className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
+                              >
+                                {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
+                              </button>
+                            )}
+                            {isSelected ? (
+                              <input
+                                type="checkbox"
+                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                checked={true}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleRowSelection(row.id, true);
+                                }}
+                                onChange={() => { }}
+                              />
+                            ) : (
+                              <>
+                                <span className="group-hover:hidden text-slate-400 tabular-nums">
+                                  {(actualIndex + 1).toString().padStart(2, '0')}
+                                </span>
                                 <input
                                   type="checkbox"
-                                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                  checked={true}
+                                  className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                  checked={false}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     toggleRowSelection(row.id, true);
                                   }}
-                                  onChange={() => {}}
+                                  onChange={() => { }}
                                 />
-                              ) : (
-                                <>
-                                  <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                    {(actualIndex + 1).toString().padStart(2, '0')}
-                                  </span>
-                                  <input
-                                    type="checkbox"
-                                    className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                    checked={false}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleRowSelection(row.id, true);
-                                    }}
-                                    onChange={() => {}}
-                                  />
-                                </>
-                              )}
-                            </div>
-                          ) : col.key === 'name' ? (
-                            <div className="flex items-center justify-between w-full gap-2 overflow-hidden">
-                              {selectedIds.length > 0 ? (
-                                <div 
-                                  className="px-1 w-full text-slate-900 break-words py-0"
-                                >
-                                  {row.name || ''}
-                                </div>
-                              ) : (
-                                <textarea
-                                  className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-900 resize-none overflow-hidden py-0"
-                                  rows={1}
-                                  style={{ height: 'auto' }}
-                                  value={row.name || ''}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onInput={(e) => {
-                                    const target = e.target as HTMLTextAreaElement;
-                                    target.style.height = 'auto';
-                                    target.style.height = target.scrollHeight + 'px';
-                                  }}
-                                  onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
-                              />
+                              </>
                             )}
                           </div>
-                          ) : (
-                            selectedIds.length > 0 ? (
-                              <span 
-                                className={cn(
-                                  "px-1 w-full text-slate-600 cursor-pointer",
-                                  col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                                )}
-                              >
-                                {String((row as any)[col.key] || '')}
-                              </span>
-                            ) : (
-                              <input
-                                className={cn(
-                                  "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-600",
-                                  col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                                )}
-                                value={String((row as any)[col.key] || '')}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
-                              />
-                            )
-                          )}
-                        </div>
+                        ) : (
+                          <AutoResizingTextarea
+                            value={String((row as any)[col.key] || '')}
+                            readOnly={selectedIds.length > 0}
+                            tabIndex={selectedIds.length > 0 ? -1 : 0}
+                            onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
+                            onClick={(e) => {
+                              if (selectedIds.length === 0) e.stopPropagation();
+                            }}
+                            className={cn(
+                              col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
+                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                            )}
+                          />
+                        )}
+                      </div>
                     ))}
                   </div>
 
@@ -631,13 +620,8 @@ function SpecTable() {
                             col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
                           )}
                           style={{
-                            flex: col.key === 'name' ? '2' :
-                              col.key === '№' ? '0 0 60px' :
-                                col.key === 'unit' ? '0 0 100px' :
-                                  col.key === 'quantity' ? '0 0 100px' : '1',
-                            minWidth: col.key === '№' ? '60px' :
-                              col.key === 'unit' ? '100px' :
-                                col.key === 'quantity' ? '100px' : '100px'
+                            flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
+                            minWidth: col.width || '100px'
                           }}
                         >
                           {col.key === '№' ? (
@@ -645,7 +629,7 @@ function SpecTable() {
                               <span className="text-slate-300 tabular-nums">{(childIdx + 1)}</span>
                             </div>
                           ) : (
-                            <span className="text-slate-500 truncate">{String((child as any)[col.key] || '')}</span>
+                            <span className="text-slate-500 break-words whitespace-normal">{String((child as any)[col.key] || '')}</span>
                           )}
                         </div>
                       ))}
@@ -684,8 +668,8 @@ function RequestTable() {
     { key: 'brand', label: 'Марка', width: '120px' },
     { key: 'code', label: 'Код', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
-    { key: 'unit', label: 'Ед. изм', width: '80px', align: 'center' },
-    { key: 'quantity', label: 'Кол-во', width: '90px', align: 'right' }
+    { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' }
   ];
 
   const displayRows = isOnlySelectedView ? requestRows.filter(r => selectedIds.includes(r.id)) : requestRows;
@@ -737,7 +721,7 @@ function RequestTable() {
                                 e.stopPropagation();
                                 toggleRowSelection(row.id, true);
                               }}
-                              onChange={() => {}}
+                              onChange={() => { }}
                             />
                           ) : (
                             <>
@@ -752,13 +736,21 @@ function RequestTable() {
                                   e.stopPropagation();
                                   toggleRowSelection(row.id, true);
                                 }}
-                                onChange={() => {}}
+                                onChange={() => { }}
                               />
                             </>
                           )}
                         </div>
                       ) : (
-                        <span className="text-slate-600">{String((row as any)[col.key] || '')}</span>
+                        <AutoResizingTextarea
+                          value={String((row as any)[col.key] || '')}
+                          readOnly={true}
+                          tabIndex={-1}
+                          className={cn(
+                            "text-slate-600",
+                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                          )}
+                        />
                       )}
                     </div>
                   ))}
@@ -784,8 +776,8 @@ function InvoiceTable() {
     { key: 'name', label: 'Наименование' },
     { key: 'article', label: 'Артикул', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
-    { key: 'quantity', label: 'Кол-во', width: '90px', align: 'right' },
-    { key: 'unit', label: 'Ед. изм', width: '80px', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' },
+    { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
     { key: 'price', label: 'Цена', width: '100px', align: 'right' },
     { key: 'total', label: 'Итого', width: '110px', align: 'right' }
   ];
@@ -840,7 +832,7 @@ function InvoiceTable() {
                                 e.stopPropagation();
                                 toggleRowSelection(row.id, true);
                               }}
-                              onChange={() => {}}
+                              onChange={() => { }}
                             />
                           ) : (
                             <>
@@ -856,54 +848,25 @@ function InvoiceTable() {
                                   e.stopPropagation();
                                   toggleRowSelection(row.id, true);
                                 }}
-                                onChange={() => {}}
+                                onChange={() => { }}
                               />
                             </>
                           )}
                         </div>
-                      ) : col.key === 'name' ? (
-                        <div className="flex items-center justify-between w-full gap-2 overflow-hidden">
-                          {selectedIds.length > 0 ? (
-                            <div className="px-1 w-full text-slate-900 break-words py-0">
-                              {row.name || ''}
-                            </div>
-                          ) : (
-                            <textarea
-                              className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-900 resize-none overflow-hidden py-0"
-                              rows={1}
-                              style={{ height: 'auto' }}
-                              value={row.name || ''}
-                              onClick={(e) => e.stopPropagation()}
-                              onInput={(e) => {
-                                const target = e.target as HTMLTextAreaElement;
-                                target.style.height = 'auto';
-                                target.style.height = target.scrollHeight + 'px';
-                              }}
-                              onChange={(e) => handleRowChange('invoice', row.id, 'name', e.target.value)}
-                            />
-                          )}
-                        </div>
                       ) : (
-                        selectedIds.length > 0 ? (
-                          <span
-                            className={cn(
-                              "px-1 w-full text-slate-600 cursor-pointer",
-                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                            )}
-                          >
-                            {String((row as any)[col.key] || '')}
-                          </span>
-                        ) : (
-                          <input
-                            className={cn(
-                              "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-600",
-                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                            )}
-                            value={String((row as any)[col.key] || '')}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => handleRowChange('invoice', row.id, col.key, e.target.value)}
-                          />
-                        )
+                        <AutoResizingTextarea
+                          value={String((row as any)[col.key] || '')}
+                          readOnly={selectedIds.length > 0}
+                          tabIndex={selectedIds.length > 0 ? -1 : 0}
+                          onChange={(e) => handleRowChange('invoice', row.id, col.key, e.target.value)}
+                          onClick={(e) => {
+                            if (selectedIds.length === 0) e.stopPropagation();
+                          }}
+                          className={cn(
+                            col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
+                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                          )}
+                        />
                       )}
                     </div>
                   ))}
@@ -937,8 +900,8 @@ function EstimateTable() {
     { key: '№', label: '№', width: '60px', align: 'center', sortable: false },
     { key: 'workType', label: 'Вид работы', width: '150px' },
     { key: 'name', label: 'Наименование' },
-    { key: 'unit', label: 'Ед. изм', width: '80px', align: 'center' },
-    { key: 'quantity', label: 'Кол-во', width: '90px', align: 'right' },
+    { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
+    { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' },
     { key: 'costPrice', label: 'Себестоимость', width: '120px', align: 'right' },
     { key: 'clientPrice', label: 'Цена заказчика', width: '120px', align: 'right' }
   ];
@@ -992,7 +955,7 @@ function EstimateTable() {
                                 e.stopPropagation();
                                 toggleRowSelection(row.id, true);
                               }}
-                              onChange={() => {}}
+                              onChange={() => { }}
                             />
                           ) : (
                             <>
@@ -1007,51 +970,11 @@ function EstimateTable() {
                                   e.stopPropagation();
                                   toggleRowSelection(row.id, true);
                                 }}
-                                onChange={() => {}}
+                                onChange={() => { }}
                               />
                             </>
                           )}
                         </div>
-                      ) : col.key === 'workType' ? (
-                        selectedIds.length > 0 ? (
-                          <div className="px-1 w-full text-slate-500 text-xs break-words cursor-pointer">
-                            {row.workType || ''}
-                          </div>
-                        ) : (
-                          <textarea
-                            className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-500 text-xs resize-none overflow-hidden"
-                            rows={1}
-                            style={{ height: 'auto' }}
-                            value={row.workType || ''}
-                            onClick={(e) => e.stopPropagation()}
-                            onInput={(e) => {
-                              const target = e.target as HTMLTextAreaElement;
-                              target.style.height = 'auto';
-                              target.style.height = target.scrollHeight + 'px';
-                            }}
-                            onChange={(e) => handleRowChange('estimate', row.id, 'workType', e.target.value)}
-                          />
-                        )
-                      ) : col.key === 'name' ? (
-                        selectedIds.length > 0 ? (
-                          <div className="px-1 w-full text-slate-900 break-words cursor-pointer">
-                            {row.name || ''}
-                          </div>
-                        ) : (
-                          <textarea
-                            className="bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-900 resize-none overflow-hidden"
-                            rows={1}
-                            style={{ height: 'auto' }}
-                            value={row.name || ''}
-                            onClick={(e) => e.stopPropagation()}
-                            onInput={(e) => {
-                              const target = e.target as HTMLTextAreaElement;
-                              target.style.height = 'auto';
-                              target.style.height = target.scrollHeight + 'px';
-                            }}
-                            onChange={(e) => handleRowChange('estimate', row.id, 'name', e.target.value)}
-                          />
-                        )
                       ) : col.key === 'costPrice' || col.key === 'clientPrice' ? (
                         <div className="flex flex-col items-end w-full">
                           <input
@@ -1062,6 +985,7 @@ function EstimateTable() {
                             )}
                             value={String((row as any)[col.key] || '')}
                             readOnly={selectedIds.length > 0}
+                            tabIndex={selectedIds.length > 0 ? -1 : 0}
                             onClick={(e) => {
                               if (selectedIds.length === 0) e.stopPropagation();
                             }}
@@ -1072,26 +996,20 @@ function EstimateTable() {
                           </span>
                         </div>
                       ) : (
-                        selectedIds.length > 0 ? (
-                          <span 
-                            className={cn(
-                              "px-1 w-full text-slate-600 cursor-pointer",
-                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                            )}
-                          >
-                            {String((row as any)[col.key] || '')}
-                          </span>
-                        ) : (
-                          <input
-                            className={cn(
-                              "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-slate-600",
-                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                            )}
-                            value={String((row as any)[col.key] || '')}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => handleRowChange('estimate', row.id, col.key, e.target.value)}
-                          />
-                        )
+                        <AutoResizingTextarea
+                          value={String((row as any)[col.key] || '')}
+                          readOnly={selectedIds.length > 0}
+                          tabIndex={selectedIds.length > 0 ? -1 : 0}
+                          onChange={(e) => handleRowChange('estimate', row.id, col.key, e.target.value)}
+                          onClick={(e) => {
+                            if (selectedIds.length === 0) e.stopPropagation();
+                          }}
+                          className={cn(
+                            col.key === 'name' ? "text-slate-900 font-medium" :
+                              col.key === 'workType' ? "text-slate-500 text-xs" : "text-slate-600",
+                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                          )}
+                        />
                       )}
                     </div>
                   ))}

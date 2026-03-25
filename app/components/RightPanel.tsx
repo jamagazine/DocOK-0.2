@@ -104,8 +104,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) handleFile(f, currentStage, false);
+    if (e.target.files) handleFile(e.target.files, currentStage, false);
     e.target.value = '';
   };
 
@@ -130,7 +129,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         expanded ? "w-72" : "w-16"
       )}
     >
-      <input type="file" className="hidden" ref={fileInputRef} accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg" onChange={handleFileChange} />
+      <input type="file" multiple className="hidden" ref={fileInputRef} accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg" onChange={handleFileChange} />
 
       {/* Header - Attic */}
       <div className={cn(
@@ -364,7 +363,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
       {/* Footer - Basement (Next Button) */}
       <div className={cn(
-        "border-t border-slate-200 p-4 flex justify-center items-center h-[72px]"
+        "border-t border-slate-200 p-4 flex justify-center items-center h-16"
       )}>
         {hasNextStage ? (
           <button 

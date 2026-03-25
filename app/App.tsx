@@ -145,11 +145,10 @@ function AppContent() {
           onSetStage={setCurrentStage}
         />
         
-        <CenterPanel 
+        <CenterPanel
           currentStage={currentStage}
           projectName={projectName}
           setProjectName={setProjectName}
-          files={filesList}
         />
         
         <RightPanel 
@@ -170,7 +169,7 @@ function AppContent() {
 export default function App() {
   return (
     <DataProvider>
-      <Toaster position="top-right" richColors />
+      <Toaster position="bottom-center" richColors />
       <AppContent />
     </DataProvider>
   );
