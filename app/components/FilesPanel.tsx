@@ -8,7 +8,8 @@ import {
   Clock,
   AlertCircle,
   Sparkles,
-  Circle
+  Circle,
+  Eraser
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -24,7 +25,7 @@ interface FilesPanelProps {
 }
 
 export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
-  const { uploadStatuses, filesMap, removeFile, retryFile, handleFile, currentStage } = useData();
+  const { uploadStatuses, filesMap, removeFile, retryFile, handleFile, currentStage, resetFileData } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -135,6 +136,18 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   </>
                 )}
                 
+                {data.model && (
+                  <>
+                    <span className="text-xs text-slate-400">•</span>
+                    <span className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded font-mono",
+                      data.model === 'CACHED' ? "bg-amber-100 text-amber-700 font-bold" : "bg-slate-100 text-slate-600"
+                    )}>
+                      {data.model} • {data.method} {data.model === 'CACHED' ? '(из кэша)' : ''}
+                    </span>
+                  </>
+                )}
+                
                 {method === 'AI' && (data.cost !== undefined && data.cost > 0) ? (
                   <>
                     <span className="text-xs text-slate-400">•</span>
@@ -205,6 +218,17 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 disabled={isLoading}
               >
                 <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+              </button>
+            )}
+
+            {/* Reset File Data Only */}
+            {!isReset && (
+              <button
+                onClick={() => resetFileData(fileName)}
+                className="p-1.5 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                title="Сбросить строки из текущей таблицы (без удаления файла)"
+              >
+                <Eraser className="w-4 h-4" />
               </button>
             )}
 
@@ -328,7 +352,12 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               </div>
 
               <div className="flex items-center justify-between pt-1 border-t border-slate-200">
-                <span className="text-xs font-semibold text-slate-700">Итого за проект:</span>
+                <span className="text-xs font-semibold text-slate-700 flex items-center gap-2">
+                  Итого за проект:
+                  <a href="http://localhost:8000/api/storage/history/export" download="history.txt" title="Скачать финансовую детализацию (TXT)" className="p-1 ml-1 rounded hover:bg-slate-200 text-slate-500 hover:text-indigo-600 transition-colors">
+                    <FileText className="w-4 h-4" />
+                  </a>
+                </span>
                 <span className="text-sm font-bold text-indigo-700">
                   {fileEntries
                     .reduce((acc: number, [_, d]: [string, any]) => acc + (d.cost || 0), 0)

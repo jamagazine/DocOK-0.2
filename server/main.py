@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Body, Request, Header
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
@@ -8,8 +9,10 @@ import httpx
 import re
 import math
 import tempfile
-import pandas as pd
+import pandas as pd, io
 import fitz  # PyMuPDF
+import pdfplumber
+import datetime
 
 app = FastAPI()
 
@@ -34,6 +37,7 @@ os.makedirs(TEMP_INPUT_DIR, exist_ok=True)
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
 MANIFEST_FILE = os.path.join(STORAGE_DIR, "manifest.json")
+HISTORY_FILE = os.path.join(STORAGE_DIR, "history.json")
 
 def _load_manifest():
     if not os.path.exists(MANIFEST_FILE):
@@ -51,6 +55,23 @@ def _save_manifest(manifest):
     except Exception as e:
         print(f"Error saving manifest: {e}")
 
+def append_history(action_data: dict):
+    history = []
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            pass
+            
+    if "timestamp" not in action_data:
+        action_data["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+    history.append(action_data)
+    
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
 def get_yandex_keys():
     if not os.path.exists(CONFIG_FILE):
         return None, None
@@ -65,6 +86,30 @@ def get_yandex_keys():
             return api_key, folder_id
     except:
         return None, None
+
+@app.get("/api/storage/history/export")
+async def export_history():
+    if not os.path.exists(HISTORY_FILE):
+        return PlainTextResponse("История пуста")
+        
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+            
+        lines = ["Дата | Файл | Модель | Режим | Цена | Токены | Статус"]
+        for row in history:
+            ts = row.get('timestamp', '')
+            fn = row.get('fileName', '')
+            model = row.get('model', '')
+            method = row.get('method', '')
+            cost = row.get('cost', 0)
+            tokens = row.get('tokens', 0)
+            status = row.get('status', '')
+            lines.append(f"{ts} | {fn} | {model} | {method} | {cost} ₽ | {tokens} | {status}")
+            
+        return PlainTextResponse("\n".join(lines))
+    except Exception as e:
+        return PlainTextResponse(f"Ошибка чтения: {e}")
 
 @app.get("/api/config")
 async def get_config():
@@ -346,11 +391,49 @@ async def process_invoice(
 
     filename = file.filename.lower()
     
+    # Secure filename
+    secured_name = secure_filename(transliterate(file.filename))
+    original_name = file.filename # Store original name for history/manifest
+    
     # Save file temporarily
-    temp_path = os.path.join(TEMP_INPUT_DIR, file.filename)
+    temp_path = os.path.join(TEMP_INPUT_DIR, secured_name)
     with open(temp_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
         
+    # CACHE CHECK
+    cache_path = os.path.join(STORAGE_DIR, f"{secured_name}.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+                
+            cached_data["cost"] = 0
+            cached_data["method"] = "CACHED"
+            cached_data["model"] = "CACHED"
+            
+            append_history({
+                "fileName": original_name,
+                "method": "CACHED",
+                "model": "CACHED",
+                "cost": 0,
+                "tokens": 0,
+                "status": "CACHED_RESTORE"
+            })
+            
+            manifest = _load_manifest()
+            for k, v in manifest.items():
+                if isinstance(v, dict) and k == secured_name:
+                    v["cost"] = 0
+                    v["tokens"] = 0
+                    v["method"] = "CACHED"
+                    v["model"] = "CACHED"
+                    break
+            _save_manifest(manifest)
+            
+            return cached_data
+        except Exception as e:
+            print(f"Cache read error: {e}")
+
     extracted_text = ""
     has_low_confidence = False
     parse_method = "direct_text"
@@ -474,8 +557,23 @@ async def process_invoice(
         final_struct["method"] = parse_method
         final_struct["model"] = model_type
         
+        # Save cache
+        try:
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(final_struct, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Failed to write cache: {e}")
+            
+        append_history({
+            "fileName": original_name,
+            "method": parse_method,
+            "model": model_type,
+            "cost": round(cost, 2),
+            "tokens": total_tokens,
+            "status": "FIRST_RUN"
+        })
+        
         # Persist cost + tokens to manifest
-        original_name = file.filename
         manifest = _load_manifest()
         for k, v in manifest.items():
             if isinstance(v, dict) and v.get("originalName") == original_name:
@@ -546,15 +644,16 @@ async def storage_upload(file: UploadFile = File(...)):
         try:
             ext_text = ""
             if original_filename.lower().endswith(".pdf"):
-                doc = fitz.open(dest_path)
                 try:
-                    for page in doc:
-                        ext_text += page.get_text()
-                    if not ext_text.strip():
-                        # OCR estimate: 1.22 per page
-                        estimated_cost = round(len(doc) * 1.22, 2)
-                finally:
-                    doc.close()
+                    with pdfplumber.open(dest_path) as pdf:
+                        for page in pdf.pages:
+                            page_text = page.extract_text()
+                            if page_text:
+                                ext_text += page_text + "\n"
+                        if not ext_text.strip():
+                            estimated_cost = round(len(pdf.pages) * 1.22, 2)
+                except Exception as e:
+                    print(f"pdfplumber error: {e}")
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 estimated_cost = 1.22 # OCR estimate 1 page
             elif original_filename.lower().endswith((".xlsx", ".xls", ".csv")):
@@ -571,9 +670,8 @@ async def storage_upload(file: UploadFile = File(...)):
                 ext_text = header + "\n" + "\n".join(rows)
                 
             if ext_text.strip():
-                # Limit text to avoid payload too large
-                limit_text = ext_text[:30000]
-                estimated_tokens = await get_token_count(limit_text, "lite", api_key, folder_id)
+                # Read ALL available text for maximum token estimation accuracy
+                estimated_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")
@@ -593,6 +691,15 @@ async def storage_upload(file: UploadFile = File(...)):
     }
     _save_manifest(manifest)
     
+    append_history({
+        "fileName": original_filename,
+        "method": "",
+        "model": "",
+        "cost": 0,
+        "tokens": 0,
+        "status": "UPLOAD"
+    })
+    
     return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost}
 
 
@@ -603,7 +710,7 @@ async def storage_list():
     
     if os.path.exists(STORAGE_DIR):
         for f in os.listdir(STORAGE_DIR):
-            if f == "manifest.json" or f.startswith('.'):
+            if f == "manifest.json" or f.startswith('.') or f.endswith(".json"): # Exclude cache files
                 continue
             path = os.path.join(STORAGE_DIR, f)
             if os.path.isfile(path):

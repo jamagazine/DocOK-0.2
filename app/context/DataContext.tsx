@@ -149,6 +149,7 @@ interface DataContextType {
   isResetConfirmOpen: boolean;
   setIsResetConfirmOpen: (isOpen: boolean) => void;
   resetProjectData: () => void;
+  resetFileData: (fileName: string) => void;
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
@@ -282,6 +283,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
               cost: f.cost || 0,
               tokens: f.tokens || 0,
               estimated_cost: f.estimated_cost || 0,
+              model: f.model || '',
+              method: f.method || '',
             };
           });
           setUploadStatuses(prev => ({ ...prev, ...restoredStatuses }));
@@ -498,7 +501,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             status: `Готово (ИИ${tokens > 0 ? `, ${tokens} токенов` : ''})`, 
             time: currentTime,
             tokens,
-            cost
+            cost,
+            model: data.model || '',
+            method: data.method || ''
           } 
         }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
@@ -809,6 +814,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setEstimateRows(prev => prev.filter((r: EstimateRow) => r.fileId !== fileName));
   }, [setUploadStatuses, setFilesMap, setSpecRows, setRequestRows, setInvoiceRows, setEstimateRows]);
 
+  const resetFileData = useCallback((fileName: string) => {
+    // 1. Убираем сроки только из активной вкладки
+    switch (currentStage) {
+      case 'spec':
+        setSpecRows(prev => prev.filter(r => r.fileId !== fileName));
+        break;
+      case 'invoice':
+        setInvoiceRows(prev => prev.filter(r => r.fileId !== fileName));
+        break;
+      case 'estimate':
+        setEstimateRows(prev => prev.filter(r => r.fileId !== fileName));
+        break;
+      case 'request':
+        setRequestRows(prev => prev.filter(r => r.fileId !== fileName));
+        break;
+    }
+
+    // 2. Выставляем статус сброса + пишем на бэк
+    setUploadStatuses(prev => {
+      const next = { ...prev };
+      if (next[fileName]) {
+        next[fileName] = { ...next[fileName], status: 'reset' };
+      }
+      return next;
+    });
+
+    updateFileStatusOnServer(fileName, 'reset');
+    toast.success(`Данные файла ${fileName} сброшены для текущей вкладки.`);
+  }, [currentStage, setSpecRows, setInvoiceRows, setEstimateRows, setRequestRows, setUploadStatuses, updateFileStatusOnServer]);
+
   const retryFile = useCallback(async (fileName: string, stage: Stage) => {
     const file = filesMap[fileName];
     if (!file) return;
@@ -959,6 +994,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         isResetConfirmOpen,
         setIsResetConfirmOpen,
         resetProjectData,
+        resetFileData,
         handleFile,
         removeFile,
         retryFile,

@@ -18,6 +18,9 @@ export interface UploadStatus {
   size?: number;
   tokens?: number;
   cost?: number;
+  estimated_cost?: number;
+  model?: string;
+  method?: string;
   error?: string;
   chunks?: { current: number; total: number };
 }
