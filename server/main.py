@@ -10,7 +10,6 @@ import re
 import math
 import tempfile
 import pandas as pd, io
-import fitz  # PyMuPDF
 import pdfplumber
 import datetime
 from urllib.parse import quote
@@ -533,21 +532,20 @@ async def process_invoice(
                 print("No text layer found. Falling back to OCR.")
                 parse_method = "ocr_table"
                 extracted_text = "" # Reset
-                doc = fitz.open(temp_path)
-                num_pages = len(doc)
-                for i in range(num_pages):
-                    page = doc.load_page(i)
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                    png_bytes = pix.tobytes("png")
-                    b64_str = base64.b64encode(png_bytes).decode('utf-8')
-                    
-                    txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
-                    # OCR response is raw so we don't have delimiters easily, but we can do a simple split join
-                    formatted_ocr = " | ".join([line.strip() for line in txt.split("\n") if line.strip()])
-                    extracted_text += f"\n--- Page {i+1} ---\n | {formatted_ocr}\n"
-                    if low_conf:
-                        has_low_confidence = True
-                doc.close()
+                with pdfplumber.open(temp_path) as pdf:
+                    num_pages = len(pdf.pages)
+                    for i, page in enumerate(pdf.pages):
+                        page_img = page.to_image(resolution=150)
+                        img_byte_arr = io.BytesIO()
+                        page_img.original.save(img_byte_arr, format='PNG')
+                        b64_str = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+                        
+                        txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
+                        # OCR response is raw so we don't have delimiters easily, but we can do a simple split join
+                        formatted_ocr = " | ".join([line.strip() for line in txt.split("\n") if line.strip()])
+                        extracted_text += f"\n--- Page {i+1} ---\n | {formatted_ocr}\n"
+                        if low_conf:
+                            has_low_confidence = True
             
         elif filename.endswith((".png", ".jpg", ".jpeg")):
             parse_method = "ocr_table"
@@ -773,44 +771,6 @@ async def storage_upload(file: UploadFile = File(...)):
     return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost}
 
 
-@app.delete("/api/storage/files/{filename}")
-async def delete_file(filename: str, nuclear: bool = False):
-    import os
-    # 1. Path definitions
-    file_path = os.path.join(STORAGE_DIR, filename)
-    cache_path = os.path.join(STORAGE_DIR, f"{filename}.json")
-    
-    # 2. Delete physical files
-    if nuclear:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except: pass
-        if os.path.exists(cache_path):
-            try:
-                os.remove(cache_path)
-            except: pass
-
-        # 3. Clean history.json
-        if os.path.exists(HISTORY_FILE):
-            try:
-                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                    hist = json.load(f)
-                hist = [h for h in hist if h.get("fileName") != filename and h.get("originalName") != filename]
-                with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-                    json.dump(hist, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                print(f"Error cleaning history: {e}")
-
-        # 4. Clean manifest.json
-        manifest = _load_manifest()
-        if filename in manifest:
-            del manifest[filename]
-            _save_manifest(manifest)
-            
-    return {"status": "success"}
-
-
 @app.get("/api/storage/files")
 async def storage_list():
     manifest = _load_manifest()
@@ -922,28 +882,40 @@ async def storage_delete(name: str, nuclear: bool = False):
         disk_name = secure_filename(name)
         
     path = os.path.join(STORAGE_DIR, disk_name)
-    if os.path.exists(path):
-        os.remove(path)
-        
-        # Remove from manifest
-        if disk_name in manifest:
-            del manifest[disk_name]
-            _save_manifest(manifest)
-            
-        if nuclear:
-            if os.path.exists(HISTORY_FILE):
-                try:
-                    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                        history = json.load(f)
-                    
-                    new_history = [r for r in history if r.get("fileName") != name]
-                    
-                    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-                        json.dump(new_history, f, ensure_ascii=False, indent=2)
-                except Exception as e:
-                    print(f"Nuclear delete history error: {e}")
+    cache_path = os.path.join(STORAGE_DIR, f"{disk_name}.json")
+    
+    # Always allow manifest/history cleanup even if file was already physically removed
+    # or handle physical files properly
+    if nuclear:
+        if os.path.exists(path):
+            os.remove(path)
+        if os.path.exists(cache_path):
+            try: os.remove(cache_path)
+            except: pass
+    else:
+        if os.path.exists(path):
+            os.remove(path)
 
-        return {"status": "success"}
+    # Remove from manifest
+    if disk_name in manifest:
+        del manifest[disk_name]
+        _save_manifest(manifest)
+        
+    if nuclear:
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                
+                new_history = [r for r in history if r.get("fileName") != name]
+                
+                with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                    json.dump(new_history, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"Nuclear delete history error: {e}")
+
+    # Return success regardless of physical existence if it was tracked
+    return {"status": "success"}
     raise HTTPException(status_code=404, detail="File not found")
 
 

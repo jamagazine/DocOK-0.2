@@ -107,6 +107,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               </span>
               <span className="text-[11px] text-slate-500 mt-0.5">
                 {isReset ? 'Данные сброшены' : statusStr}
+                {(!statusStr?.includes('Готово') && !isReset && data?.estimated_cost && data.estimated_cost > 0) ? (
+                  <span className="ml-2 text-[10px] text-slate-400 font-medium">прогноз: ~{data.estimated_cost} ₽</span>
+                ) : null}
               </span>
               
               {/* Inline Progress Bar for Loading State */}
