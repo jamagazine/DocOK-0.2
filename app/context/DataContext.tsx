@@ -464,7 +464,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('doc_type', stage === 'spec' ? 'spec' : 'invoice');
+      formData.append('doc_type', stage); // ЭТО КРИТИЧЕСКИ ВАЖНО
 
       try {
         const res = await fetch('http://localhost:8000/api/process-invoice', {
