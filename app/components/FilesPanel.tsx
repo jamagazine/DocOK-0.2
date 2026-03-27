@@ -184,25 +184,14 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
             {/* Sparkles: AI re-process for Excel only */}
             {isExcel(fileName) && file && method !== 'AI' && (
-              <div className="flex items-center gap-1">
-                {realCost !== null ? (
-                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">
-                    {realCost} ₽
-                  </span>
-                ) : preEstimate && (
-                  <span className="text-[10px] text-slate-400 font-medium">
-                    (прибл. {preEstimate} ₽ {data.estimated_tokens ? `• ${data.estimated_tokens} т.` : ''})
-                  </span>
-                )}
-                <button
-                  onClick={() => handleAiProcess(fileName)}
-                  className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
-                  title="Обработать через ИИ"
-                  disabled={isLoading}
-                >
-                  <Sparkles className="w-4 h-4" />
-                </button>
-              </div>
+              <button
+                onClick={() => handleAiProcess(fileName)}
+                className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                title="Обработать через ИИ"
+                disabled={isLoading}
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
             )}
 
             {/* Restore / Retry */}
