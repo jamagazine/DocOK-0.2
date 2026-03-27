@@ -283,6 +283,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               cost: f.cost || 0,
               tokens: f.tokens || 0,
               estimated_cost: f.estimated_cost || 0,
+              estimated_tokens: f.estimated_tokens || 0,
               model: f.model || '',
               method: f.method || '',
             };
@@ -339,10 +340,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         });
         if (res.ok) {
           const resData = await res.json();
-          if (resData.estimated_cost !== undefined) {
+          if (resData.estimated_cost !== undefined || resData.estimated_tokens !== undefined) {
              setUploadStatuses((prev: any) => ({
                ...prev,
-               [file.name]: { ...prev[file.name], estimated_cost: resData.estimated_cost }
+               [file.name]: { 
+                 ...prev[file.name], 
+                 ...(resData.estimated_cost !== undefined && { estimated_cost: resData.estimated_cost }),
+                 ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens })
+               }
              }));
           }
         }

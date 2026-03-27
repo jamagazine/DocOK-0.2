@@ -737,10 +737,11 @@ async def storage_upload(file: UploadFile = File(...)):
                 ext_text = header + "\n" + "\n".join(rows)
                 
             # Always calculate tokens to not miss base count
-            estimated_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
+            input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
+            estimated_tokens = int(input_tokens * 2.2)
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
-                estimated_cost = round(((estimated_tokens * 2.2) * 0.2) / 1000, 2)
+                estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")
     
@@ -755,7 +756,8 @@ async def storage_upload(file: UploadFile = File(...)):
         "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
         "model": existing.get("model", "") if isinstance(existing, dict) else "",
         "method": existing.get("method", "") if isinstance(existing, dict) else "",
-        "estimated_cost": estimated_cost
+        "estimated_cost": estimated_cost,
+        "estimated_tokens": estimated_tokens
     }
     _save_manifest(manifest)
     
@@ -768,7 +770,7 @@ async def storage_upload(file: UploadFile = File(...)):
         "status": "UPLOAD"
     })
     
-    return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost}
+    return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost, "estimated_tokens": estimated_tokens}
 
 
 @app.get("/api/storage/files")
