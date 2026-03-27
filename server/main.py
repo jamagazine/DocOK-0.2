@@ -813,6 +813,7 @@ async def storage_list():
                     model = ""
                     method = ""
                 
+                # Add to result
                 files.append({
                     "name": display_name,
                     "disk_name": f,

@@ -107,9 +107,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               </span>
               <span className="text-[11px] text-slate-500 mt-0.5">
                 {isReset ? 'Данные сброшены' : statusStr}
-                {(!statusStr?.includes('Готово') && !isReset && ((data?.estimated_cost && data.estimated_cost > 0) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
+                {(!statusStr?.includes('Готово') && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
                   <span className="ml-2 text-[10px] text-slate-400 font-medium">
-                    ~{data?.estimated_cost || 0} ₽ {data?.estimated_tokens && data.estimated_tokens > 0 ? `• ~${data.estimated_tokens} токенов` : ''} (прогноз)
+                    ~{data?.estimated_cost || 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (прогноз)
                   </span>
                 ) : null}
               </span>
@@ -163,11 +163,11 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                       {data.cost || 0} ₽
                     </span>
                   </>
-                ) : (data.estimated_cost !== undefined && data.estimated_cost > 0) && method !== 'AI' ? (
+                ) : ( (data.estimated_cost !== undefined && data.estimated_cost > 0) || (data.estimated_tokens && data.estimated_tokens > 0) ) && method !== 'AI' ? (
                   <>
                     <span className="text-xs text-slate-400">•</span>
                     <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-medium" title="Прогноз цены AI-парсинга">
-                      ~{Number(data.estimated_cost).toFixed(2)} ₽
+                      ~{data.estimated_cost || 0} ₽ {data.estimated_tokens ? `• ~${data.estimated_tokens} токенов` : ''}
                     </span>
                   </>
                 ) : null}
@@ -191,7 +191,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   </span>
                 ) : preEstimate && (
                   <span className="text-[10px] text-slate-400 font-medium">
-                    (прибл. {preEstimate} ₽)
+                    (прибл. {preEstimate} ₽ {data.estimated_tokens ? `• ${data.estimated_tokens} т.` : ''})
                   </span>
                 )}
                 <button
