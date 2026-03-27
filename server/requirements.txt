@@ -10,3 +10,4 @@ Pillow
 xlrd>=2.0.1
 transliterate
 pdfplumber
+rapidfuzz

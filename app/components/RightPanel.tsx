@@ -46,7 +46,8 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     estimateRows, estimateTotal, specRows, invoiceRows,
     resetData, sortRows, groupRows, filesMap, completeStage,
     selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
-    isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen
+    isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen,
+    matchInvoiceToSpec
   } = useData();
 
   const handleExport = () => {
@@ -197,6 +198,13 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   className="flex items-center gap-3 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-red-600 rounded-md transition-colors text-sm">
                   <RotateCcw className="w-4 h-4 text-red-500" /> Сброс
                 </button>
+                {currentStage === 'invoice' && invoiceRows.length > 0 && (
+                   <button 
+                     onClick={matchInvoiceToSpec}
+                     className="flex items-center gap-3 px-4 py-2 mt-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md transition-colors text-sm font-semibold border border-indigo-200">
+                     <Merge className="w-4 h-4 text-indigo-500" /> Сравнить со спецификацией
+                   </button>
+                )}
 
                 <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-4 mb-2">Работа с данными</div>
                 {currentStage === 'spec' && (
@@ -285,6 +293,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                  <Download className="w-6 h-6 text-slate-500 hover:text-indigo-600 cursor-pointer" onClick={handleExport} />
                  <RotateCcw className="w-6 h-6 text-red-500 hover:text-red-700 cursor-pointer" onClick={() => resetData(currentStage)} />
                  <div className="w-full h-px bg-slate-200 my-2" />
+                 {currentStage === 'invoice' && invoiceRows.length > 0 && (
+                   <Merge className="w-6 h-6 text-indigo-600 cursor-pointer" onClick={matchInvoiceToSpec} title="Сравнить со спецификацией" />
+                 )}
                  {currentStage === 'spec' && (
                    <>
                      {isMerged ? (
@@ -319,7 +330,10 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                       <span className="font-semibold text-slate-900">
                         {currentStage === 'invoice' 
                           ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length 
-                          : Object.keys(filesMap || {}).length}
+                          : currentStage === 'estimate' 
+                          ? new Set(estimateRows.map(r => r.fileId)).size 
+                          : Object.keys(filesMap || {}).length
+                        }
                       </span>
                     </div>
                     <div className="h-px w-full bg-slate-200 my-1" />
@@ -328,6 +342,37 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                       <span className="font-bold text-indigo-700 text-right">{getIntermediateTotal()} ₽</span>
                     </div>
                  </div>
+                 
+                 {currentStage === 'invoice' && invoiceRows.length > 0 && (
+                   <div className="mt-4">
+                     <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Сводка по совпадениям</div>
+                     <div className="bg-indigo-50/30 border border-indigo-100 p-4 rounded-lg flex flex-col gap-3 text-sm">
+                        <div className="flex justify-between items-center text-slate-700">
+                          <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-500" /> Идеальных:</span>
+                          <span className="font-semibold text-emerald-700">{invoiceRows.filter(r => r.match_data?.status === 'perfect').length}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-700">
+                          <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-amber-500" /> Требуют проверки:</span>
+                          <span className="font-semibold text-amber-700">{invoiceRows.filter(r => r.match_data?.status === 'warning').length}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-700 border-b border-indigo-100 pb-2">
+                          <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-500" /> Без связи:</span>
+                          <span className="font-semibold text-red-700">{invoiceRows.filter(r => !r.match_data || r.match_data.status === 'none').length}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-800 font-medium pt-1">
+                          <span>Сумма не связанных позиций:</span>
+                          <span className="text-red-600">{
+                            invoiceRows
+                              .filter(r => !r.match_data || r.match_data.status === 'none')
+                              .reduce((acc, r) => acc + (parseFloat(String(r.total)) || 0), 0)
+                              .toFixed(2)
+                          } ₽</span>
+                        </div>
+                     </div>
+                   </div>
+                 )}
+                 
+                 <div className="mt-auto pt-6" />
                </>
              ) : (
                <div className="flex flex-col gap-4 items-center group cursor-help" title={`Итого: ${getIntermediateTotal()} ₽`}>

@@ -774,6 +774,7 @@ function InvoiceTable() {
 
   const columns: Column[] = [
     { key: '№', label: '№', width: '60px', align: 'center', sortable: false },
+    { key: 'match_data', label: 'Совпадение', width: '200px' },
     { key: 'name', label: 'Наименование' },
     { key: 'article', label: 'Артикул', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
@@ -853,6 +854,49 @@ function InvoiceTable() {
                               />
                             </>
                           )}
+                        </div>
+                      ) : col.key === 'match_data' ? (
+                        <div className="relative w-full h-full flex items-center gap-2 group/match overflow-visible">
+                          {row.match_data?.status === 'perfect' && <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] shrink-0" title="Идеальное совпадение" />}
+                          {row.match_data?.status === 'warning' && <div className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)] shrink-0" title="Возможное совпадение" />}
+                          {row.match_data?.status === 'none' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] shrink-0" title="Нет совпадений" />}
+                          
+                          {(!row.match_data || row.match_data.status === 'none') && <span className="text-xs text-slate-400 italic">Связи нет</span>}
+                          
+                          {row.match_data?.status === 'warning' && (
+                            <div className="flex flex-col text-[11px] leading-tight min-w-0" title={row.match_data.target_name || ''}>
+                               <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
+                               <span className="text-amber-600 font-semibold">{row.match_data.score}% сходства</span>
+                            </div>
+                          )}
+                          {row.match_data?.status === 'perfect' && (
+                            <div className="flex flex-col text-[11px] leading-tight min-w-0" title={row.match_data.target_name || ''}>
+                               <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
+                               <span className="text-emerald-600 font-semibold">{row.match_data.score}%</span>
+                            </div>
+                          )}
+
+                          {/* Manual Override Select */}
+                          <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover/match:opacity-100 transition-opacity">
+                            <select
+                               className="w-5 h-5 opacity-0 absolute inset-0 cursor-pointer z-10"
+                               title="Изменить связь вручную"
+                               value={row.match_data?.target_id || ''}
+                               onChange={(e) => {
+                                 const specId = e.target.value;
+                                 if (!specId) return;
+                                 const specName = e.target.options[e.target.selectedIndex].text;
+                                 const newMatch = { target_id: specId, target_name: specName, score: 100, status: 'perfect' };
+                                 handleRowChange('invoice', row.id, 'match_data', newMatch);
+                               }}
+                            >
+                               <option value="">-- Выбрать из спецификации --</option>
+                               {useData().specRows.map(s => <option key={s.id} value={s.id}>{s.name || s.code}</option>)}
+                            </select>
+                            <div className="w-5 h-5 rounded hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer pointer-events-none">
+                               <Edit2 className="w-3 h-3" />
+                            </div>
+                          </div>
                         </div>
                       ) : (
                         <AutoResizingTextarea

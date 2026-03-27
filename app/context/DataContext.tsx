@@ -65,6 +65,12 @@ export interface InvoiceRow {
   discount?: string | number;
   priceAfterDiscount?: string | number;
   totalBeforeDiscount?: string | number;
+  match_data?: {
+    target_id: string | null;
+    target_name: string | null;
+    score: number;
+    status: 'perfect' | 'warning' | 'none';
+  };
 }
 
 export function emptyInvoiceRow(): InvoiceRow {
@@ -183,10 +189,11 @@ interface DataContextType {
   setRowsPerPage: (rows: number) => void;
   isOnlySelectedView: boolean;
   setIsOnlySelectedView: (val: boolean) => void;
-  handleRowChange: (stage: Stage, rowId: string, field: string, value: string) => void;
+  handleRowChange: (stage: Stage, rowId: string, field: string, value: any) => void;
   currentStage: Stage;
   setCurrentStage: (stage: Stage) => void;
   getCurrentRows: () => any[];
+  matchInvoiceToSpec: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -639,6 +646,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setEstimateRows(newEstimate);
   }, [specRows, invoiceRows]);
   
+  const matchInvoiceToSpec = useCallback(async () => {
+    if (invoiceRows.length === 0 || specRows.length === 0) return;
+    try {
+      const payload = {
+        invoice_items: invoiceRows,
+        spec_items: specRows
+      };
+      
+      const res = await fetch('http://localhost:8000/api/match-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setInvoiceRows(data.invoice_items || []);
+        toast.success('Сопоставление со спецификацией завершено');
+      } else {
+        throw new Error('Server returned an error');
+      }
+    } catch (e: any) {
+      console.error('Match error:', e);
+      toast.error('Ошибка при сопоставлении: ' + e.message);
+    }
+  }, [invoiceRows, specRows]);
+  
   const resetData = useCallback((stage: Stage) => {
     switch(stage) {
       case 'spec': setSpecRows([]); break;
@@ -859,7 +893,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // handleFile will call updateFileStatusOnServer(fileName, 'ok') on success
   }, [filesMap, removeFile, handleFile]);
 
-  const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: string) => {
+  const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: any) => {
     if (stage === 'spec') {
       setSpecRows(prev => prev.map(row => {
         if (row.id !== rowId) return row;

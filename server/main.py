@@ -13,6 +13,7 @@ import pandas as pd, io
 import pdfplumber
 import datetime
 from urllib.parse import quote
+import rapidfuzz
 
 UNITS_MAP = {
     # базовые
@@ -53,6 +54,16 @@ def normalize_unit(unit_str: str) -> str:
         return ""
     cleaned = unit_str.lower().strip()
     return UNITS_MAP.get(cleaned, unit_str) # Возвращаем нормализованное значение, либо оригинал
+
+def normalize_for_match(text: str) -> str:
+    if not text: return ""
+    # Lowercase, trim
+    t = text.lower().strip()
+    # Remove punctuation, keeping alphanumeric and russian letters
+    t = re.sub(r'[^\w\sа-яё]', ' ', t)
+    # Remove extra spaces
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
 
 app = FastAPI()
 
@@ -751,6 +762,63 @@ def secure_filename(filename: str) -> str:
     """
     filename = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
     return filename
+
+
+@app.post("/api/match-items")
+async def match_items_endpoint(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+    invoice_items = data.get("invoice_items", [])
+    spec_items = data.get("spec_items", [])
+    
+    spec_dict = []
+    for s in spec_items:
+        s_id = s.get("id")
+        s_name = str(s.get("name", ""))
+        norm_name = normalize_for_match(s_name)
+        if s_id and norm_name:
+            spec_dict.append({"id": s_id, "raw_name": s_name, "norm_name": norm_name})
+            
+    for item in invoice_items:
+        i_name = str(item.get("name", ""))
+        norm_i = normalize_for_match(i_name)
+        
+        best_match = None
+        best_score = 0.0
+        
+        if norm_i and spec_dict:
+            for s in spec_dict:
+                score = rapidfuzz.fuzz.token_sort_ratio(norm_i, s["norm_name"])
+                if score > best_score:
+                    best_score = score
+                    best_match = s
+                    
+        if best_match:
+            if best_score > 90:
+                status = "perfect"
+            elif best_score >= 60:
+                status = "warning"
+            else:
+                status = "none"
+                
+            item["match_data"] = {
+                "target_id": best_match["id"],
+                "target_name": best_match["raw_name"],
+                "score": round(best_score, 1),
+                "status": status
+            }
+        else:
+            item["match_data"] = {
+                "target_id": None,
+                "target_name": None,
+                "score": 0,
+                "status": "none"
+            }
+            
+    return {"invoice_items": invoice_items}
 
 
 @app.post("/api/storage/upload")
