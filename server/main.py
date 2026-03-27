@@ -308,7 +308,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
         "completionOptions": {
             "stream": False,
             "temperature": 0.1,
-            "maxTokens": "4000"
+            "maxTokens": "8000"
         },
         "messages": [
             {"role": "system", "text": system_prompt},
@@ -351,8 +351,10 @@ async def get_token_count(text: str, model_type: str, api_key: str, folder_id: s
 
 def parse_gpt_json(text: str):
     try:
-        clean_text = text.strip().replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_text)
+        match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        return json.loads(text.strip())
     except Exception as e:
         print(f"JSON Parse Error: {e}")
         return None
@@ -514,40 +516,26 @@ async def process_invoice(
     
     try:
         if filename.endswith(".pdf"):
-            doc = fitz.open(temp_path)
-            
-            # 1. Try Extracting Text Layer
-            text_layer_found = False
-            for page in doc:
-                blocks = page.get_text("blocks")
-                if blocks:
-                    text_layer_found = True
-                    # Sort blocks by vertical then horizontal position
-                    blocks.sort(key=lambda b: (b[1], b[0]))
-                    
-                    current_y = -1
-                    page_text_parts = []
-                    for b in blocks:
-                        # block format: (x0, y0, x1, y1, "text", block_no, block_type)
-                        # Check if we are on roughly the same line
-                        if abs(b[1] - current_y) > 5:
-                            page_text_parts.append("\n| ")
-                            current_y = b[1]
-                        else:
-                            page_text_parts.append(" | ")
-                        
-                        clean_text = b[4].replace("\n", " ").strip()
-                        page_text_parts.append(clean_text)
-                    
-                    extracted_text += "".join(page_text_parts) + "\n"
-            
-            # 2. If no text layer OR very little text found, fallback to OCR
-            if not text_layer_found or len(extracted_text.strip()) < 50:
-                print("No text layer found or text too short. Falling back to OCR.")
+            ext_text = ""
+            try:
+                with pdfplumber.open(temp_path) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            ext_text += page_text + "\n"
+            except Exception as e:
+                print(f"pdfplumber error: {e}")
+
+            if ext_text.strip():
+                extracted_text = ext_text
+                parse_method = "direct_text"
+            else:
+                print("No text layer found. Falling back to OCR.")
                 parse_method = "ocr_table"
                 extracted_text = "" # Reset
+                doc = fitz.open(temp_path)
                 num_pages = len(doc)
-                for i in range(len(doc)):
+                for i in range(num_pages):
                     page = doc.load_page(i)
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
                     png_bytes = pix.tobytes("png")
@@ -559,7 +547,7 @@ async def process_invoice(
                     extracted_text += f"\n--- Page {i+1} ---\n | {formatted_ocr}\n"
                     if low_conf:
                         has_low_confidence = True
-            doc.close()
+                doc.close()
             
         elif filename.endswith((".png", ".jpg", ".jpeg")):
             parse_method = "ocr_table"
@@ -579,6 +567,10 @@ async def process_invoice(
                 df = pd.read_excel(temp_path, engine='xlrd')
             else:
                 df = pd.read_excel(temp_path, engine='openpyxl')
+            
+            df = df.dropna(how='all')
+            df = df.fillna("")
+            
             # Serialize with | for GPT consistency
             header = " | ".join(map(str, df.columns))
             rows = []
@@ -736,16 +728,21 @@ async def storage_upload(file: UploadFile = File(...)):
                     df = pd.read_excel(dest_path, engine='xlrd')
                 else:
                     df = pd.read_excel(dest_path, engine='openpyxl')
+                
+                df = df.dropna(how='all')
+                df = df.fillna("")
+                
                 header = " | ".join(map(str, df.columns))
                 rows = []
                 for _, row in df.iterrows():
                     rows.append(" | ".join(map(str, row.values)))
                 ext_text = header + "\n" + "\n".join(rows)
                 
+            # Always calculate tokens to not miss base count
+            estimated_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
-                estimated_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+                estimated_cost = round(((estimated_tokens * 2.2) * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")
     
@@ -774,6 +771,44 @@ async def storage_upload(file: UploadFile = File(...)):
     })
     
     return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost}
+
+
+@app.delete("/api/storage/files/{filename}")
+async def delete_file(filename: str, nuclear: bool = False):
+    import os
+    # 1. Path definitions
+    file_path = os.path.join(STORAGE_DIR, filename)
+    cache_path = os.path.join(STORAGE_DIR, f"{filename}.json")
+    
+    # 2. Delete physical files
+    if nuclear:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except: pass
+        if os.path.exists(cache_path):
+            try:
+                os.remove(cache_path)
+            except: pass
+
+        # 3. Clean history.json
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                    hist = json.load(f)
+                hist = [h for h in hist if h.get("fileName") != filename and h.get("originalName") != filename]
+                with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                    json.dump(hist, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"Error cleaning history: {e}")
+
+        # 4. Clean manifest.json
+        manifest = _load_manifest()
+        if filename in manifest:
+            del manifest[filename]
+            _save_manifest(manifest)
+            
+    return {"status": "success"}
 
 
 @app.get("/api/storage/files")

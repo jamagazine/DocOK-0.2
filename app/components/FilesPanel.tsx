@@ -105,6 +105,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               <span className="font-medium text-slate-900 truncate" title={fileName}>
                 {fileName}
               </span>
+              <span className="text-[11px] text-slate-500 mt-0.5">
+                {isReset ? 'Данные сброшены' : statusStr}
+              </span>
               
               {/* Inline Progress Bar for Loading State */}
               {isLoading && (

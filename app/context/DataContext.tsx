@@ -504,7 +504,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses((prev: any) => ({ 
           ...prev, 
           [file.name]: { 
-            status: `Готово (ИИ${tokens > 0 ? `, ${tokens} токенов` : ''})`, 
+            status: 'Готово (ИИ)', 
             time: currentTime,
             tokens,
             cost,
