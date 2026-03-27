@@ -14,6 +14,46 @@ import pdfplumber
 import datetime
 from urllib.parse import quote
 
+UNITS_MAP = {
+    # базовые
+    "шт": "штука", "шт.": "штука", "штук": "штука", "штуки": "штука",
+    "м": "метр", "м.": "метр", "метр": "метр", "метры": "метр",
+    "м2": "квадратный метр", "м²": "квадратный метр", "м2.": "квадратный метр",
+    "м3": "кубический метр", "м³": "кубический метр",
+    "кг": "килограмм", "кг.": "килограмм",
+    "т": "тонна", "т.": "тонна", "тн": "тонна", "тн.": "тонна",
+    "л": "литр", "л.": "литр",
+    "компл": "комплект", "компл.": "комплект",
+    "наб": "набор", "наб.": "набор",
+    "рул": "рулон", "рул.": "рулон",
+    "упак": "упаковка", "упак.": "упаковка", "пач": "пачка", "пач.": "пачка",
+    "пог.м": "погонный метр", "п.м": "погонный метр", "погм": "погонный метр",
+    "тыс.шт": "тысяча штук", "тыс.шт.": "тысяча штук",
+    "мм": "миллиметр", "мм.": "миллиметр",
+    "см": "сантиметр", "см.": "сантиметр",
+    "км": "километр", "км.": "километр",
+    "га": "гектар",
+    "кв.м": "квадратный метр", "кв.м.": "квадратный метр",
+    "куб.м": "кубический метр", "куб.м.": "кубический метр",
+    # реже, но встречаются в стройке
+    "пар": "пара", "пар.": "пара",
+    "мест": "место", "мест.": "место",
+    "секц": "секция", "секц.": "секция",
+    "эл": "элемент", "эл.": "элемент",
+    "бух": "бухта", "бух.": "бухта",
+    "лист": "лист", "лист.": "лист",
+    "кг/м": "килограмм на метр",
+    "м/пог": "метр погонный",
+    "кор": "коробка", "кор.": "коробка", "ящ": "ящик", "ящ.": "ящик",
+    "банка": "банка", "б.": "банка"
+}
+
+def normalize_unit(unit_str: str) -> str:
+    if not unit_str:
+        return ""
+    cleaned = unit_str.lower().strip()
+    return UNITS_MAP.get(cleaned, unit_str) # Возвращаем нормализованное значение, либо оригинал
+
 app = FastAPI()
 
 @app.get("/api/health")
@@ -251,7 +291,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
     }
 
     system_prompt = """Ты специализированный парсер счетов на оплату и накладных.
-Текст передается в формате, разделенном символами |, которые обозначают границы колонок или логических блоков. Ориентируйся на это при извлечении структуры.
+Текст извлечен из таблицы с использованием разделителей `|`. Будь внимателен к структуре колонок и разделяй слипшиеся данные (например, '100шт' должно быть разделено на количество 100 и единицу шт). Ориентируйся на | при разборе колонок.
 
 Извлеки из текста документа данные и верни СТРОГО В ВИДЕ JSON:
 {
@@ -428,22 +468,46 @@ def calculate_uncertainty(struct: dict, global_low_conf: bool):
         # Default assume uncertain if document had bad OCR, or INN is wrong length
         is_uncertain = global_low_conf or inn_uncertain
         
+        # Pre-process double column in quantity before any math
+        raw_qty = str(item.get("quantity", "")).strip()
+        # Look for a number pattern optionally followed by some text
+        match_qty = re.match(r'^([\d\.\,\s]+)(.*?)$', raw_qty)
+        if match_qty and match_qty.group(2).strip():
+            # Looks like it has both numbers and text (e.g. "10.5 кг")
+            num_part = match_qty.group(1).strip()
+            text_part = match_qty.group(2).strip()
+            item["quantity"] = num_part
+            # Use text_part as unit only if unit was empty
+            if not item.get("unit"):
+                item["unit"] = text_part
+                
+        # Normalize unit
+        if item.get("unit"):
+            item["unit"] = normalize_unit(str(item.get("unit")))
+
         # Check math
         qty = to_float(item.get("quantity"))
         price = to_float(item.get("price"))
         total = to_float(item.get("total"))
         
+        math_error = False
         if qty > 0 and price > 0 and total > 0:
             calc_total = qty * price
-            # Diff > 5% means it's likely a math issue/parsing error
+            # Diff > 5% means it's likely a parsing/math issue for uncertainty
             if abs(calc_total - total) > (0.05 * total):
                 is_uncertain = True
+            
+            # Strict math police check with 0.1 tolerance for rounding
+            if abs(calc_total - total) >= 0.1:
+                math_error = True
                 
         # Required field missing
         if not item.get("name"):
             is_uncertain = True
 
         item["isUncertain"] = is_uncertain
+        if math_error:
+            item["math_error"] = True
         
     return struct
 
@@ -519,9 +583,11 @@ async def process_invoice(
             try:
                 with pdfplumber.open(temp_path) as pdf:
                     for page in pdf.pages:
-                        page_text = page.extract_text()
+                        page_text = page.extract_text(x_tolerance=2, y_tolerance=3)
+                        # Attempt to replace multiple spaces with | to form logical columns for GPT
                         if page_text:
-                            ext_text += page_text + "\n"
+                            formatted_lines = [re.sub(r'\s{2,}', ' | ', line) for line in page_text.split('\n')]
+                            ext_text += "\n".join(formatted_lines) + "\n"
             except Exception as e:
                 print(f"pdfplumber error: {e}")
 
@@ -710,9 +776,10 @@ async def storage_upload(file: UploadFile = File(...)):
                 try:
                     with pdfplumber.open(dest_path) as pdf:
                         for page in pdf.pages:
-                            page_text = page.extract_text()
+                            page_text = page.extract_text(x_tolerance=2, y_tolerance=3)
                             if page_text:
-                                ext_text += page_text + "\n"
+                                formatted_lines = [re.sub(r'\s{2,}', ' | ', line) for line in page_text.split('\n')]
+                                ext_text += "\n".join(formatted_lines) + "\n"
                         if not ext_text.strip():
                             pages = len(pdf.pages)
                             estimated_cost = round(pages * 7.0, 2)

@@ -691,7 +691,8 @@ function RequestTable() {
                   onClick={() => toggleRowSelection(row.id, false)}
                   className={cn(
                     "flex items-center text-sm border-b border-slate-50 hover:bg-slate-50 transition-colors group min-h-[48px] cursor-pointer",
-                    isSelected && "bg-indigo-50/50"
+                    isSelected && "bg-indigo-50/50",
+                    row.math_error && "bg-red-50/70 hover:bg-red-100/70"
                   )}
                 >
                   {columns.map(col => (
