@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Body, Request, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Body, Request, Header, Form
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -371,7 +371,7 @@ note (Примечание)
         debug_path = os.path.join(TEMP_INPUT_DIR, "last_prompt.txt")
         with open(debug_path, "w", encoding="utf-8") as f:
             f.write("=== SYSTEM PROMPT ===\n")
-            f.write(active_prompt + "\n\n")
+            f.write(system_prompt + "\n\n")
             f.write("=== USER TEXT ===\n")
             f.write(user_text)
     except Exception as e:
@@ -386,7 +386,7 @@ note (Примечание)
             "maxTokens": "8000"
         },
         "messages": [
-            {"role": "system", "text": active_prompt},
+            {"role": "system", "text": system_prompt},
             {"role": "user", "text": user_text}
         ]
     }
@@ -551,9 +551,9 @@ def calculate_uncertainty(struct: dict, global_low_conf: bool):
 @app.post("/api/process-invoice")
 async def process_invoice(
     file: UploadFile = File(...),
+    doc_type: str = Form("invoice"),
     x_api_key: str | None = Header(None),
-    x_folder_id: str | None = Header(None),
-    x_doc_type: str | None = Header(None)
+    x_folder_id: str | None = Header(None)
 ):
     api_key, folder_id = get_yandex_keys()
     
@@ -688,7 +688,6 @@ async def process_invoice(
              
         # Call GPT to structure the data using chunking
         model_type = "pro" if parse_method == "ocr_table" else "lite"
-        doc_type = x_doc_type or "invoice"
         all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type)
         
         if all_items is None or main_doc_info is None:

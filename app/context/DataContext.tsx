@@ -27,7 +27,7 @@ export interface SpecRow extends MaterialPosition {
 }
 
 export const SPEC_COLUMNS = [
-  { key: 'pos', label: '№', width: 60, align: 'center' },
+  { key: 'pos', label: '№', width: 60, align: 'center', sortable: false },
   { key: 'name', label: 'Наименование', width: 220 },
   { key: 'brand', label: 'Марка/Тип', width: 130 },
   { key: 'code', label: 'Код', width: 110 },
@@ -39,7 +39,7 @@ export const SPEC_COLUMNS = [
 ];
 
 export const SPEC_TARGET_FIELDS = [
-  { key: 'pos', label: 'Позиция' },
+  { key: 'pos', label: 'Позиция', required: true },
   { key: 'name', label: 'Наименование', required: true },
   { key: 'brand', label: 'Марка/Тип' },
   { key: 'code', label: 'Код продукции' },
@@ -437,7 +437,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
             setInvoiceRows((prev) => [...prev, ...newRowsToAppend]);
           }
           
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Готово (Локально)', time: currentTime } }));
+        setUploadStatuses((prev: any) => ({ 
+          ...prev, 
+          [file.name]: { 
+            ...prev[file.name], 
+            status: 'Готово (Локально)', 
+            time: currentTime,
+            tokens: prev[file.name]?.estimated_tokens || 0,
+            cost: prev[file.name]?.estimated_cost || 0,
+            model: prev[file.name]?.model || '',
+            method: 'CACHED'
+          } 
+        }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
         // Sync status 'ok' to server
         updateFileStatusOnServer(file.name, 'ok');
@@ -453,6 +464,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('doc_type', stage === 'spec' ? 'spec' : 'invoice');
 
       try {
         const res = await fetch('http://localhost:8000/api/process-invoice', {
@@ -460,8 +472,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           body: formData,
           headers: {
             'x-api-key': yandexConfig.apiKey,
-            'x-folder-id': yandexConfig.catalogId,
-            'x-doc-type': stage === 'spec' ? 'spec' : 'invoice'
+            'x-folder-id': yandexConfig.catalogId
           }
         });
 
@@ -523,6 +534,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses((prev: any) => ({ 
           ...prev, 
           [file.name]: { 
+            ...prev?.[file.name],
             status: 'Готово (ИИ)', 
             time: currentTime,
             tokens,

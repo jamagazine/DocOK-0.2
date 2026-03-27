@@ -3,7 +3,7 @@ import * as ExcelJS from 'exceljs';
 import { parsePdf, parsePdfGeometry, PdfGeometry } from './pdfUtils';
 
 export interface MaterialPosition {
-  pos?: string;
+  pos: string;
   name: string;
   brand: string;
   code: string;
