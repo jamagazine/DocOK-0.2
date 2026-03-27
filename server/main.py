@@ -718,6 +718,7 @@ async def storage_upload(file: UploadFile = File(...)):
                 except Exception as e:
                     print(f"pdfplumber error: {e}")
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
+                estimated_tokens = 1500
                 estimated_cost = 1.22 # OCR estimate 1 page
             elif original_filename.lower().endswith((".xlsx", ".xls", ".csv")):
                 if original_filename.lower().endswith(".csv"):
@@ -798,6 +799,7 @@ async def storage_list():
                     cost = entry.get("cost", 0)
                     tokens = entry.get("tokens", 0)
                     estimated_cost = entry.get("estimated_cost", 0)
+                    estimated_tokens = entry.get("estimated_tokens", 0)
                     model = entry.get("model", "")
                     method = entry.get("method", "")
                 else:
@@ -807,6 +809,7 @@ async def storage_list():
                     cost = 0
                     tokens = 0
                     estimated_cost = 0
+                    estimated_tokens = 0
                     model = ""
                     method = ""
                 
@@ -819,6 +822,7 @@ async def storage_list():
                     "cost": cost,
                     "tokens": tokens,
                     "estimated_cost": estimated_cost,
+                    "estimated_tokens": estimated_tokens,
                     "model": model,
                     "method": method,
                 })
