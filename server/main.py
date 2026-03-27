@@ -714,12 +714,14 @@ async def storage_upload(file: UploadFile = File(...)):
                             if page_text:
                                 ext_text += page_text + "\n"
                         if not ext_text.strip():
-                            estimated_cost = round(len(pdf.pages) * 1.22, 2)
+                            pages = len(pdf.pages)
+                            estimated_cost = round(pages * 7.0, 2)
+                            estimated_tokens = pages * 5000
                 except Exception as e:
                     print(f"pdfplumber error: {e}")
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
-                estimated_tokens = 1500
-                estimated_cost = 1.22 # OCR estimate 1 page
+                estimated_tokens = 5000
+                estimated_cost = 7.0
             elif original_filename.lower().endswith((".xlsx", ".xls", ".csv")):
                 if original_filename.lower().endswith(".csv"):
                     df = pd.read_csv(dest_path)
@@ -737,11 +739,10 @@ async def storage_upload(file: UploadFile = File(...)):
                     rows.append(" | ".join(map(str, row.values)))
                 ext_text = header + "\n" + "\n".join(rows)
                 
-            # Always calculate tokens to not miss base count
-            input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-            estimated_tokens = int(input_tokens * 2.2)
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
+                input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
+                estimated_tokens = int(input_tokens * 2.2)
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")
@@ -895,13 +896,15 @@ async def storage_delete(name: str, nuclear: bool = False):
     # or handle physical files properly
     if nuclear:
         if os.path.exists(path):
-            os.remove(path)
+            try: os.remove(path)
+            except: pass
         if os.path.exists(cache_path):
             try: os.remove(cache_path)
             except: pass
     else:
         if os.path.exists(path):
-            os.remove(path)
+            try: os.remove(path)
+            except: pass
 
     # Remove from manifest
     if disk_name in manifest:
