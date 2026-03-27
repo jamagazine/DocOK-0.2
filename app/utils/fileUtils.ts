@@ -3,6 +3,7 @@ import * as ExcelJS from 'exceljs';
 import { parsePdf, parsePdfGeometry, PdfGeometry } from './pdfUtils';
 
 export interface MaterialPosition {
+  pos?: string;
   name: string;
   brand: string;
   code: string;
@@ -11,6 +12,7 @@ export interface MaterialPosition {
   quantity: string;
   mass: string;
   note: string;
+  is_header?: boolean;
 }
 
 export interface ParsedFile {
@@ -135,9 +137,10 @@ export function exportToExcel(
 // ── Column auto-detection ──────────────────────────────────────────────────────
 
 export const SPEC_ALIASES: Record<string, string[]> = {
+  pos: ['поз', 'поз.', 'позиция', '№ поз', '№поз', 'п/п', '№ п/п', '№', '№п.п.'],
   name: ['наименование', 'название', 'материал', 'описание', 'позиция', 'наим'],
   brand: ['марка', 'тип', 'бренд', 'модель', 'обозначение', 'марка/тип'],
-  code: ['код', 'артикул', '№', 'шифр', 'номер', 'арт'],
+  code: ['код', 'артикул', 'шифр', 'код продукции'],
   supplier: ['поставщик', 'производитель', 'завод', 'фирма', 'вендор'],
   unit: ['единица', 'ед.изм', 'ед.', 'ед', 'единиц', 'изм', 'ед.измерения'],
   quantity: ['количество', 'кол-во', 'кол.', 'кол', 'объем', 'объём', 'шт'],

@@ -27,24 +27,26 @@ export interface SpecRow extends MaterialPosition {
 }
 
 export const SPEC_COLUMNS = [
+  { key: 'pos', label: '№', width: 60, align: 'center' },
   { key: 'name', label: 'Наименование', width: 220 },
-  { key: 'brand', label: 'Марка', width: 130 },
+  { key: 'brand', label: 'Марка/Тип', width: 130 },
   { key: 'code', label: 'Код', width: 110 },
   { key: 'supplier', label: 'Поставщик', width: 140 },
   { key: 'unit', label: 'Ед.', width: 100, align: 'center' },
   { key: 'quantity', label: 'Кол-во', width: 100, type: 'number', align: 'right' },
-  { key: 'mass', label: 'Масса', width: 120, type: 'number', align: 'right' },
+  { key: 'mass', label: 'Масса 1 ед, кг', width: 120, type: 'number', align: 'right' },
   { key: 'note', label: 'Прим.', width: 180 },
 ];
 
 export const SPEC_TARGET_FIELDS = [
+  { key: 'pos', label: 'Позиция' },
   { key: 'name', label: 'Наименование', required: true },
-  { key: 'brand', label: 'Марка' },
-  { key: 'code', label: 'Код' },
+  { key: 'brand', label: 'Марка/Тип' },
+  { key: 'code', label: 'Код продукции' },
   { key: 'supplier', label: 'Поставщик' },
   { key: 'unit', label: 'Единицы измерения' },
   { key: 'quantity', label: 'Количество' },
-  { key: 'mass', label: 'Масса' },
+  { key: 'mass', label: 'Масса 1 ед, кг' },
   { key: 'note', label: 'Примечания' },
 ];
 
@@ -95,6 +97,7 @@ export function emptyInvoiceRow(): InvoiceRow {
 export function emptySpecRow(): SpecRow {
   return {
     id: genId(),
+    pos: '',
     code: '',
     brand: '',
     name: '',
@@ -102,7 +105,8 @@ export function emptySpecRow(): SpecRow {
     unit: 'шт',
     supplier: '',
     mass: '0',
-    note: ''
+    note: '',
+    is_header: false,
   };
 }
 
@@ -456,7 +460,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           body: formData,
           headers: {
             'x-api-key': yandexConfig.apiKey,
-            'x-folder-id': yandexConfig.catalogId
+            'x-folder-id': yandexConfig.catalogId,
+            'x-doc-type': stage === 'spec' ? 'spec' : 'invoice'
           }
         });
 
@@ -479,14 +484,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
           const aiRows: SpecRow[] = (data.items || []).map((item: any) => ({
             id: genId(),
             fileId: file.name,
+            pos: item.pos || '',
             name: item.name || '',
-            brand: '',
-            code: item.article || '',
-            supplier: data.document?.metadata?.vendor || '',
+            brand: item.brand || '',
+            code: item.code || item.article || '',
+            supplier: item.supplier || data.document?.metadata?.vendor || '',
             unit: item.unit || 'шт',
-            quantity: strToNumOrBlank(item.quantity) || '1',
-            mass: '0',
-            note: item.isUncertain ? 'Требует проверки' : '',
+            quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
+            mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
+            note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
+            is_header: Boolean(item.is_header),
             originalRowsIds: [],
             children: []
           }));

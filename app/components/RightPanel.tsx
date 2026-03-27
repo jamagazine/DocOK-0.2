@@ -56,9 +56,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     let filename = `DocOK_${currentStage}.xlsx`;
 
     if (currentStage === 'spec') {
-      headers = ['№', 'Наименование', 'Артикул', 'Кол-во', 'Ед. изм.', 'Примечание'];
+      headers = ['Поз.', 'Наименование', 'Марка/Тип', 'Код', 'Поставщик', 'Ед. изм.', 'Кол-во', 'Масса 1 ед, кг', 'Примечание'];
       data = specRows.map((r: SpecRow, i: number) => [
-        String(i + 1), r.name || '', r.code || '', String(r.quantity || ''), r.unit || '', r.note || ''
+        r.pos || String(i + 1), r.name || '', r.brand || '', r.code || '', r.supplier || '', r.unit || '', String(r.quantity || ''), r.mass || '', r.note || ''
       ]);
     } else if (currentStage === 'invoice') {
       headers = ['№', 'Наименование', 'Артикул', 'Кол-во', 'Цена', 'Сумма', 'Поставщик'];

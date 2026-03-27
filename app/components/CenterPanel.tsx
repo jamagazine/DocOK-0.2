@@ -437,7 +437,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
             onMouseEnter={() => idx === 0 && setIsHovered(true)}
             onMouseLeave={() => idx === 0 && setIsHovered(false)}
           >
-            {idx === 0 && col.key === '№' ? (
+            {idx === 0 && col.key === 'pos' ? (
               <div
                 className="flex items-center justify-center w-full"
                 onClick={(e) => e.stopPropagation()}
@@ -468,7 +468,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
               <span className="break-words whitespace-normal">{col.label}</span>
             )}
 
-            {isSortable && col.key !== '№' && (
+            {isSortable && col.key !== 'pos' && (
               <div className={cn(
                 "shrink-0 transition-opacity",
                 isActive ? "opacity-100 text-indigo-600" : "opacity-0 group-hover:opacity-100 text-slate-400"
@@ -496,9 +496,9 @@ function SpecTable() {
   };
 
   const columns: Column[] = [
-    { key: '№', label: '№', width: '60px', align: 'center', sortable: false },
+    { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
     { key: 'name', label: 'Наименование' },
-    { key: 'brand', label: 'Марка', width: '120px' },
+    { key: 'brand', label: 'Марка/Тип', width: '120px' },
     { key: 'code', label: 'Код', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
     { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
@@ -526,11 +526,13 @@ function SpecTable() {
               return (
                 <React.Fragment key={row.id}>
                   <div
-                    onClick={() => toggleRowSelection(row.id, false)}
+                    onClick={() => !row.is_header && toggleRowSelection(row.id, false)}
                     className={cn(
-                      "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50/80 transition-colors group min-h-[48px] cursor-pointer",
+                      "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50/80 transition-colors group min-h-[48px]",
                       hasChildren && "bg-slate-50/30",
-                      isSelected && "bg-indigo-50/50"
+                      isSelected && "bg-indigo-50/50",
+                      row.is_header && "bg-amber-50/60 border-l-2 border-l-amber-400",
+                      !row.is_header && "cursor-pointer"
                     )}
                   >
                     {columns.map(col => (
@@ -544,14 +546,14 @@ function SpecTable() {
                           flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
                           minWidth: col.width || '100px'
                         }}
-                        onClick={col.key === '№' ? (e) => {
+                        onClick={col.key === 'pos' && !row.is_header ? (e) => {
                           e.stopPropagation();
                           toggleRowSelection(row.id, true);
                         } : undefined}
                       >
-                        {col.key === '№' ? (
+                        {col.key === 'pos' ? (
                           <div className="relative w-full h-full flex items-center justify-center font-medium">
-                            {hasChildren && (
+                            {hasChildren && !row.is_header && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -562,7 +564,9 @@ function SpecTable() {
                                 {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
                               </button>
                             )}
-                            {isSelected ? (
+                            {row.is_header ? (
+                              <span className="text-amber-700 font-bold text-xs">§</span>
+                            ) : isSelected ? (
                               <input
                                 type="checkbox"
                                 className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
@@ -576,7 +580,7 @@ function SpecTable() {
                             ) : (
                               <>
                                 <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                  {(actualIndex + 1).toString().padStart(2, '0')}
+                                  {row.pos || (actualIndex + 1).toString().padStart(2, '0')}
                                 </span>
                                 <input
                                   type="checkbox"
@@ -591,10 +595,12 @@ function SpecTable() {
                               </>
                             )}
                           </div>
+                        ) : row.is_header && col.key === 'name' ? (
+                          <span className="text-amber-800 font-bold text-sm">{String((row as any)[col.key] || '')}</span>
                         ) : (
                           <AutoResizingTextarea
                             value={String((row as any)[col.key] || '')}
-                            readOnly={selectedIds.length > 0}
+                            readOnly={selectedIds.length > 0 || (row.is_header === true && (col.key === 'quantity' || col.key === 'mass'))}
                             tabIndex={selectedIds.length > 0 ? -1 : 0}
                             onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
                             onClick={(e) => {
@@ -602,7 +608,8 @@ function SpecTable() {
                             }}
                             className={cn(
                               col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
-                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
+                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left",
+                              row.is_header && "italic text-amber-700"
                             )}
                           />
                         )}
@@ -624,7 +631,7 @@ function SpecTable() {
                             minWidth: col.width || '100px'
                           }}
                         >
-                          {col.key === '№' ? (
+                          {col.key === 'pos' ? (
                             <div className="flex items-center gap-2 pl-6">
                               <span className="text-slate-300 tabular-nums">{(childIdx + 1)}</span>
                             </div>
@@ -663,9 +670,9 @@ function RequestTable() {
   const { requestRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
 
   const columns: Column[] = [
-    { key: '№', label: '№', width: '60px', align: 'center', sortable: false },
+    { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
     { key: 'name', label: 'Наименование' },
-    { key: 'brand', label: 'Марка', width: '120px' },
+    { key: 'brand', label: 'Марка/Тип', width: '120px' },
     { key: 'code', label: 'Код', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
     { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
@@ -706,12 +713,12 @@ function RequestTable() {
                         flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
                         minWidth: col.width || '100px'
                       }}
-                      onClick={col.key === '№' ? (e) => {
+                      onClick={col.key === 'pos' ? (e) => {
                         e.stopPropagation();
                         toggleRowSelection(row.id, true);
                       } : undefined}
                     >
-                      {col.key === '№' ? (
+                      {col.key === 'pos' ? (
                         <div className="relative w-full h-full flex items-center justify-center font-medium">
                           {isSelected ? (
                             <input
@@ -773,7 +780,7 @@ function InvoiceTable() {
   const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, handleRowChange, isOnlySelectedView } = useData();
 
   const columns: Column[] = [
-    { key: '№', label: '№', width: '60px', align: 'center', sortable: false },
+    { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
     { key: 'match_data', label: 'Совпадение', width: '200px' },
     { key: 'name', label: 'Наименование' },
     { key: 'article', label: 'Артикул', width: '120px' },
@@ -818,12 +825,12 @@ function InvoiceTable() {
                         flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
                         minWidth: col.width || '100px'
                       }}
-                      onClick={col.key === '№' ? (e) => {
+                      onClick={col.key === 'pos' ? (e) => {
                         e.stopPropagation();
                         toggleRowSelection(row.id, true);
                       } : undefined}
                     >
-                      {col.key === '№' ? (
+                      {col.key === 'pos' ? (
                         <div className="relative w-full h-full flex items-center justify-center font-medium">
                           {isSelected ? (
                             <input
@@ -860,41 +867,41 @@ function InvoiceTable() {
                           {row.match_data?.status === 'perfect' && <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] shrink-0" title="Идеальное совпадение" />}
                           {row.match_data?.status === 'warning' && <div className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)] shrink-0" title="Возможное совпадение" />}
                           {row.match_data?.status === 'none' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] shrink-0" title="Нет совпадений" />}
-                          
+
                           {(!row.match_data || row.match_data.status === 'none') && <span className="text-xs text-slate-400 italic">Связи нет</span>}
-                          
+
                           {row.match_data?.status === 'warning' && (
                             <div className="flex flex-col text-[11px] leading-tight min-w-0" title={row.match_data.target_name || ''}>
-                               <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
-                               <span className="text-amber-600 font-semibold">{row.match_data.score}% сходства</span>
+                              <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
+                              <span className="text-amber-600 font-semibold">{row.match_data.score}% сходства</span>
                             </div>
                           )}
                           {row.match_data?.status === 'perfect' && (
                             <div className="flex flex-col text-[11px] leading-tight min-w-0" title={row.match_data.target_name || ''}>
-                               <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
-                               <span className="text-emerald-600 font-semibold">{row.match_data.score}%</span>
+                              <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
+                              <span className="text-emerald-600 font-semibold">{row.match_data.score}%</span>
                             </div>
                           )}
 
                           {/* Manual Override Select */}
                           <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover/match:opacity-100 transition-opacity">
                             <select
-                               className="w-5 h-5 opacity-0 absolute inset-0 cursor-pointer z-10"
-                               title="Изменить связь вручную"
-                               value={row.match_data?.target_id || ''}
-                               onChange={(e) => {
-                                 const specId = e.target.value;
-                                 if (!specId) return;
-                                 const specName = e.target.options[e.target.selectedIndex].text;
-                                 const newMatch = { target_id: specId, target_name: specName, score: 100, status: 'perfect' };
-                                 handleRowChange('invoice', row.id, 'match_data', newMatch);
-                               }}
+                              className="w-5 h-5 opacity-0 absolute inset-0 cursor-pointer z-10"
+                              title="Изменить связь вручную"
+                              value={row.match_data?.target_id || ''}
+                              onChange={(e) => {
+                                const specId = e.target.value;
+                                if (!specId) return;
+                                const specName = e.target.options[e.target.selectedIndex].text;
+                                const newMatch = { target_id: specId, target_name: specName, score: 100, status: 'perfect' };
+                                handleRowChange('invoice', row.id, 'match_data', newMatch);
+                              }}
                             >
-                               <option value="">-- Выбрать из спецификации --</option>
-                               {useData().specRows.map(s => <option key={s.id} value={s.id}>{s.name || s.code}</option>)}
+                              <option value="">-- Выбрать из спецификации --</option>
+                              {useData().specRows.map(s => <option key={s.id} value={s.id}>{s.name || s.code}</option>)}
                             </select>
                             <div className="w-5 h-5 rounded hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer pointer-events-none">
-                               <Edit2 className="w-3 h-3" />
+                              <Edit2 className="w-3 h-3" />
                             </div>
                           </div>
                         </div>
@@ -942,7 +949,7 @@ function EstimateTable() {
   const { estimateRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, handleRowChange, isOnlySelectedView } = useData();
 
   const columns: Column[] = [
-    { key: '№', label: '№', width: '60px', align: 'center', sortable: false },
+    { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
     { key: 'workType', label: 'Вид работы', width: '150px' },
     { key: 'name', label: 'Наименование' },
     { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
@@ -984,12 +991,12 @@ function EstimateTable() {
                         flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
                         minWidth: col.width || '100px'
                       }}
-                      onClick={col.key === '№' ? (e) => {
+                      onClick={col.key === 'pos' ? (e) => {
                         e.stopPropagation();
                         toggleRowSelection(row.id, true);
                       } : undefined}
                     >
-                      {col.key === '№' ? (
+                      {col.key === 'pos' ? (
                         <div className="relative w-full h-full flex items-center justify-center font-medium">
                           {isSelected ? (
                             <input

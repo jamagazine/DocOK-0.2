@@ -293,7 +293,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
 
     return "".join(text_parts), has_low_confidence
 
-async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = "lite"):
+async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = "lite", doc_type: str = "invoice"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     headers = {
         "Authorization": f"Api-Key {api_key}",
@@ -339,6 +339,31 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
+    spec_system_prompt = """Ты — ведущий инженер по автоматизации данных. Твоя задача: извлечь данные из таблицы Спецификации оборудования и материалов (ГОСТ 21.110-2013) в JSON-массив.
+
+Матрица соответствия (ориентируйся на цифры в строке-индексе под шапкой):
+
+pos (Поз.)
+name (Наименование и техническая характеристика оборудования, изделия, материала)
+brand (Тип, марка, обозначение документа, опросного листа)
+code (Код продукции)
+supplier (Поставщик)
+unit (Ед. измерения)
+quantity (Кол.)
+mass (Масса 1 ед., кг)
+note (Примечание)
+
+Критические правила:
+1. Склеивание: Если колонка 1 (pos) пустая, а в колонке 2 есть текст — это продолжение названия предыдущей позиции. Склеивай такой текст в поле name через пробел.
+2. Разделы: Если колонки pos и quantity пустые, а в name есть текст (например, '1. Оборудование') — создай объект с "is_header": true.
+3. Типы: quantity и mass должны быть числами (float) или null.
+4. Формат: Возвращай ТОЛЬКО чистый JSON массив объектов.
+5. НЕ ВКЛЮЧАЙ строки типа 'Итого', 'Всего' в результат.
+6. Поле pos должно содержать номер позиции как строку (например "1", "2", "3а").
+7. Для объектов-заголовков ставь: "is_header": true, "quantity": null, "mass": null."""
+
+    active_prompt = spec_system_prompt if doc_type == "spec" else system_prompt
+
     user_text = f"Текст документа:\n{text}"
     
     # DEBUG: Save last prompt
@@ -346,7 +371,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
         debug_path = os.path.join(TEMP_INPUT_DIR, "last_prompt.txt")
         with open(debug_path, "w", encoding="utf-8") as f:
             f.write("=== SYSTEM PROMPT ===\n")
-            f.write(system_prompt + "\n\n")
+            f.write(active_prompt + "\n\n")
             f.write("=== USER TEXT ===\n")
             f.write(user_text)
     except Exception as e:
@@ -361,7 +386,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
             "maxTokens": "8000"
         },
         "messages": [
-            {"role": "system", "text": system_prompt},
+            {"role": "system", "text": active_prompt},
             {"role": "user", "text": user_text}
         ]
     }
@@ -409,7 +434,7 @@ def parse_gpt_json(text: str):
         print(f"JSON Parse Error: {e}")
         return None
 
-async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, model_type: str = "lite"):
+async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, model_type: str = "lite", doc_type: str = "invoice"):
     """
     Inteligently splits text into chunks if it exceeds token limits, otherwise sends the whole document.
     """
@@ -418,7 +443,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     
     # Send full if fits comfortably (leave ~1000 tokens for system prompt & response)
     if initial_tokens < 7000:
-        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type)
+        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type, doc_type)
         parsed = parse_gpt_json(raw_res)
         if not parsed:
             return None, tokens, None
@@ -443,7 +468,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     for i, chunk in enumerate(chunks):
         chunk_text = header + "\n" + "\n".join(chunk)
         # We might need to handle per-chunk errors here, but for now let it propagate
-        raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type)
+        raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
         total_tokens += tokens
         parsed = parse_gpt_json(raw_res)
         
@@ -527,7 +552,8 @@ def calculate_uncertainty(struct: dict, global_low_conf: bool):
 async def process_invoice(
     file: UploadFile = File(...),
     x_api_key: str | None = Header(None),
-    x_folder_id: str | None = Header(None)
+    x_folder_id: str | None = Header(None),
+    x_doc_type: str | None = Header(None)
 ):
     api_key, folder_id = get_yandex_keys()
     
@@ -662,7 +688,8 @@ async def process_invoice(
              
         # Call GPT to structure the data using chunking
         model_type = "pro" if parse_method == "ocr_table" else "lite"
-        all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type)
+        doc_type = x_doc_type or "invoice"
+        all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type)
         
         if all_items is None or main_doc_info is None:
             raise HTTPException(status_code=422, detail="ИИ вернул невалидный ответ")
