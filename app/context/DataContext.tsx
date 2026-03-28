@@ -443,8 +443,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
             ...prev[file.name], 
             status: 'Готово (Локально)', 
             time: currentTime,
-            tokens: prev[file.name]?.estimated_tokens || 0,
-            cost: prev[file.name]?.estimated_cost || 0,
             model: prev[file.name]?.model || '',
             method: 'CACHED'
           } 
@@ -463,8 +461,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
       const formData = new FormData();
+      formData.append('doc_type', stage); // СТРОГО ПЕРВЫМ!
       formData.append('file', file);
-      formData.append('doc_type', stage); // ЭТО КРИТИЧЕСКИ ВАЖНО
 
       try {
         const res = await fetch('http://localhost:8000/api/process-invoice', {

@@ -353,9 +353,12 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9 -> note (Примечание)
 
 Правила:
-- Склеивай перенесенные строки в `name`, если колонка `pos` пустая.
-- Разделы: Если `pos` и `quantity` пустые, а в `name` заголовок — добавь объекту `"is_header": true`.
-- Верни СТРОГО JSON в следующем формате (обязательно оберни массив в "items"):
+1. НЕ ПИШИ НИЧЕГО КРОМЕ JSON. Никаких вступлений, пояснений и вежливостей.
+2. Не используй markdown-разметку (```json). Возвращай только фигурные скобки.
+3. Склеивай перенесенные строки в `name`, если колонка `pos` пустая.
+4. Разделы: Если `pos` и `quantity` пустые, а в `name` заголовок — добавь объекту `"is_header": true`.
+
+Верни СТРОГО JSON в следующем формате (обязательно оберни массив в "items"):
 {
   "document": {
     "name": "Спецификация",
@@ -432,9 +435,11 @@ async def get_token_count(text: str, model_type: str, api_key: str, folder_id: s
 
 def parse_gpt_json(text: str):
     try:
+        # Try finding json structure first
         match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
         if match:
             return json.loads(match.group(1))
+        # Fallback to direct parse
         return json.loads(text.strip())
     except Exception as e:
         print(f"JSON Parse Error: {e}")
@@ -561,6 +566,7 @@ async def process_invoice(
     x_api_key: str | None = Header(None),
     x_folder_id: str | None = Header(None)
 ):
+    print(f"DEBUG: Processing file: {file.filename}, doc_type: {doc_type}")
     api_key, folder_id = get_yandex_keys()
     
     # Override with provided keys if present
