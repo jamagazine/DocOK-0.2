@@ -25,7 +25,7 @@ interface FilesPanelProps {
 }
 
 export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
-  const { uploadStatuses, filesMap, removeFile, retryFile, handleFile, currentStage, resetFileData } = useData();
+  const { uploadStatuses, filesMap, removeFile, retryFile, handleFile, currentStage, resetFileData, reprocessAi } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
 
   if (!isOpen) return null;
@@ -116,7 +116,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               
               {/* Inline Progress Bar for Loading State */}
               {isLoading && (
-                <div className="h-1 w-24 bg-slate-100 rounded-full mt-1 overflow-hidden">
+                <div className="h-1 w-full bg-slate-100 rounded-full mt-1 overflow-hidden">
                   <div className={cn("h-full bg-indigo-500", statusStr.includes('ИИ') ? "animate-progress-indeterminate" : "w-[90%] transition-all duration-[2000ms] ease-out")} />
                 </div>
               )}
@@ -182,8 +182,20 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
           {/* Actions */}
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-            {/* Sparkles: AI re-process for Excel only */}
-            {isExcel(fileName) && file && method !== 'AI' && (
+            {/* Retry AI: shown for error states where file is available */}
+            {isError && file && (
+              <button
+                onClick={() => reprocessAi(fileName)}
+                className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                title="Перезапустить через ИИ"
+                disabled={isLoading}
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Sparkles: AI re-process for Excel only (non-error) */}
+            {isExcel(fileName) && file && method !== 'AI' && !isError && (
               <button
                 onClick={() => handleAiProcess(fileName)}
                 className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"

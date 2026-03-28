@@ -339,37 +339,10 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
-    SPEC_PROMPT = """Ты — инженер по автоматизации. Твоя задача: извлечь данные из Спецификации (ГОСТ 21.110-2013).
-
-Матрица соответствия (ориентируйся на цифры под шапкой):
-1 -> pos (Поз.)
-2 -> name (Наименование)
-3 -> brand (Марка/Тип)
-4 -> code (Код)
-5 -> supplier (Поставщик)
-6 -> unit (Ед. изм)
-7 -> quantity (Кол-во - только число)
-8 -> mass (Масса - только число)
-9 -> note (Примечание)
-
-Правила:
-1. НЕ ПИШИ НИЧЕГО КРОМЕ JSON. Никаких вступлений, пояснений и вежливостей.
-2. Не используй markdown-разметку (```json). Возвращай только фигурные скобки.
-3. Склеивай перенесенные строки в `name`, если колонка `pos` пустая.
-4. Разделы: Если `pos` и `quantity` пустые, а в `name` заголовок — добавь объекту `"is_header": true`.
-
-Верни СТРОГО JSON в следующем формате (обязательно оберни массив в "items"):
-{
-  "document": {
-    "name": "Спецификация",
-    "metadata": {}
-  },
-  "items": [
-    {
-      "pos": "1.1", "name": "Труба", "brand": "PN16", "code": "", "supplier": "DKC", "unit": "м", "quantity": 10.5, "mass": 1.2, "note": ""
-    }
-  ]
-}"""
+    SPEC_PROMPT = """Инженер-парсер ГОСТ 21.110. JSON: items[{pos,name,brand,code,supplier,unit,quantity:float,mass:float,note,is_header:bool}].
+Колонки: 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:qty, 8:mass, 9:note.
+Правила: pos пуст + name текст = склеить name. pos+qty пусты = is_header:true.
+JSON ONLY. No markdown. Wrap in {"document":{"name":"Спецификация","metadata":{}},"items":[...]}."""
 
     system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
 
@@ -477,16 +450,21 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     print(f"Document split into {len(chunks)} chunks.")
     
     for i, chunk in enumerate(chunks):
+        print(f"Processing chunk {i+1} of {len(chunks)}...")
         chunk_text = header + "\n" + "\n".join(chunk)
-        # We might need to handle per-chunk errors here, but for now let it propagate
-        raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
-        total_tokens += tokens
-        parsed = parse_gpt_json(raw_res)
-        
-        if parsed:
-            all_items.extend(parsed.get('items', []))
-            if not main_doc:
-                main_doc = parsed.get('document', {})
+        try:
+            raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
+            total_tokens += tokens
+            parsed = parse_gpt_json(raw_res)
+            if parsed:
+                all_items.extend(parsed.get('items', []))
+                if not main_doc:
+                    main_doc = parsed.get('document', {})
+            else:
+                print(f"Chunk {i+1}: GPT returned invalid JSON, skipping.")
+        except Exception as chunk_err:
+            print(f"Chunk {i+1} failed: {chunk_err}. Skipping.")
+            continue
             
     # If all chunks returned None, parsed fails
     if not all_items and not main_doc:
@@ -915,7 +893,7 @@ async def storage_upload(file: UploadFile = File(...)):
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
                 input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                estimated_tokens = int(input_tokens * 2.2)
+                estimated_tokens = int(input_tokens * 3.0)  # 3x to account for chunk overhead
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")

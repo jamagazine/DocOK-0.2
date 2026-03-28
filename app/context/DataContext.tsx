@@ -163,6 +163,7 @@ interface DataContextType {
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
+  reprocessAi: (fileName: string) => Promise<void>;
   removeFile: (fileName: string, nuclear?: boolean) => void;
   retryFile: (fileName: string, stage: Stage) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
@@ -552,6 +553,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }); // closes forEach
 
   }, [yandexConfig, updateFileStatusOnServer]);
+
+  // Re-run AI processing on a file that already exists in filesMap
+  const reprocessAi = useCallback(async (fileName: string) => {
+    const file = filesMap[fileName];
+    if (!file) return;
+    await handleFile([file], currentStage, true);
+  }, [filesMap, currentStage, handleFile]);
 
   const toggleMerge = useCallback(() => {
     setIsMerged((prev: boolean) => {
@@ -1095,7 +1103,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
             case 'estimate': return sortedEstimateRows;
             default: return [];
           }
-        }
+        },
+        reprocessAi,
       }}
     >
       {children}
