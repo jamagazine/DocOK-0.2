@@ -886,123 +886,73 @@ async def match_items_endpoint(request: Request):
 
 
 def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Cleans and structures data before Markdown conversion (TK v2.1 Revision).
-    1. Dynamic Column Mapping (Search for Pos/Name by labels).
-    2. Aggressive sterilization (strip / replace NaN).
-    3. Advanced Row Filtering (sequential numbers 1-2-3).
-    4. Structuring L0 (Locations) and L1 (Groups).
-    """
-    # 0. Global Sterilization
-    # Fallback to applymap for older Pandas versions
-    if hasattr(df, 'map'):
-        df = df.map(lambda x: str(x).strip() if pd.notnull(x) and str(x).lower() not in ["nan", "none", "null"] else "")
-    else:
-        df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) and str(x).lower() not in ["nan", "none", "null"] else "")
+    print("--- [DEBUG] Starting sanitization ---")
+    # 1. Стерилизация: всё в строки, убираем мусор
+    df = df.fillna("").astype(str)
+    for col in df.columns:
+        df[col] = df[col].str.strip()
     
-    # 1. Dynamic Mapping
-    col_pos = -1
-    col_name = -1
-    
-    pos_aliases = ["поз", "№", "pos", "п/п", "index"]
+    # 2. Поиск колонок Поз и Наименование
+    col_pos, col_name = 0, 1
+    pos_aliases = ["поз", "№", "pos", "п/п", "index", "unnamed: 0"]
     name_aliases = ["наименование", "название", "товар", "item", "name"]
     
     for i, col in enumerate(df.columns):
-        col_low = str(col).lower()
-        if any(a in col_low for a in pos_aliases):
-            col_pos = i
-            break
-    for i, col in enumerate(df.columns):
-        col_low = str(col).lower()
-        if any(a in col_low for a in name_aliases):
-            col_name = i
-            break
-            
-    if col_pos == -1:
-        if len(df.columns) > 0 and "Unnamed: 0" in str(df.columns[0]):
-            col_pos = 0
-            print("DEBUG: Column 'Поз' assigned to 'Unnamed: 0' at index 0.")
-        else:
-            print("DEBUG: Column 'Поз' not found by aliases. Falling back to index 0.")
-            col_pos = 0
-    if col_name == -1:
-        print("DEBUG: Column 'Наименование' not found by aliases. Falling back to index 1.")
-        col_name = 1
-            
-    print(f"DEBUG: Mapping Pos Index: {col_pos}, Name Index: {col_name}")
+        c_low = str(col).lower()
+        if any(a in c_low for a in pos_aliases): col_pos = i
+        if any(a in c_low for a in name_aliases): col_name = i
     
+    print(f"--- [DEBUG] Mapping: Pos at idx {col_pos}, Name at idx {col_name}")
+
     new_rows = []
-    prev_pos = "" # Keep track of position for 1.10 recovery
-    
-    for i, row in df.iterrows():
-        # Clean current row values
-        row_vals = [str(v).strip() for v in row.values]
-        
-        # 1. Sequence Filter "Digital Trash" (1 | 2 | 3 | 4...)
-        # Find all numbers in row, keep order, skip empty
-        nums = [int(v) for v in row_vals if v.isdigit()]
-        if len(nums) >= 3:
-            # Check for sequential pattern (e.g. 1-2-3 or 2-3-4)
-            is_seq = False
-            for start in range(len(nums) - 2):
-                if nums[start+1] == nums[start] + 1 and nums[start+2] == nums[start+1] + 1:
-                    is_seq = True
-                    break
-            if is_seq:
-                print(f"DEBUG: Skipping row-enumerator: {row_vals}")
-                continue
-            
-        pos = row_vals[col_pos]
-        name = row_vals[col_name]
-        
-        # TK v2.2 Numbering fix (1.9 -> 1.1 -> 1.10)
-        if pos and prev_pos:
-            if pos.count('.') == 1 and prev_pos.count('.') == 1:
-                parts_cur = pos.split('.')
-                parts_prev = prev_pos.split('.')
-                if parts_cur[0] == parts_prev[0] and parts_prev[1] == '9' and parts_cur[1] == '1':
-                    pos = f"{parts_cur[0]}.10"
-                    row.iloc[col_pos] = pos
-                    print(f"DEBUG: Recovered zero: {parts_prev[0]}.1 -> {pos}")
-        
-        # Record prev_pos for next iteration (only valid numbers)
-        if pos and re.match(r'^\d+(\.\d+)*$', pos):
-            prev_pos = pos
-        elif pos:
-            prev_pos = "" # Break chain on non-numbers
-        
-        # Check others (any data besides pos/name)
-        other_vals = [v for idx, v in enumerate(row_vals) if idx != col_pos and idx != col_name and v != ""]
-        is_others_empty = (len(other_vals) == 0)
-        
-        # 2. Pre-parsing Groups (L1) - AGGRESSIVE
-        # Match "1. Items" or " 1. Items". Ignore if pos is already filled.
-        if pos == "" and name:
+    last_dot_pos = "" # Для отслеживания 1.9 -> 1.10
+
+    for idx, row in df.iterrows():
+        r = row.to_dict() # Работаем со словарем, чтобы изменения точно сохранились
+        vals = list(r.values())
+        pos = str(vals[col_pos]).strip()
+        name = str(vals[col_name]).strip()
+
+        # А) Проверка на цифровой мусор (1|2|3|4...)
+        digit_vals = [v for v in vals if v.isdigit()]
+        if len(digit_vals) >= 4: continue
+
+        # Б) Фикс 1.10 (Проверка X.1 после X.9)
+        if "." in pos and re.match(r'^\d+(\.\d+)+$', pos):
+            p_parts = pos.split('.')
+            if p_parts[-1] == '1' and last_dot_pos:
+                lp_parts = last_dot_pos.split('.')
+                if len(p_parts) == len(lp_parts) and p_parts[:-1] == lp_parts[:-1] and lp_parts[-1] == '9':
+                    pos = ".".join(p_parts[:-1]) + ".10"
+                    r[df.columns[col_pos]] = pos
+                    print(f"--- [DEBUG] Fixed 1.10: row {idx} -> {pos}")
+            last_dot_pos = pos
+
+        # В) L1: Группы (вырезаем цифры из начала названия)
+        if (pos == "" or pos == "nan") and name:
             group_match = re.match(r'^\s*(\d+(?:\.\d+)*)\.?\s+(.*)', name)
             if group_match:
-                extracted_pos = group_match.group(1).strip()
-                # Store the extracted number in 'pos'
-                row.iloc[col_pos] = extracted_pos
-                # Clean name: remove the number and any trailing dot/spaces
-                clean_name = group_match.group(2).strip()
-                row.iloc[col_name] = clean_name
-                new_rows.append(row)
-                prev_pos = extracted_pos
+                extracted_num = group_match.group(1).strip()
+                r[df.columns[col_pos]] = extracted_num
+                r[df.columns[col_name]] = group_match.group(2).strip()
+                new_rows.append(r)
+                last_dot_pos = extracted_num
                 continue
-                
-        # 3. Mark Locations (L0) with §
-        # Empty Pos, empty Others, Name has no digits at start
-        if pos == "" and name and is_others_empty:
-             if not re.match(r'^\d', name):
-                 # Mark with section symbol
-                 row.iloc[col_pos] = "§"
-                 new_rows.append(row)
-                 prev_pos = "" # Break chain
-                 continue
-                 
-        new_rows.append(row)
+
+        # Г) L0: Локации (маркер §)
+        others = [v for i, v in enumerate(vals) if i not in [col_pos, col_name] and v != ""]
+        if (pos == "" or pos == "nan") and name and not others:
+            if not re.match(r'^\d', name):
+                r[df.columns[col_pos]] = "§"
+                new_rows.append(r)
+                last_dot_pos = ""
+                continue
+
+        new_rows.append(r)
         
+    print(f"--- [DEBUG] Sanitization finished. Rows kept: {len(new_rows)} ---")
     return pd.DataFrame(new_rows)
+
 
 
 @app.post("/api/storage/upload")
@@ -1038,7 +988,9 @@ async def storage_upload(file: UploadFile = File(...)):
             
             # TK v2.1 FIX: Activating sterilization + structural cleaning
             df = sanitize_dataframe(df)
-            
+            print("--- [DEBUG] Sample after sanitize: ---")
+            print(df[[df.columns[0], df.columns[1]]].head(5))
+
             # Smart Clean: Remove only columns that are both Unnamed and totally empty
             unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
             if unnamed_empty:
@@ -1046,6 +998,7 @@ async def storage_upload(file: UploadFile = File(...)):
             
             # Pre-generate Markdown for better estimates and processing
             md_text = df.to_markdown(index=False, tablefmt="pipe")
+
             md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
             with open(md_path, "w", encoding="utf-8") as fmd:
                 fmd.write(md_text)
