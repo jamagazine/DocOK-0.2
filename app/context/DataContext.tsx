@@ -491,28 +491,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
         };
 
         if (stage === 'spec') {
-          const aiRows: SpecRow[] = (data.items || []).map((item: any) => ({
-            id: genId(),
-            fileId: file.name,
-            pos: item.pos || '',
-            name: item.name || '',
-            brand: item.brand || '',
-            code: item.code || item.article || '',
-            supplier: item.supplier || data.document?.metadata?.vendor || '',
-            unit: item.unit || 'шт',
-            quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
-            mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
-            note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
-            is_header: Boolean(item.is_header),
-            originalRowsIds: [],
-            children: []
-          }));
+          const aiRows: SpecRow[] = (data.items || []).map((item: any) => {
+            if (item.pos === 'ERROR') {
+              toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
+            }
+            return {
+              id: genId(),
+              fileId: file.name,
+              pos: item.pos || '',
+              name: item.name || '',
+              brand: item.brand || '',
+              code: item.code || item.article || '',
+              supplier: item.supplier || data.document?.metadata?.vendor || '',
+              unit: item.unit || 'шт',
+              quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
+              mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
+              note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
+              is_header: Boolean(item.is_header),
+              originalRowsIds: [],
+              children: []
+            };
+          });
 
           setSpecRows((prev) => [...prev, ...aiRows]);
           setBackupSpecRows((prev) => [...prev, ...aiRows]);
           setIsMerged(false);
         } else {
           const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
+            if (item.pos === 'ERROR') {
+              toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
+            }
             const r = emptyInvoiceRow();
             r.fileId = file.name;
             r.documentName = data.document?.filename || data.document?.name || file.name;

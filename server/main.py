@@ -413,6 +413,7 @@ async def get_token_count(text: str, model_type: str, api_key: str, folder_id: s
 
 def parse_gpt_json(text: str):
     try:
+        text = re.sub(r'```json|```', '', text).strip()
         # Try finding json structure first
         match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
         if match:
@@ -430,19 +431,6 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     initial_tokens = await get_token_count(full_text, model_type, api_key, folder_id)
     chunks_report = []
     
-    # Send full if fits comfortably (leave ~1000 tokens for system prompt & response)
-    if initial_tokens < 7000:
-        raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type, doc_type)
-        parsed = parse_gpt_json(raw_res)
-        if not parsed:
-            chunks_report.append({"id": 1, "ok": False})
-            return None, tokens, None, chunks_report
-            
-        chunks_report.append({"id": 1, "ok": True})
-        return parsed.get('items', []), tokens, parsed.get('document', {}), chunks_report
-
-    print(f"Document exceeds 7000 tokens ({initial_tokens} tokens). Falling back to line chunking.")
-
     lines = full_text.split('\n')
     header = lines[0] if lines else ""
     data_lines = lines[1:] if len(lines) > 1 else []
@@ -709,7 +697,7 @@ async def process_invoice(
         model_type = "pro" if parse_method == "ocr_table" else "lite"
         all_items, total_tokens, main_doc_info, all_chunks_report = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type)
         
-        if all_items is None or main_doc_info is None:
+        if all_items is None:
             raise HTTPException(status_code=422, detail="ИИ вернул невалидный ответ")
         
         # Merge into a single struct for compatibility with existing calculate_uncertainty
