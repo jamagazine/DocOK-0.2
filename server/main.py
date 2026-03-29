@@ -682,18 +682,22 @@ async def process_invoice(
                     has_low_confidence = True
                     
             elif filename.endswith((".xlsx", ".xls", ".csv")):
-                if filename.endswith(".csv"):
-                    df = pd.read_csv(temp_path)
-                elif filename.endswith(".xls"):
-                    df = pd.read_excel(temp_path, engine='xlrd')
+                md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
+                if os.path.exists(md_path):
+                    with open(md_path, "r", encoding="utf-8") as fmd:
+                        extracted_text = fmd.read()
                 else:
-                    df = pd.read_excel(temp_path, engine='openpyxl')
-                
-                df = df.dropna(how='all')
-                df = df.fillna("")
-                
-                # Use Markdown for better GPT comprehension
-                extracted_text = df.to_markdown(index=False, tablefmt="pipe")
+                    # Fallback to direct reading if .md missing
+                    if filename.endswith(".csv"):
+                        df = pd.read_csv(temp_path)
+                    elif filename.endswith(".xls"):
+                        df = pd.read_excel(temp_path, engine='xlrd')
+                    else:
+                        df = pd.read_excel(temp_path, engine='openpyxl')
+                    
+                    df = df.dropna(how='all')
+                    df = df.fillna("")
+                    extracted_text = df.to_markdown(index=False, tablefmt="pipe")
                 has_low_confidence = False
                 
             else:
@@ -804,7 +808,10 @@ async def process_invoice(
         except Exception as e:
             import traceback
             traceback.print_exc()
-            yield f"data: {json.dumps({'status': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+            err_msg = str(e)
+            if "getaddrinfo failed" in err_msg or "11002" in err_msg or "ConnectError" in err_msg:
+                err_msg = "Ошибка соединения с Yandex Cloud. Проверьте интернет."
+            yield f"data: {json.dumps({'status': 'error', 'detail': err_msg}, ensure_ascii=False)}\n\n"
         finally:
             # DEBUG: Disabled cleanup per user request to inspect temp files
             # if os.path.exists(temp_path):
@@ -909,6 +916,8 @@ async def storage_upload(file: UploadFile = File(...)):
     if api_key and folder_id:
         try:
             ext_text = ""
+            is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
+            
             if original_filename.lower().endswith(".pdf"):
                 try:
                     with pdfplumber.open(dest_path) as pdf:
@@ -926,7 +935,7 @@ async def storage_upload(file: UploadFile = File(...)):
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 estimated_tokens = 5000
                 estimated_cost = 7.0
-            elif original_filename.lower().endswith((".xlsx", ".xls", ".csv")):
+            elif is_spreadsheet:
                 if original_filename.lower().endswith(".csv"):
                     df = pd.read_csv(dest_path)
                 elif original_filename.lower().endswith(".xls"):
@@ -937,16 +946,22 @@ async def storage_upload(file: UploadFile = File(...)):
                 df = df.dropna(how='all')
                 df = df.fillna("")
                 
-                header = " | ".join(map(str, df.columns))
-                rows = []
-                for _, row in df.iterrows():
-                    rows.append(" | ".join(map(str, row.values)))
-                ext_text = header + "\n" + "\n".join(rows)
+                # Pre-generate Markdown for better estimates and processing
+                md_text = df.to_markdown(index=False, tablefmt="pipe")
+                md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
+                with open(md_path, "w", encoding="utf-8") as fmd:
+                    fmd.write(md_text)
+                
+                ext_text = md_text
                 
             if ext_text.strip():
-                # Read ALL available text for maximum token estimation accuracy
-                input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                estimated_tokens = int(input_tokens * 1.5)
+                # For Markdown-on-start, we use character length * 2.0 as highly accurate token estimate
+                if is_spreadsheet:
+                    estimated_tokens = int(len(ext_text) * 2.0)
+                else:
+                    input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
+                    estimated_tokens = int(input_tokens * 1.5)
+                
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")
@@ -1105,9 +1120,19 @@ async def storage_delete(name: str, nuclear: bool = False):
         if os.path.exists(cache_path):
             try: os.remove(cache_path)
             except: pass
+        # Also delete .md клон
+        md_path = os.path.join(STORAGE_DIR, f"{disk_name}.md")
+        if os.path.exists(md_path):
+            try: os.remove(md_path)
+            except: pass
     else:
         if os.path.exists(path):
             try: os.remove(path)
+            except: pass
+        # Also cleanup .md клон if exists
+        md_path = os.path.join(STORAGE_DIR, f"{disk_name}.md")
+        if os.path.exists(md_path):
+            try: os.remove(md_path)
             except: pass
 
     # Remove from manifest
