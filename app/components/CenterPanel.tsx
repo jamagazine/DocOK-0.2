@@ -552,7 +552,7 @@ function SpecTable() {
                           "flex-grow font-bold tracking-tight",
                           isLocation ? "text-base uppercase" : "text-sm"
                         )}>
-                          {row.name}
+                          {isGroup && row.pos ? `${row.pos}. ${row.name}` : row.name}
                         </div>
                         {row.pos && <div className="flex-none px-3 py-1 bg-black/10 rounded text-xs font-mono ml-4 opacity-60">{row.pos}</div>}
                       </div>
@@ -587,7 +587,11 @@ function SpecTable() {
                                   {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
                                 </button>
                               )}
-                              {isHeader ? (
+                              {isLocation ? (
+                                <span className="text-amber-700 font-bold text-xs">§</span>
+                              ) : isGroup ? (
+                                <span className="text-indigo-700 font-bold text-xs">{row.pos}</span>
+                              ) : isHeader ? (
                                 <span className="text-amber-700 font-bold text-xs">§</span>
                               ) : isSelected ? (
                                 <input

@@ -894,11 +894,15 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     4. Structuring L0 (Locations) and L1 (Groups).
     """
     # 0. Global Sterilization
-    df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) and str(x).lower() not in ["nan", "none", "null"] else "")
+    # Fallback to applymap for older Pandas versions
+    if hasattr(df, 'map'):
+        df = df.map(lambda x: str(x).strip() if pd.notnull(x) and str(x).lower() not in ["nan", "none", "null"] else "")
+    else:
+        df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) and str(x).lower() not in ["nan", "none", "null"] else "")
     
     # 1. Dynamic Mapping
-    col_pos = 0 # Default
-    col_name = 1 # Default
+    col_pos = -1
+    col_name = -1
     
     pos_aliases = ["поз", "№", "pos", "п/п", "index"]
     name_aliases = ["наименование", "название", "товар", "item", "name"]
@@ -914,9 +918,22 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             col_name = i
             break
             
+    if col_pos == -1:
+        if len(df.columns) > 0 and "Unnamed: 0" in str(df.columns[0]):
+            col_pos = 0
+            print("DEBUG: Column 'Поз' assigned to 'Unnamed: 0' at index 0.")
+        else:
+            print("DEBUG: Column 'Поз' not found by aliases. Falling back to index 0.")
+            col_pos = 0
+    if col_name == -1:
+        print("DEBUG: Column 'Наименование' not found by aliases. Falling back to index 1.")
+        col_name = 1
+            
     print(f"DEBUG: Mapping Pos Index: {col_pos}, Name Index: {col_name}")
     
     new_rows = []
+    prev_pos = "" # Keep track of position for 1.10 recovery
+    
     for i, row in df.iterrows():
         # Clean current row values
         row_vals = [str(v).strip() for v in row.values]
@@ -938,27 +955,49 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         pos = row_vals[col_pos]
         name = row_vals[col_name]
         
+        # TK v2.2 Numbering fix (1.9 -> 1.1 -> 1.10)
+        if pos and prev_pos:
+            if pos.count('.') == 1 and prev_pos.count('.') == 1:
+                parts_cur = pos.split('.')
+                parts_prev = prev_pos.split('.')
+                if parts_cur[0] == parts_prev[0] and parts_prev[1] == '9' and parts_cur[1] == '1':
+                    pos = f"{parts_cur[0]}.10"
+                    row.iloc[col_pos] = pos
+                    print(f"DEBUG: Recovered zero: {parts_prev[0]}.1 -> {pos}")
+        
+        # Record prev_pos for next iteration (only valid numbers)
+        if pos and re.match(r'^\d+(\.\d+)*$', pos):
+            prev_pos = pos
+        elif pos:
+            prev_pos = "" # Break chain on non-numbers
+        
         # Check others (any data besides pos/name)
         other_vals = [v for idx, v in enumerate(row_vals) if idx != col_pos and idx != col_name and v != ""]
         is_others_empty = (len(other_vals) == 0)
         
-        # 2. Pre-parsing Groups (L1)
-        # Match "1. Items" or " 1. Items" where pos is empty
+        # 2. Pre-parsing Groups (L1) - AGGRESSIVE
+        # Match "1. Items" or " 1. Items". Ignore if pos is already filled.
         if pos == "" and name:
-            group_match = re.match(r'^\s*(\d+(\.\d+)*)\.?\s+(.*)', name)
+            group_match = re.match(r'^\s*(\d+(?:\.\d+)*)\.?\s+(.*)', name)
             if group_match:
-                row.iloc[col_pos] = group_match.group(1) # Extracted number "1" or "1.1"
-                row.iloc[col_name] = group_match.group(3) # Remaining name
+                extracted_pos = group_match.group(1).strip()
+                # Store the extracted number in 'pos'
+                row.iloc[col_pos] = extracted_pos
+                # Clean name: remove the number and any trailing dot/spaces
+                clean_name = group_match.group(2).strip()
+                row.iloc[col_name] = clean_name
                 new_rows.append(row)
+                prev_pos = extracted_pos
                 continue
                 
-        # 3. Mark Locations (L0)
+        # 3. Mark Locations (L0) with §
         # Empty Pos, empty Others, Name has no digits at start
         if pos == "" and name and is_others_empty:
              if not re.match(r'^\d', name):
-                 # BOLD CAPS for visual anchor
-                 row.iloc[col_name] = f"**{name.upper()}**"
+                 # Mark with section symbol
+                 row.iloc[col_pos] = "§"
                  new_rows.append(row)
+                 prev_pos = "" # Break chain
                  continue
                  
         new_rows.append(row)
@@ -988,14 +1027,17 @@ async def storage_upload(file: UploadFile = File(...)):
     if is_spreadsheet:
         try:
             if original_filename.lower().endswith(".csv"):
-                df = pd.read_csv(dest_path)
+                df = pd.read_csv(dest_path, dtype=str)
             elif original_filename.lower().endswith(".xls"):
-                df = pd.read_excel(dest_path, engine='xlrd')
+                df = pd.read_excel(dest_path, engine='xlrd', dtype=str)
             else:
-                df = pd.read_excel(dest_path, engine='openpyxl')
+                df = pd.read_excel(dest_path, engine='openpyxl', dtype=str)
             
             df = df.dropna(how='all')
             df = df.fillna("")
+            
+            # TK v2.1 FIX: Activating sterilization + structural cleaning
+            df = sanitize_dataframe(df)
             
             # Smart Clean: Remove only columns that are both Unnamed and totally empty
             unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]

@@ -236,21 +236,21 @@ const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [projectName, setProjectName] = useState('Новый проект #1');
-  
+
   const [specRows, setSpecRows] = useState<SpecRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_specRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    try { const saved = localStorage.getItem('docok_specRows'); if (saved) return JSON.parse(saved); } catch (e) { }
     return [];
   });
   const [requestRows, setRequestRows] = useState<SpecRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_requestRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    try { const saved = localStorage.getItem('docok_requestRows'); if (saved) return JSON.parse(saved); } catch (e) { }
     return [];
   });
   const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_invoiceRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    try { const saved = localStorage.getItem('docok_invoiceRows'); if (saved) return JSON.parse(saved); } catch (e) { }
     return [];
   });
   const [estimateRows, setEstimateRows] = useState<EstimateRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_estimateRows'); if (saved) return JSON.parse(saved); } catch (e) {}
+    try { const saved = localStorage.getItem('docok_estimateRows'); if (saved) return JSON.parse(saved); } catch (e) { }
     return [];
   });
 
@@ -293,7 +293,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [isOnlySelectedView, setIsOnlySelectedView] = useState(false);
-  
+
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
 
   // Helper to sync status (and optionally other fields) with server
@@ -356,7 +356,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const lines = md.split('\n').filter(l => l.trim().length > 0);
     // Skip Markdown header (separator line is at index 1)
     const dataLines = lines.length >= 2 ? lines.slice(2) : [];
-    
+
     if (stage === 'spec') {
       return dataLines.map(line => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
@@ -429,14 +429,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (res.ok) {
           const resData = await res.json();
           if (resData.estimated_cost !== undefined || resData.estimated_tokens !== undefined) {
-             setUploadStatuses((prev: any) => ({
-               ...prev,
-               [file.name]: { 
-                 ...prev[file.name], 
-                 ...(resData.estimated_cost !== undefined && { estimated_cost: resData.estimated_cost }),
-                 ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens })
-               }
-             }));
+            setUploadStatuses((prev: any) => ({
+              ...prev,
+              [file.name]: {
+                ...prev[file.name],
+                ...(resData.estimated_cost !== undefined && { estimated_cost: resData.estimated_cost }),
+                ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens })
+              }
+            }));
           }
 
           // TK v1.6: Instant Markdown population
@@ -456,185 +456,185 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
       const useAi = forceAI || isPdfOrImage;
 
-    if (!useAi) {
-      setUploadStatuses((prev: any) => ({ 
-        ...prev, 
-        [file.name]: { 
-          ...prev[file.name], 
-          status: 'READY_MD', 
-          time: currentTime,
-          method: 'MD_Instant'
-        } 
-      }));
-      // Sync status 'READY_MD' to server (was 'ok')
-      updateFileStatusOnServer(file.name, 'READY_MD');
-    } else if (useAi) {
-      if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
-        return;
-      }
-
-      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
-      const formData = new FormData();
-      formData.append('doc_type', stage); // СТРОГО ПЕРВЫМ!
-      formData.append('file', file);
-
-      try {
-        const res = await fetch('http://localhost:8000/api/process-invoice', {
-          method: 'POST',
-          body: formData,
-          headers: {
-            'x-api-key': yandexConfig.apiKey,
-            'x-folder-id': yandexConfig.catalogId
+      if (!useAi) {
+        setUploadStatuses((prev: any) => ({
+          ...prev,
+          [file.name]: {
+            ...prev[file.name],
+            status: 'READY_MD',
+            time: currentTime,
+            method: 'MD_Instant'
           }
-        });
-
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.detail || `Ошибка сервера ${res.status}`);
+        }));
+        // Sync status 'READY_MD' to server (was 'ok')
+        updateFileStatusOnServer(file.name, 'READY_MD');
+      } else if (useAi) {
+        if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
+          setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
+          return;
         }
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('Поток недоступен');
-        const decoder = new TextDecoder();
-        let buffer = '';
+        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
+        const formData = new FormData();
+        formData.append('doc_type', stage); // СТРОГО ПЕРВЫМ!
+        formData.append('file', file);
 
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          const res = await fetch('http://localhost:8000/api/process-invoice', {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'x-api-key': yandexConfig.apiKey,
+              'x-folder-id': yandexConfig.catalogId
+            }
+          });
 
-            buffer += decoder.decode(value, { stream: true });
-            let newlineIdx;
-            while ((newlineIdx = buffer.indexOf('\n\n')) >= 0) {
-              const packet = buffer.slice(0, newlineIdx).trim();
-              buffer = buffer.slice(newlineIdx + 2);
-              
-              if (!packet.startsWith('data: ')) continue;
-              
-              const payloadStr = packet.slice(6);
-              let payload;
-              try {
-                payload = JSON.parse(payloadStr);
-              } catch (e) {
-                console.error('Невалидный JSON пакет:', payloadStr);
-                continue;
-              }
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.detail || `Ошибка сервера ${res.status}`);
+          }
 
-              if (payload.status === 'stage') {
-                setUploadStatuses((prev: any) => ({
-                  ...prev,
-                  [file.name]: { ...prev[file.name], current_step: payload.step || 'prep' }
-                }));
-              } else if (payload.status === 'chunk') {
-                setUploadStatuses((prev: any) => ({
-                  ...prev,
-                  [file.name]: {
-                    ...prev[file.name],
-                    current_step: 'ai',
-                    processed_count: payload.index,
-                    total_chunks: payload.total
-                  }
-                }));
-              } else if (payload.status === 'error') {
-                throw new Error(payload.detail || 'Неизвестная ошибка ИИ');
-              } else if (payload.status === 'final') {
-                const data = payload.data;
-                const tokens = data.usage?.total_tokens || 0;
-                const cost = data.cost || 0;
-                
-                const strToNumOrBlank = (v: any) => {
-                   if (v === undefined || v === null || v === '') return '';
-                   const parsed = parseFloat(String(v).replace(/,/g, '.').replace(/\s/g, ''));
-                   return isNaN(parsed) ? String(v) : String(parsed);
-                };
+          const reader = res.body?.getReader();
+          if (!reader) throw new Error('Поток недоступен');
+          const decoder = new TextDecoder();
+          let buffer = '';
 
-                if (stage === 'spec') {
-                  const aiRows: SpecRow[] = (data.items || []).map((item: any) => {
-                    if (item.pos === 'ERROR') {
-                      toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
-                    }
-                    return {
-                      id: genId(),
-                      fileId: file.name,
-                      pos: item.pos || '',
-                      name: item.name || '',
-                      brand: item.brand || '',
-                      code: item.code || item.article || '',
-                      supplier: item.supplier || data.document?.metadata?.vendor || '',
-                      unit: item.unit || 'шт',
-                      quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
-                      mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
-                      note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
-                      is_header: item.row_type === 'LOCATION' || item.row_type === 'GROUP' || Boolean(item.is_header),
-                      row_type: item.row_type || 'ITEM',
-                      originalRowsIds: [],
-                      children: []
-                    };
-                  });
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
 
-                  setSpecRows((prev) => {
-                    const filtered = prev.filter(r => r.fileId !== file.name);
-                    return [...filtered, ...aiRows];
-                  });
-                  setBackupSpecRows((prev) => {
-                    const filtered = prev.filter(r => r.fileId !== file.name);
-                    return [...filtered, ...aiRows];
-                  });
-                  setIsMerged(false);
-                } else {
-                  const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
-                    if (item.pos === 'ERROR') {
-                      toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
-                    }
-                    const r = emptyInvoiceRow();
-                    r.fileId = file.name;
-                    r.documentName = data.document?.filename || data.document?.name || file.name;
-                    r.isUncertain = Boolean(item.isUncertain);
-                    r.article = item.article || '';
-                    r.name = item.name || '';
-                    r.supplier = data.document?.metadata?.vendor || '';
-                    r.quantity = strToNumOrBlank(item.quantity) || '1';
-                    r.unit = item.unit || 'шт';
-                    r.price = strToNumOrBlank(item.price) || '0';
-                    r.total = strToNumOrBlank(item.total) || '0';
-                    return r;
-                  });
+              buffer += decoder.decode(value, { stream: true });
+              let newlineIdx;
+              while ((newlineIdx = buffer.indexOf('\n\n')) >= 0) {
+                const packet = buffer.slice(0, newlineIdx).trim();
+                buffer = buffer.slice(newlineIdx + 2);
 
-                  setInvoiceRows((prev) => {
-                    const filtered = prev.filter(r => r.fileId !== file.name);
-                    return [...filtered, ...aiRows];
-                  });
+                if (!packet.startsWith('data: ')) continue;
+
+                const payloadStr = packet.slice(6);
+                let payload;
+                try {
+                  payload = JSON.parse(payloadStr);
+                } catch (e) {
+                  console.error('Невалидный JSON пакет:', payloadStr);
+                  continue;
                 }
-                  
-                setUploadStatuses((prev: any) => ({ 
-                  ...prev, 
-                  [file.name]: { 
-                    ...prev?.[file.name],
-                    status: 'Готово (ИИ)', 
-                    time: currentTime,
-                    current_step: 'final',
-                    tokens,
-                    cost,
-                    model: data.model || '',
-                    method: data.method || '',
-                    chunks_report: data.chunks_report || []
-                  } 
-                }));
-                setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-                // Sync status 'ok' to server
-                updateFileStatusOnServer(file.name, 'ok');
+
+                if (payload.status === 'stage') {
+                  setUploadStatuses((prev: any) => ({
+                    ...prev,
+                    [file.name]: { ...prev[file.name], current_step: payload.step || 'prep' }
+                  }));
+                } else if (payload.status === 'chunk') {
+                  setUploadStatuses((prev: any) => ({
+                    ...prev,
+                    [file.name]: {
+                      ...prev[file.name],
+                      current_step: 'ai',
+                      processed_count: payload.index,
+                      total_chunks: payload.total
+                    }
+                  }));
+                } else if (payload.status === 'error') {
+                  throw new Error(payload.detail || 'Неизвестная ошибка ИИ');
+                } else if (payload.status === 'final') {
+                  const data = payload.data;
+                  const tokens = data.usage?.total_tokens || 0;
+                  const cost = data.cost || 0;
+
+                  const strToNumOrBlank = (v: any) => {
+                    if (v === undefined || v === null || v === '') return '';
+                    const parsed = parseFloat(String(v).replace(/,/g, '.').replace(/\s/g, ''));
+                    return isNaN(parsed) ? String(v) : String(parsed);
+                  };
+
+                  if (stage === 'spec') {
+                    const aiRows: SpecRow[] = (data.items || []).map((item: any) => {
+                      if (item.pos === 'ERROR') {
+                        toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
+                      }
+                      return {
+                        id: genId(),
+                        fileId: file.name,
+                        pos: item.pos || '',
+                        name: item.name || '',
+                        brand: item.brand || '',
+                        code: item.code || item.article || '',
+                        supplier: item.supplier || data.document?.metadata?.vendor || '',
+                        unit: item.unit || 'шт',
+                        quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
+                        mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
+                        note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
+                        is_header: item.row_type === 'LOCATION' || item.row_type === 'GROUP' || Boolean(item.is_header),
+                        row_type: item.row_type || 'ITEM',
+                        originalRowsIds: [],
+                        children: []
+                      };
+                    });
+
+                    setSpecRows((prev) => {
+                      const filtered = prev.filter(r => r.fileId !== file.name);
+                      return [...filtered, ...aiRows];
+                    });
+                    setBackupSpecRows((prev) => {
+                      const filtered = prev.filter(r => r.fileId !== file.name);
+                      return [...filtered, ...aiRows];
+                    });
+                    setIsMerged(false);
+                  } else {
+                    const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
+                      if (item.pos === 'ERROR') {
+                        toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
+                      }
+                      const r = emptyInvoiceRow();
+                      r.fileId = file.name;
+                      r.documentName = data.document?.filename || data.document?.name || file.name;
+                      r.isUncertain = Boolean(item.isUncertain);
+                      r.article = item.article || '';
+                      r.name = item.name || '';
+                      r.supplier = data.document?.metadata?.vendor || '';
+                      r.quantity = strToNumOrBlank(item.quantity) || '1';
+                      r.unit = item.unit || 'шт';
+                      r.price = strToNumOrBlank(item.price) || '0';
+                      r.total = strToNumOrBlank(item.total) || '0';
+                      return r;
+                    });
+
+                    setInvoiceRows((prev) => {
+                      const filtered = prev.filter(r => r.fileId !== file.name);
+                      return [...filtered, ...aiRows];
+                    });
+                  }
+
+                  setUploadStatuses((prev: any) => ({
+                    ...prev,
+                    [file.name]: {
+                      ...prev?.[file.name],
+                      status: 'Готово (ИИ)',
+                      time: currentTime,
+                      current_step: 'final',
+                      tokens,
+                      cost,
+                      model: data.model || '',
+                      method: data.method || '',
+                      chunks_report: data.chunks_report || []
+                    }
+                  }));
+                  setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
+                  // Sync status 'ok' to server
+                  updateFileStatusOnServer(file.name, 'ok');
+                }
               }
             }
+          } finally {
+            reader.cancel().catch(e => console.error('Не удалось закрыть поток:', e));
           }
-        } finally {
-          reader.cancel().catch(e => console.error('Не удалось закрыть поток:', e));
+        } catch (e: any) {
+          console.error('AI Processing error:', e);
+          setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
         }
-      } catch (e: any) {
-        console.error('AI Processing error:', e);
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
       }
-    }
     }); // closes forEach
 
   }, [yandexConfig, updateFileStatusOnServer]);
@@ -670,32 +670,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const newRows = [...prev];
       const parentIndex = newRows.findIndex(r => r.id === parentId);
       if (parentIndex === -1) return prev;
-      
+
       const parentRow = { ...newRows[parentIndex] };
       if (!parentRow.children || parentRow.children.length === 0) return prev;
-      
+
       const childIndex = parentRow.children.findIndex((c: SpecRow) => c.id === childId);
       if (childIndex === -1) return prev;
-      
+
       const extractedChild = parentRow.children[childIndex];
-      
+
       parentRow.children = parentRow.children.filter((c: SpecRow) => c.id !== childId);
       parentRow.originalRowsIds = parentRow.originalRowsIds?.filter(id => id !== childId);
-      
+
       const parseQty = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
       const pQty = parseQty(parentRow.quantity);
       const cQty = parseQty(extractedChild.quantity);
       const newQty = Math.max(0, pQty - cQty);
       parentRow.quantity = newQty === 0 ? '' : String(newQty);
-      
+
       newRows[parentIndex] = parentRow;
-      
+
       const unmergedSpecRow: SpecRow = {
-         ...extractedChild,
-         originalRowsIds: [extractedChild.id],
-         children: [{ ...extractedChild } as SpecRow]
+        ...extractedChild,
+        originalRowsIds: [extractedChild.id],
+        children: [{ ...extractedChild } as SpecRow]
       };
-      
+
       newRows.splice(parentIndex + 1, 0, unmergedSpecRow);
       return newRows;
     });
@@ -709,9 +709,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const specName = (spec.name || '').toLowerCase();
         const invArt = (inv.article || '').toLowerCase();
         const specCode = (spec.code || '').toLowerCase();
-        
-        return (specName && invName && invName.includes(specName)) || 
-               (specCode && invArt && invArt === specCode);
+
+        return (specName && invName && invName.includes(specName)) ||
+          (specCode && invArt && invArt === specCode);
       });
 
       let bestPrice = '';
@@ -725,7 +725,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }))
           .filter((m: any) => m.p > 0)
           .sort((a: any, b: any) => a.p - b.p);
-        
+
         if (sorted.length > 0) {
           bestPrice = String(sorted[0].p);
           bestSupplier = sorted[0].s;
@@ -736,7 +736,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const cp = parseFloat(bestPrice) || 0;
       // По умолчанию наценка 20% для цены заказчика, если есть цена закупки
       const clp = cp > 0 ? cp * 1.2 : 0;
-      
+
       const cs = q * cp;
       const cls = q * clp;
 
@@ -755,7 +755,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
     setEstimateRows(newEstimate);
   }, [specRows, invoiceRows]);
-  
+
   const matchInvoiceToSpec = useCallback(async () => {
     if (invoiceRows.length === 0 || specRows.length === 0) return;
     try {
@@ -763,13 +763,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         invoice_items: invoiceRows,
         spec_items: specRows
       };
-      
+
       const res = await fetch('http://localhost:8000/api/match-items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      
+
       if (res.ok) {
         const data = await res.json();
         setInvoiceRows(data.invoice_items || []);
@@ -782,9 +782,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       toast.error('Ошибка при сопоставлении: ' + e.message);
     }
   }, [invoiceRows, specRows]);
-  
+
   const resetData = useCallback((stage: Stage) => {
-    switch(stage) {
+    switch (stage) {
       case 'spec': setSpecRows([]); break;
       case 'invoice': setInvoiceRows([]); break;
       case 'estimate': setEstimateRows([]); break;
@@ -799,7 +799,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setRequestRows([]);
     setCompletedStages([]);
     setSelectedIds([]);
-    
+
     setUploadStatuses((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach(fileName => {
@@ -811,7 +811,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       });
       return next;
     });
-    
+
     setIsResetConfirmOpen(false);
     toast.success('Все данные таблиц сброшены. Файлы сохранены.');
   }, [updateFileStatusOnServer]);
@@ -828,7 +828,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const applySortAndFilter = <T extends { id: string }>(rows: T[], config: SortConfig, query: string, searchFields: string[], selectedIds: string[], isOnlySelected: boolean): T[] => {
     let result = rows;
-    
+
     // Filter by "Only Selected"
     if (isOnlySelected) {
       result = result.filter(r => selectedIds.includes(r.id));
@@ -837,16 +837,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // Search Filter
     if (query) {
       const lowQuery = query.toLowerCase();
-      result = result.filter((r: any) => 
+      result = result.filter((r: any) =>
         searchFields.some(field => String(r[field] || '').toLowerCase().includes(lowQuery))
       );
     }
 
     // Sort
     if (!config.key || !config.direction) {
-      return [...result].sort((a: any, b: any) => naturalSort(a.pos || '', b.pos || ''));
+      return result; // RETURN ORIGINAL FILE ORDER
     }
-    
+
     return [...result].sort((a: any, b: any) => {
       let valA = a[config.key!];
       let valB = b[config.key!];
@@ -858,7 +858,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Handle numbers
       const numA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
       const numB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
-      
+
       if (!isNaN(Number(valA)) && !isNaN(Number(valB))) {
         return config.direction === 'asc' ? numA - numB : numB - numA;
       }
@@ -866,7 +866,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Handle strings
       const strA = String(valA || '').toLowerCase();
       const strB = String(valB || '').toLowerCase();
-      
+
       if (config.direction === 'asc') {
         return strA.localeCompare(strB, 'ru');
       } else {
@@ -875,20 +875,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const sortedSpecRows = React.useMemo(() => 
-    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView), 
+  const sortedSpecRows = React.useMemo(() =>
+    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView),
     [specRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
-  const sortedRequestRows = React.useMemo(() => 
-    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView), 
+  const sortedRequestRows = React.useMemo(() =>
+    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView),
     [requestRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
-  const sortedInvoiceRows = React.useMemo(() => 
-    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier'], selectedIds, isOnlySelectedView), 
+  const sortedInvoiceRows = React.useMemo(() =>
+    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier'], selectedIds, isOnlySelectedView),
     [invoiceRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
-  const sortedEstimateRows = React.useMemo(() => 
-    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier'], selectedIds, isOnlySelectedView), 
+  const sortedEstimateRows = React.useMemo(() =>
+    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier'], selectedIds, isOnlySelectedView),
     [estimateRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
   );
 
@@ -1019,7 +1019,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setInvoiceRows(prev => prev.map(row => {
         if (row.id !== rowId) return row;
         const updatedRow = { ...row, [field]: value } as InvoiceRow;
-        
+
         // Recalculate totals
         const qty = parseFloat(String(field === 'quantity' ? value : updatedRow.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         const price = parseFloat(String(field === 'price' ? value : updatedRow.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
@@ -1047,7 +1047,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           const q = parseFloat(String(updatedRow.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
           const p = parseFloat(String(field === 'costPrice' ? value : updatedRow.costPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
           const cp = parseFloat(String(field === 'clientPrice' ? value : updatedRow.clientPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-          
+
           updatedRow.costSum = (q * p).toFixed(2);
           updatedRow.clientSum = (q * cp).toFixed(2);
         }
@@ -1072,7 +1072,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const toggleSelectAllPage = useCallback((pageIds: string[]) => {
     if (pageIds.length === 0) return;
     const allSelected = pageIds.every(id => selectedIds.includes(id));
-    
+
     setSelectedIds(prev => {
       if (allSelected) {
         return prev.filter(id => !pageIds.includes(id));
