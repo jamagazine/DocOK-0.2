@@ -62,11 +62,13 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
   const renderFileItem = (fileName: string, data: any, isResetItem: boolean) => {
     const statusStr = data.status || '';
-    const isOk = statusStr.includes('Готово');
+    const isReadyMD = statusStr === 'READY_MD';
+    const isProcessed = statusStr === 'PROCESSED';
+    const isOk = statusStr.includes('Готово') || isReadyMD || isProcessed;
     const isError = statusStr.includes('Ошибка');
-    const isLoading = !isOk && !isError && statusStr !== 'reset';
+    const isLoading = !isOk && !isError && statusStr !== 'reset' && statusStr !== 'READY_MD' && statusStr !== 'PROCESSED';
     const isReset = statusStr === 'reset';
-    const method = statusStr.includes('ИИ') ? 'AI' : 'Local';
+    const method = (statusStr.includes('ИИ') || isProcessed) ? 'AI' : 'Local';
     const isAiProcessed = method === 'AI';
     const file = filesMap[fileName];
     const fileSize = data.size || 0;
@@ -106,8 +108,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 {fileName}
               </span>
               <span className="text-[11px] text-slate-500 mt-0.5">
-                {isReset ? 'Данные сброшены' : statusStr}
-                {(!statusStr?.includes('Готово') && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
+                {isReset ? 'Данные сброшены' : (isReadyMD ? 'Ожидает анализа' : (isProcessed ? 'Готово (ИИ)' : statusStr))}
+                {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
                   <span className="ml-2 text-[10px] text-slate-400 font-medium">
                     ~{data?.estimated_cost || 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (прогноз)
                   </span>
@@ -223,12 +225,12 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               </button>
             )}
 
-            {/* Sparkles: AI re-process for Excel only (non-error) */}
-            {isExcel(fileName) && file && method !== 'AI' && !isError && (
+            {/* Sparkles: AI re-process for Excel only if not yet processed by AI */}
+            {isExcel(fileName) && file && method !== 'AI' && !isError && !isLoading && (
               <button
                 onClick={() => handleAiProcess(fileName)}
-                className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
-                title="Обработать через ИИ"
+                className="p-1.5 rounded-md text-amber-500 bg-amber-50 hover:text-purple-600 hover:bg-purple-100 transition-colors"
+                title="Анализ ИИ (Редактор Markdown)"
                 disabled={isLoading}
               >
                 <Sparkles className="w-4 h-4" />

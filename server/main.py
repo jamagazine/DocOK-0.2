@@ -780,13 +780,8 @@ async def process_invoice(
             # Persist cost + tokens to manifest
             manifest = _load_manifest()
             for k, v in manifest.items():
-                if isinstance(v, dict) and v.get("originalName") == original_name:
-                    v["cost"] = round(cost, 2)
-                    v["tokens"] = total_tokens
-                    v["method"] = parse_method
-                    v["model"] = model_type
-                    break
-                elif isinstance(v, dict) and v.get("original_name") == original_name:
+                if isinstance(v, dict) and (v.get("originalName") == original_name or v.get("original_name") == original_name):
+                    v["status"] = "PROCESSED"
                     v["cost"] = round(cost, 2)
                     v["tokens"] = total_tokens
                     v["method"] = parse_method
@@ -977,7 +972,7 @@ async def storage_upload(file: UploadFile = File(...)):
     existing = manifest.get(secured_name, {})
     manifest[secured_name] = {
         "originalName": original_filename,
-        "status": "ok",
+        "status": "READY_MD" if is_spreadsheet else "ok",
         "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
         "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
         "model": existing.get("model", "") if isinstance(existing, dict) else "",
@@ -1012,7 +1007,7 @@ async def storage_list():
     
     if os.path.exists(STORAGE_DIR):
         for f in os.listdir(STORAGE_DIR):
-            if f == "manifest.json" or f.startswith('.') or f.endswith(".json"): # Exclude cache files
+            if f == "manifest.json" or f.startswith('.') or f.endswith(".json") or f.endswith(".md"): # Exclude cache and hidden files
                 continue
             path = os.path.join(STORAGE_DIR, f)
             if os.path.isfile(path):
