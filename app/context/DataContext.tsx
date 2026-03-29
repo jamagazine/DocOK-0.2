@@ -541,8 +541,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     };
                   });
 
-                  setSpecRows((prev) => [...prev, ...aiRows]);
-                  setBackupSpecRows((prev) => [...prev, ...aiRows]);
+                  setSpecRows((prev) => {
+                    const filtered = prev.filter(r => r.fileId !== file.name);
+                    return [...filtered, ...aiRows];
+                  });
+                  setBackupSpecRows((prev) => {
+                    const filtered = prev.filter(r => r.fileId !== file.name);
+                    return [...filtered, ...aiRows];
+                  });
                   setIsMerged(false);
                 } else {
                   const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
@@ -563,7 +569,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     return r;
                   });
 
-                  setInvoiceRows((prev) => [...prev, ...aiRows]);
+                  setInvoiceRows((prev) => {
+                    const filtered = prev.filter(r => r.fileId !== file.name);
+                    return [...filtered, ...aiRows];
+                  });
                 }
                   
                 setUploadStatuses((prev: any) => ({ 

@@ -32,7 +32,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
   const fileEntries = Object.entries(uploadStatuses);
 
-  const isExcel = (name: string) => /\.(xlsx?|xls)$/i.test(name);
+  const isTableFile = (name: string) => /\.(xlsx?|xls|csv)$/i.test(name);
 
   const handleDeleteConfirm = () => {
     if (pendingDelete) {
@@ -42,9 +42,19 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   };
 
   const handleAiProcess = async (fileName: string) => {
-    const file = filesMap[fileName];
-    if (!file) return;
-    removeFile(fileName);
+    let file = filesMap[fileName];
+    if (!file) {
+      // Auto-restore from storage if file is missing in memory (e.g. after refresh)
+      try {
+        const res = await fetch(`http://localhost:8000/api/storage/files/${fileName}`);
+        if (!res.ok) throw new Error('Failed to fetch file from storage');
+        const blob = await res.blob();
+        file = new File([blob], fileName, { type: blob.type });
+      } catch (e) {
+        console.error('Auto-restore for AI failed:', e);
+        return;
+      }
+    }
     await handleFile([file], currentStage, true);
   };
 
@@ -64,14 +74,18 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
     const statusStr = data.status || '';
     const isReadyMD = statusStr === 'READY_MD';
     const isProcessed = statusStr === 'PROCESSED';
+    const isProcessing = statusStr === 'PROCESSING' || (statusStr.includes('Анализ') && !isProcessed);
     const isOk = statusStr.includes('Готово') || isReadyMD || isProcessed;
     const isError = statusStr.includes('Ошибка');
-    const isLoading = !isOk && !isError && statusStr !== 'reset' && statusStr !== 'READY_MD' && statusStr !== 'PROCESSED';
+    const isLoading = !isOk && !isError && statusStr !== 'reset' && !isReadyMD && !isProcessed;
     const isReset = statusStr === 'reset';
     const method = (statusStr.includes('ИИ') || isProcessed) ? 'AI' : 'Local';
     const isAiProcessed = method === 'AI';
     const file = filesMap[fileName];
     const fileSize = data.size || 0;
+    
+    // Naming logic: clean display name, keep full name in title
+    const displayName = fileName.replace(/\.[^/.]+$/, "");
     
     // Real cost if already processed by AI (cost > 0)
     const realCost = (data.cost && data.cost > 0) ? data.cost : null;
@@ -105,7 +119,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
             {/* File Details */}
             <div className="flex flex-col flex-1 min-w-0">
               <span className="font-medium text-slate-900 truncate" title={fileName}>
-                {fileName}
+                {displayName}
               </span>
               <span className="text-[11px] text-slate-500 mt-0.5">
                 {isReset ? 'Данные сброшены' : (isReadyMD ? 'Ожидает анализа' : (isProcessed ? 'Готово (ИИ)' : statusStr))}
@@ -225,8 +239,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               </button>
             )}
 
-            {/* Sparkles: AI re-process for Excel only if not yet processed by AI */}
-            {isExcel(fileName) && file && method !== 'AI' && !isError && !isLoading && (
+            {/* Sparkles: AI re-process for Table files (xls/xlsx/csv) only if not yet fully processed by AI */}
+            {isTableFile(fileName) && !isProcessed && !isProcessing && !isError && (
               <button
                 onClick={() => handleAiProcess(fileName)}
                 className="p-1.5 rounded-md text-amber-500 bg-amber-50 hover:text-purple-600 hover:bg-purple-100 transition-colors"
