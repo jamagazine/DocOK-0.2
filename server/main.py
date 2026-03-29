@@ -9,6 +9,7 @@ import httpx
 import re
 import math
 import tempfile
+import asyncio
 import pandas as pd, io
 import pdfplumber
 import datetime
@@ -339,18 +340,14 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
-    SPEC_PROMPT = """Ты — профессиональный инструмент извлечения табличных данных.
-Твоя задача: перенести КАЖДУЮ строку из текста в JSON, соблюдая порядок.
+    SPEC_PROMPT = """Ты — инструмент парсинга таблиц. Твоя задача: извлечь данные из текста в JSON.
+Колонки (разделитель |): 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
 
-Колонки (ориентируйся на разделитель |):
-1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
-
-КРИТИЧЕСКИЕ ПРАВИЛА:
-1. ОБРАБОТАЙ ВСЕ СТРОКИ. Если на входе 15 строк, в ответе должно быть 15 объектов в 'items'.
-2. СКЛЕИВАНИЕ: Если колонка 1 (pos) пуста, а в колонке 2 (name) есть текст — это продолжение описания ПРЕДЫДУЩЕЙ позиции. Добавь этот текст в поле 'name' объекта выше через пробел.
-3. ЗАГОЛОВКИ: Если в строке нет количества (кол. 7), но есть имя — пометь объект как "is_header": true.
-4. ФОРМАТ: СТРОГО JSON вида {"items": [...]}. Никакого текста до или после JSON.
-"""
+ПРАВИЛА:
+1. ОДНА СТРОКА ТЕКСТА = ОДИН ОБЪЕКТ В JSON. Не объединяй разные строки таблицы.
+2. ПРИМЕЧАНИЕ (Footer): Если после таблицы идет свободный текст, запиши его в поле 'note' последней позиции.
+3. ЗАГОЛОВКИ: Если в строке нет количества (кол. 7), но есть имя — ставь "is_header": true.
+4. ФОРМАТ: СТРОГО JSON вида {"items": [...]}. Без пояснений и markdown."""
 
     system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
 
@@ -450,7 +447,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     header = lines[0] if lines else ""
     data_lines = lines[1:] if len(lines) > 1 else []
     
-    CHUNK_SIZE = 15
+    CHUNK_SIZE = 30
     all_items = []
     total_tokens = 0
     main_doc = {}
@@ -459,25 +456,44 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     chunks = [data_lines[i:i + CHUNK_SIZE] for i in range(0, len(data_lines), CHUNK_SIZE)]
     print(f"Document split into {len(chunks)} chunks.")
     
-    for i, chunk in enumerate(chunks):
-        print(f"Processing chunk {i+1} of {len(chunks)}...")
-        chunk_text = header + "\n" + "\n".join(chunk)
-        try:
-            raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
-            total_tokens += tokens
-            parsed = parse_gpt_json(raw_res)
-            if parsed:
-                all_items.extend(parsed.get('items', []))
-                if not main_doc:
-                    main_doc = parsed.get('document', {})
-                chunks_report.append({"id": i+1, "ok": True})
-            else:
-                print(f"Chunk {i+1}: GPT returned invalid JSON, skipping.")
-                chunks_report.append({"id": i+1, "ok": False})
-        except Exception as chunk_err:
-            print(f"Chunk {i+1} failed: {chunk_err}. Skipping.")
+    sem = asyncio.Semaphore(5)
+    
+    async def process_single_chunk(i, chunk):
+        async with sem:
+            print(f"Processing chunk {i+1} of {len(chunks)}...")
+            chunk_text = header + "\n" + "\n".join(chunk)
+            try:
+                raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
+                parsed = parse_gpt_json(raw_res)
+                if parsed:
+                    return i, True, parsed, tokens, None
+                else:
+                    print(f"Chunk {i+1}: GPT returned invalid JSON, skipping.")
+                    return i, False, None, tokens, "ИИ вернул невалидный JSON"
+            except Exception as chunk_err:
+                print(f"Chunk {i+1} failed: {chunk_err}. Skipping.")
+                return i, False, None, 0, str(chunk_err)
+
+    tasks = [process_single_chunk(i, chunk) for i, chunk in enumerate(chunks)]
+    results = await asyncio.gather(*tasks)
+    
+    # Sort results by chunk index to maintain order
+    results.sort(key=lambda x: x[0])
+    
+    for i, ok, parsed, tokens, err_msg in results:
+        total_tokens += tokens
+        if ok and parsed:
+            all_items.extend(parsed.get('items', []))
+            if not main_doc and parsed.get('document'):
+                main_doc = parsed.get('document', {})
+            chunks_report.append({"id": i+1, "ok": True})
+        else:
             chunks_report.append({"id": i+1, "ok": False})
-            continue
+            all_items.append({
+                "pos": "ERROR",
+                "name": f"Ошибка обработки блока строк {i+1}",
+                "note": err_msg or "Неизвестная ошибка"
+            })
             
     # If all items failed but we have a main_doc (unlikely), or no items at all
     if not all_items and not main_doc:
@@ -726,6 +742,8 @@ async def process_invoice(
         final_struct["method"] = parse_method
         final_struct["model"] = model_type
         final_struct["chunks_report"] = all_chunks_report
+        final_struct["total_chunks"] = len(all_chunks_report) if all_chunks_report else 1
+        final_struct["processed_count"] = sum(1 for c in all_chunks_report if c.get("ok")) if all_chunks_report else 1
         
         # Save cache
         try:
@@ -907,7 +925,7 @@ async def storage_upload(file: UploadFile = File(...)):
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
                 input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                estimated_tokens = int(input_tokens * 2.2)
+                estimated_tokens = int(input_tokens * 2.3)
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")
