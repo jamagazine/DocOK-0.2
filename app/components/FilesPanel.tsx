@@ -114,8 +114,21 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 ) : null}
               </span>
               
-              {/* Inline Progress Bar for Loading State */}
-              {isLoading && (
+              {/* Segmented Progress Bar (for finished AI with reports) */}
+              {data.chunks_report && data.chunks_report.length > 0 && (
+                <div className="flex gap-0.5 mt-1 h-1.5 w-full">
+                  {data.chunks_report.map((chunk) => (
+                    <div 
+                      key={chunk.id} 
+                      className={cn("flex-1 rounded-sm", chunk.ok ? "bg-green-500" : "bg-red-500")} 
+                      title={`Чанк ${chunk.id}: ${chunk.ok ? 'Успех' : 'Ошибка'}`}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Inline Progress Bar for Loading State (when no report yet) */}
+              {isLoading && (!data.chunks_report || data.chunks_report.length === 0) && (
                 <div className="h-1 w-full bg-slate-100 rounded-full mt-1 overflow-hidden">
                   <div className={cn("h-full bg-indigo-500", statusStr.includes('ИИ') ? "animate-progress-indeterminate" : "w-[90%] transition-all duration-[2000ms] ease-out")} />
                 </div>

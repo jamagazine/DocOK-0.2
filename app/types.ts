@@ -24,6 +24,7 @@ export interface UploadStatus {
   method?: string;
   error?: string;
   chunks?: { current: number; total: number };
+  chunks_report?: { id: number; ok: boolean }[];
 }
 
 export interface UploadedFile {

@@ -339,10 +339,18 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
-    SPEC_PROMPT = """Инженер-парсер ГОСТ 21.110. JSON: items[{pos,name,brand,code,supplier,unit,quantity:float,mass:float,note,is_header:bool}].
-Колонки: 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:qty, 8:mass, 9:note.
-Правила: pos пуст + name текст = склеить name. pos+qty пусты = is_header:true.
-JSON ONLY. No markdown. Wrap in {"document":{"name":"Спецификация","metadata":{}},"items":[...]}."""
+    SPEC_PROMPT = """Ты — профессиональный инструмент извлечения табличных данных.
+Твоя задача: перенести КАЖДУЮ строку из текста в JSON, соблюдая порядок.
+
+Колонки (ориентируйся на разделитель |):
+1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
+
+КРИТИЧЕСКИЕ ПРАВИЛА:
+1. ОБРАБОТАЙ ВСЕ СТРОКИ. Если на входе 15 строк, в ответе должно быть 15 объектов в 'items'.
+2. СКЛЕИВАНИЕ: Если колонка 1 (pos) пуста, а в колонке 2 (name) есть текст — это продолжение описания ПРЕДЫДУЩЕЙ позиции. Добавь этот текст в поле 'name' объекта выше через пробел.
+3. ЗАГОЛОВКИ: Если в строке нет количества (кол. 7), но есть имя — пометь объект как "is_header": true.
+4. ФОРМАТ: СТРОГО JSON вида {"items": [...]}. Никакого текста до или после JSON.
+"""
 
     system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
 
@@ -422,25 +430,27 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     """
     Inteligently splits text into chunks if it exceeds token limits, otherwise sends the whole document.
     """
-    # 1. Inteligently check full token size
     initial_tokens = await get_token_count(full_text, model_type, api_key, folder_id)
+    chunks_report = []
     
     # Send full if fits comfortably (leave ~1000 tokens for system prompt & response)
     if initial_tokens < 7000:
         raw_res, tokens = await gpt_yandex(full_text, api_key, folder_id, model_type, doc_type)
         parsed = parse_gpt_json(raw_res)
         if not parsed:
-            return None, tokens, None
-        return parsed.get('items', []), tokens, parsed.get('document', {})
+            chunks_report.append({"id": 1, "ok": False})
+            return None, tokens, None, chunks_report
+            
+        chunks_report.append({"id": 1, "ok": True})
+        return parsed.get('items', []), tokens, parsed.get('document', {}), chunks_report
 
     print(f"Document exceeds 7000 tokens ({initial_tokens} tokens). Falling back to line chunking.")
 
-    # 2. Fallback to 25 chunking logic
     lines = full_text.split('\n')
     header = lines[0] if lines else ""
     data_lines = lines[1:] if len(lines) > 1 else []
     
-    CHUNK_SIZE = 25
+    CHUNK_SIZE = 15
     all_items = []
     total_tokens = 0
     main_doc = {}
@@ -460,17 +470,20 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
                 all_items.extend(parsed.get('items', []))
                 if not main_doc:
                     main_doc = parsed.get('document', {})
+                chunks_report.append({"id": i+1, "ok": True})
             else:
                 print(f"Chunk {i+1}: GPT returned invalid JSON, skipping.")
+                chunks_report.append({"id": i+1, "ok": False})
         except Exception as chunk_err:
             print(f"Chunk {i+1} failed: {chunk_err}. Skipping.")
+            chunks_report.append({"id": i+1, "ok": False})
             continue
             
-    # If all chunks returned None, parsed fails
+    # If all items failed but we have a main_doc (unlikely), or no items at all
     if not all_items and not main_doc:
-        return None, total_tokens, None
+        return None, total_tokens, None, chunks_report
         
-    return all_items, total_tokens, main_doc
+    return all_items, total_tokens, main_doc, chunks_report
 
 def to_float(val) -> float:
     if not val: return 0.0
@@ -678,7 +691,7 @@ async def process_invoice(
              
         # Call GPT to structure the data using chunking
         model_type = "pro" if parse_method == "ocr_table" else "lite"
-        all_items, total_tokens, main_doc_info = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type)
+        all_items, total_tokens, main_doc_info, all_chunks_report = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type)
         
         if all_items is None or main_doc_info is None:
             raise HTTPException(status_code=422, detail="ИИ вернул невалидный ответ")
@@ -712,6 +725,7 @@ async def process_invoice(
         final_struct["cost"] = round(cost, 2)
         final_struct["method"] = parse_method
         final_struct["model"] = model_type
+        final_struct["chunks_report"] = all_chunks_report
         
         # Save cache
         try:
@@ -893,7 +907,7 @@ async def storage_upload(file: UploadFile = File(...)):
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
                 input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                estimated_tokens = int(input_tokens * 3.0)  # 3x to account for chunk overhead
+                estimated_tokens = int(input_tokens * 2.2)
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")

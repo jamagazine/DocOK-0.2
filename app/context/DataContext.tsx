@@ -539,7 +539,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
             tokens,
             cost,
             model: data.model || '',
-            method: data.method || ''
+            method: data.method || '',
+            chunks_report: data.chunks_report || []
           } 
         }));
         setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
