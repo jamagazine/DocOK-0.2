@@ -303,7 +303,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
     }
 
     INVOICE_PROMPT = """Ты специализированный парсер счетов на оплату и накладных.
-Текст извлечен из таблицы с использованием разделителей `|`. Будь внимателен к структуре колонок и разделяй слипшиеся данные (например, '100шт' должно быть разделено на количество 100 и единицу шт). Ориентируйся на | при разборе колонок.
+Текст извлечен из таблицы в формате Markdown (с разделителями `|`). Будь внимателен к структуре колонок. Ориентируйся на разметку таблицы при разборе.
 
 Извлеки из текста документа данные и верни СТРОГО В ВИДЕ JSON:
 {
@@ -340,14 +340,16 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
-    SPEC_PROMPT = """Ты — инструмент парсинга таблиц. Твоя задача: извлечь данные из текста в JSON.
+    SPEC_PROMPT = """Ты — эксперт по анализу инженерных спецификаций. Тебе подана таблица в формате Markdown.
+Твоя задача: извлечь позиции и вернуть JSON.
 Колонки (разделитель |): 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
 
 ПРАВИЛА:
-1. ОДНА СТРОКА ТЕКСТА = ОДИН ОБЪЕКТ В JSON. Не объединяй разные строки таблицы.
-2. ПРИМЕЧАНИЕ (Footer): Если после таблицы идет свободный текст, запиши его в поле 'note' последней позиции.
-3. ЗАГОЛОВКИ: Если в строке нет количества (кол. 7), но есть имя — ставь "is_header": true.
-4. ФОРМАТ: СТРОГО JSON вида {"items": [...]}. Без пояснений и markdown."""
+1. ОДНА СТРОКА ТЕКСТА = ОДИН ОБЪЕКТ В JSON. Не объединяй разные строки таблицы без необходимости.
+2. ПЕРЕНОСЫ: Если одно наименование разбито на несколько строк таблицы (пустые ячейки в соседних колонках), ты ОБЯЗАН объединить их в одну позицию.
+3. ПРИМЕЧАНИЕ (Footer): Если после таблицы идет свободный текст, запиши его в поле 'note' последней позиции.
+4. ЗАГОЛОВКИ: Если в строке нет количества (кол. 7), но есть имя — ставь "is_header": true.
+5. ФОРМАТ: СТРОГО JSON вида {"items": [...]}. Без пояснений и markdown."""
 
     system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
 
@@ -432,8 +434,9 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     chunks_report = []
     
     lines = full_text.split('\n')
-    header = lines[0] if lines else ""
-    data_lines = lines[1:] if len(lines) > 1 else []
+    # Markdown tables have header at lines 0 and separator at line 1
+    header_block = "\n".join(lines[:2]) if len(lines) >= 2 else (lines[0] if lines else "")
+    data_lines = lines[2:] if len(lines) >= 2 else []
     
     CHUNK_SIZE = 30
     all_items = []
@@ -449,7 +452,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     async def process_single_chunk(i, chunk):
         async with sem:
             print(f"Processing chunk {i+1} of {len(chunks)}...")
-            chunk_text = header + "\n" + "\n".join(chunk)
+            chunk_text = header_block + "\n" + "\n".join(chunk)
             try:
                 raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
                 parsed = parse_gpt_json(raw_res)
@@ -689,12 +692,8 @@ async def process_invoice(
                 df = df.dropna(how='all')
                 df = df.fillna("")
                 
-                # Serialize with | for GPT consistency
-                header = " | ".join(map(str, df.columns))
-                rows = []
-                for _, row in df.iterrows():
-                    rows.append(" | ".join(map(str, row.values)))
-                extracted_text = header + "\n" + "\n".join(rows)
+                # Use Markdown for better GPT comprehension
+                extracted_text = df.to_markdown(index=False, tablefmt="pipe")
                 has_low_confidence = False
                 
             else:
