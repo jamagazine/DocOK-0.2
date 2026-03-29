@@ -19,11 +19,40 @@ export function genId(): string {
     : Math.random().toString(36).slice(2);
 }
 
+export function naturalSort(a: any, b: any): number {
+  const as = String(a || '');
+  const bs = String(b || '');
+  const ax: (string | number)[] = [];
+  const bx: (string | number)[] = [];
+
+  as.replace(/(\d+)|(\D+)/g, (_, $1, $2) => {
+    ax.push($1 ? parseInt($1, 10) : $2);
+    return "";
+  });
+  bs.replace(/(\d+)|(\D+)/g, (_, $1, $2) => {
+    bx.push($1 ? parseInt($1, 10) : $2);
+    return "";
+  });
+
+  while (ax.length && bx.length) {
+    const an = ax.shift()!;
+    const bn = bx.shift()!;
+    if (an !== bn) {
+      if (typeof an === 'number' && typeof bn === 'number') {
+        return an - bn;
+      }
+      return an > bn ? 1 : -1;
+    }
+  }
+  return ax.length - bx.length;
+}
+
 export interface SpecRow extends MaterialPosition {
   id: string;
   fileId?: string;
   originalRowsIds?: string[];
   children?: SpecRow[];
+  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 export const SPEC_COLUMNS = [
@@ -73,6 +102,7 @@ export interface InvoiceRow {
     score: number;
     status: 'perfect' | 'warning' | 'none';
   };
+  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 export function emptyInvoiceRow(): InvoiceRow {
@@ -137,6 +167,7 @@ export interface EstimateRow {
   costSum: string;
   clientSum: string;
   supplier: string;
+  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 interface DataContextType {
@@ -535,7 +566,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
                       mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
                       note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
-                      is_header: Boolean(item.is_header),
+                      is_header: item.row_type === 'LOCATION' || item.row_type === 'GROUP' || Boolean(item.is_header),
+                      row_type: item.row_type || 'ITEM',
                       originalRowsIds: [],
                       children: []
                     };
@@ -811,17 +843,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     // Sort
-    if (!config.key || !config.direction) return result;
+    if (!config.key || !config.direction) {
+      return [...result].sort((a: any, b: any) => naturalSort(a.pos || '', b.pos || ''));
+    }
     
     return [...result].sort((a: any, b: any) => {
       let valA = a[config.key!];
       let valB = b[config.key!];
 
+      if (config.key === 'pos') {
+        return naturalSort(valA, valB) * (config.direction === 'asc' ? 1 : -1);
+      }
+
       // Handle numbers
       const numA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
       const numB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
       
-      if (!isNaN(numA) && !isNaN(numB)) {
+      if (!isNaN(Number(valA)) && !isNaN(Number(valB))) {
         return config.direction === 'asc' ? numA - numB : numB - numA;
       }
 

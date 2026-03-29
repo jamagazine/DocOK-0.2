@@ -522,99 +522,123 @@ function SpecTable() {
               const hasChildren = row.children && row.children.length > 1;
               const isExpanded = !!expandedRows[row.id];
               const isSelected = selectedIds.includes(row.id);
+              const isLocation = row.row_type === 'LOCATION';
+              const isGroup = row.row_type === 'GROUP';
+              const isHeader = isLocation || isGroup || row.is_header;
 
               return (
                 <React.Fragment key={row.id}>
                   <div
-                    onClick={() => !row.is_header && toggleRowSelection(row.id, false)}
+                    onClick={() => !isHeader && toggleRowSelection(row.id, false)}
                     className={cn(
-                      "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50/80 transition-colors group min-h-[48px]",
+                      "flex items-center text-sm border-b border-slate-100 transition-colors group min-h-[48px]",
                       hasChildren && "bg-slate-50/30",
                       isSelected && "bg-indigo-50/50",
-                      row.is_header && "bg-amber-50/60 border-l-2 border-l-amber-400",
-                      !row.is_header && "cursor-pointer"
+                      isLocation && "bg-slate-800 text-white hover:bg-slate-700",
+                      isGroup && "bg-slate-100 text-slate-800 border-l-4 border-l-indigo-400 hover:bg-slate-200",
+                      !isHeader && "hover:bg-slate-50/80 cursor-pointer",
+                      row.is_header && !isLocation && !isGroup && "bg-amber-50/60 border-l-2 border-l-amber-400"
                     )}
                   >
-                    {columns.map(col => (
-                      <div
-                        key={col.key}
-                        className={cn(
-                          "px-4 py-3 overflow-hidden border-r border-slate-100 last:border-0 h-full flex items-center break-words whitespace-normal",
-                          col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                        )}
-                        style={{
-                          flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                          minWidth: col.width || '100px'
-                        }}
-                        onClick={col.key === 'pos' && !row.is_header ? (e) => {
-                          e.stopPropagation();
-                          toggleRowSelection(row.id, true);
-                        } : undefined}
-                      >
-                        {col.key === 'pos' ? (
-                          <div className="relative w-full h-full flex items-center justify-center font-medium">
-                            {hasChildren && !row.is_header && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleExpand(row.id);
-                                }}
-                                className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
-                              >
-                                {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
-                              </button>
-                            )}
-                            {row.is_header ? (
-                              <span className="text-amber-700 font-bold text-xs">§</span>
-                            ) : isSelected ? (
-                              <input
-                                type="checkbox"
-                                className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                checked={true}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleRowSelection(row.id, true);
-                                }}
-                                onChange={() => { }}
-                              />
-                            ) : (
-                              <>
-                                <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                  {row.pos || (actualIndex + 1).toString().padStart(2, '0')}
-                                </span>
+                    {isLocation || isGroup ? (
+                      // Special Header Rendering (Full Width)
+                      <div className="flex w-full items-center px-4 py-3">
+                        <div className="flex-none p-1.5 mr-4 opacity-50 shrink-0 h-6 w-6 flex items-center justify-center">
+                          <span className={cn("font-bold text-xs", isLocation ? "text-slate-400" : "text-indigo-400")}>
+                            {isLocation ? "L0" : "L1"}
+                          </span>
+                        </div>
+                        <div className={cn(
+                          "flex-grow font-bold tracking-tight",
+                          isLocation ? "text-base uppercase" : "text-sm"
+                        )}>
+                          {row.name}
+                        </div>
+                        {row.pos && <div className="flex-none px-3 py-1 bg-black/10 rounded text-xs font-mono ml-4 opacity-60">{row.pos}</div>}
+                      </div>
+                    ) : (
+                      // Standard Row Rendering
+                      columns.map(col => (
+                        <div
+                          key={col.key}
+                          className={cn(
+                            "px-4 py-3 overflow-hidden border-r border-slate-100 last:border-0 h-full flex items-center break-words whitespace-normal",
+                            col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
+                          )}
+                          style={{
+                            flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
+                            minWidth: col.width || '100px'
+                          }}
+                          onClick={col.key === 'pos' && !isHeader ? (e) => {
+                            e.stopPropagation();
+                            toggleRowSelection(row.id, true);
+                          } : undefined}
+                        >
+                          {col.key === 'pos' ? (
+                            <div className="relative w-full h-full flex items-center justify-center font-medium">
+                              {hasChildren && !isHeader && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleExpand(row.id);
+                                  }}
+                                  className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
+                                >
+                                  {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
+                                </button>
+                              )}
+                              {isHeader ? (
+                                <span className="text-amber-700 font-bold text-xs">§</span>
+                              ) : isSelected ? (
                                 <input
                                   type="checkbox"
-                                  className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                  checked={false}
+                                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                  checked={true}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     toggleRowSelection(row.id, true);
                                   }}
                                   onChange={() => { }}
                                 />
-                              </>
-                            )}
-                          </div>
-                        ) : row.is_header && col.key === 'name' ? (
-                          <span className="text-amber-800 font-bold text-sm">{String((row as any)[col.key] || '')}</span>
-                        ) : (
-                          <AutoResizingTextarea
-                            value={String((row as any)[col.key] || '')}
-                            readOnly={selectedIds.length > 0 || (row.is_header === true && (col.key === 'quantity' || col.key === 'mass'))}
-                            tabIndex={selectedIds.length > 0 ? -1 : 0}
-                            onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
-                            onClick={(e) => {
-                              if (selectedIds.length === 0) e.stopPropagation();
-                            }}
-                            className={cn(
-                              col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
-                              col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left",
-                              row.is_header && "italic text-amber-700"
-                            )}
-                          />
-                        )}
-                      </div>
-                    ))}
+                              ) : (
+                                <>
+                                  <span className="group-hover:hidden text-slate-400 tabular-nums">
+                                    {row.pos || (actualIndex + 1).toString().padStart(2, '0')}
+                                  </span>
+                                  <input
+                                    type="checkbox"
+                                    className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                    checked={false}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleRowSelection(row.id, true);
+                                    }}
+                                    onChange={() => { }}
+                                  />
+                                </>
+                              )}
+                            </div>
+                          ) : isHeader && col.key === 'name' ? (
+                            <span className="text-amber-800 font-bold text-sm">{String((row as any)[col.key] || '')}</span>
+                          ) : (
+                            <AutoResizingTextarea
+                              value={String((row as any)[col.key] || '')}
+                              readOnly={selectedIds.length > 0 || isHeader}
+                              tabIndex={selectedIds.length > 0 || isHeader ? -1 : 0}
+                              onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
+                              onClick={(e) => {
+                                if (selectedIds.length === 0 && !isHeader) e.stopPropagation();
+                              }}
+                              className={cn(
+                                col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
+                                col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left",
+                                isHeader && "italic text-amber-700"
+                              )}
+                            />
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
 
                   {isExpanded && row.children?.map((child, childIdx) => (

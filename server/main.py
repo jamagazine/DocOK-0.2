@@ -324,16 +324,17 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 
 Колонки (разделитель |): 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
 
-ПРАВИЛА ОЧИСТКИ (КРИТИЧЕСКИ ВАЖНО):
+ПРАВИЛА КЛАССИФИКАЦИИ (КРИТИЧЕСКИ ВАЖНО):
 1. ВЕРНИ РЕЗУЛЬТАТ СТРОГО В ВИДЕ JSON-ОБЪЕКТА: {"items": [...]}.
-2. Внутри items должны быть объекты с ключами: pos, name, brand, code, supplier, unit, quantity, mass, note.
-3. ОДНА СТРОКА ТЕКСТА = ОДИН ОБЪЕКТ В JSON.
-4. ПЕРЕНОСЫ: Если одно наименование разбито на несколько строк таблицы (пустые ячейки в соседних колонках), объедини их в одну позицию.
-5. ТОЛЬКО ТОВАРЫ: Не включай в результат заголовки колонок спецификации (Поз., Наименование, Кол-во и т.д.).
-6. ИГНОРИРУЙ: строки-разделители (|---|---|) и пустые строки.
-7. ПРИМЕЧАНИЕ (Footer): Если после таблицы идет свободный текст, запиши его в поле 'note' последней позиции.
-8. ЗАГОЛОВКИ СЕКЦИЙ: Если в строке нет количества (кол. 7), но есть имя — ставь "is_header": true.
-9. ФОРМАТ: СТРОГО JSON. Без пояснений и markdown."""
+2. КАЖДАЯ СТРОКА должна иметь поле "row_type" со значением:
+   - "LOCATION": если это название площадки/цеха (нет номера позиции, нет цифр в начале).
+   - "GROUP": если это заголовок группы (нет номера позиции, но в названии есть цифра с точкой, напр. "1. Изделия").
+   - "ITEM": если это конкретный товар/оборудование с номером позиции (напр. "1.1").
+3. ПОРЯДОК: Не меняй порядок строк! Возвращай их ровно так, как они идут в Markdown. Запрещено объединять одинаковые локации, если они разнесены в тексте.
+4. НУМЕРАЦИЯ (ВЛОЖЕННОСТЬ): Если в группе "2. Изделия" товар имеет номер "1.31" — ИСПРАВЬ его на логическое продолжение "2.1", "2.2" и т.д. Соблюдай иерархию родительского заголовка.
+5. ПОЛЯ: Для LOCATION и GROUP поля quantity, mass и т.д. оставляй пустыми ("").
+6. ИГНОРИРУЙ: только технические строки Markdown (разделители |---|). Все текстовые заголовки ДОЛЖНЫ быть в JSON с соответствующим row_type.
+7. ФОРМАТ: СТРОГО JSON. Без пояснений и markdown."""
 
     system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
 
@@ -882,6 +883,63 @@ async def match_items_endpoint(request: Request):
             }
             
     return {"invoice_items": invoice_items}
+
+
+def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans and structures data before Markdown conversion (TK v2.1).
+    1. Removes column enumerators (1 | 2 | 3...).
+    2. Pre-parses Groups (L1) (extracts '1.' from Name to Pos).
+    3. Marks Locations (L0) as BOLD CAPS if alone in row.
+    """
+    new_rows = []
+    # Identify key columns by index if names are wacky
+    # Usually: 0=Pos, 1=Name
+    col_pos = 0
+    col_name = 1
+    
+    for i, row in df.iterrows():
+        # Copy to avoid mutation issues
+        current_row = row.copy()
+        row_vals = [str(v).strip() for v in current_row.values]
+        
+        # 1. Filter "Digital Trash" (1 | 2 | 3 | 4...)
+        # Check if row consists of sequential or mostly small integers
+        digits = [v for v in row_vals if v.isdigit() and int(v) < 20]
+        if len(digits) > (len(row_vals) / 2) and any(v == "1" for v in row_vals):
+            continue # Skip header-enumerator row
+            
+        pos = row_vals[col_pos] if len(row_vals) > col_pos else ""
+        name = row_vals[col_name] if len(row_vals) > col_name else ""
+        
+        # Check others (from column 2 onwards)
+        other_vals = row_vals[2:] if len(row_vals) > 2 else []
+        is_others_empty = all(v == "" or v == "nan" or v == "None" for v in other_vals)
+        
+        # 2. Pre-parsing Groups (L1)
+        # Match "1. Items" where pos is empty
+        if (pos == "" or pos == "nan" or pos == "None") and name:
+            group_match = re.match(r'^(\d+(\.\d+)*)\.?\s+(.*)', name)
+            if group_match:
+                current_row.iloc[col_pos] = group_match.group(1) # Extracted number "1.1"
+                current_row.iloc[col_name] = group_match.group(3) # Remaining name
+                new_rows.append(current_row)
+                continue
+                
+        # 3. Mark Locations (L0)
+        # Empty Pos, empty Others, Name has no digits at start
+        if (pos == "" or pos == "nan" or pos == "None") and name and is_others_empty:
+             if not re.match(r'^\d', name):
+                 # BOLD CAPS
+                 current_row.iloc[col_name] = f"**{name.upper()}**"
+                 new_rows.append(current_row)
+                 continue
+                 
+        new_rows.append(current_row)
+        
+    if not new_rows:
+        return df
+    return pd.DataFrame(new_rows)
 
 
 @app.post("/api/storage/upload")
