@@ -887,58 +887,82 @@ async def match_items_endpoint(request: Request):
 
 def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Cleans and structures data before Markdown conversion (TK v2.1).
-    1. Removes column enumerators (1 | 2 | 3...).
-    2. Pre-parses Groups (L1) (extracts '1.' from Name to Pos).
-    3. Marks Locations (L0) as BOLD CAPS if alone in row.
+    Cleans and structures data before Markdown conversion (TK v2.1 Revision).
+    1. Dynamic Column Mapping (Search for Pos/Name by labels).
+    2. Aggressive sterilization (strip / replace NaN).
+    3. Advanced Row Filtering (sequential numbers 1-2-3).
+    4. Structuring L0 (Locations) and L1 (Groups).
     """
-    new_rows = []
-    # Identify key columns by index if names are wacky
-    # Usually: 0=Pos, 1=Name
-    col_pos = 0
-    col_name = 1
+    # 0. Global Sterilization
+    df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) and str(x).lower() not in ["nan", "none", "null"] else "")
     
-    for i, row in df.iterrows():
-        # Copy to avoid mutation issues
-        current_row = row.copy()
-        row_vals = [str(v).strip() for v in current_row.values]
-        
-        # 1. Filter "Digital Trash" (1 | 2 | 3 | 4...)
-        # Check if row consists of sequential or mostly small integers
-        digits = [v for v in row_vals if v.isdigit() and int(v) < 20]
-        if len(digits) > (len(row_vals) / 2) and any(v == "1" for v in row_vals):
-            continue # Skip header-enumerator row
+    # 1. Dynamic Mapping
+    col_pos = 0 # Default
+    col_name = 1 # Default
+    
+    pos_aliases = ["поз", "№", "pos", "п/п", "index"]
+    name_aliases = ["наименование", "название", "товар", "item", "name"]
+    
+    for i, col in enumerate(df.columns):
+        col_low = str(col).lower()
+        if any(a in col_low for a in pos_aliases):
+            col_pos = i
+            break
+    for i, col in enumerate(df.columns):
+        col_low = str(col).lower()
+        if any(a in col_low for a in name_aliases):
+            col_name = i
+            break
             
-        pos = row_vals[col_pos] if len(row_vals) > col_pos else ""
-        name = row_vals[col_name] if len(row_vals) > col_name else ""
+    print(f"DEBUG: Mapping Pos Index: {col_pos}, Name Index: {col_name}")
+    
+    new_rows = []
+    for i, row in df.iterrows():
+        # Clean current row values
+        row_vals = [str(v).strip() for v in row.values]
         
-        # Check others (from column 2 onwards)
-        other_vals = row_vals[2:] if len(row_vals) > 2 else []
-        is_others_empty = all(v == "" or v == "nan" or v == "None" for v in other_vals)
+        # 1. Sequence Filter "Digital Trash" (1 | 2 | 3 | 4...)
+        # Find all numbers in row, keep order, skip empty
+        nums = [int(v) for v in row_vals if v.isdigit()]
+        if len(nums) >= 3:
+            # Check for sequential pattern (e.g. 1-2-3 or 2-3-4)
+            is_seq = False
+            for start in range(len(nums) - 2):
+                if nums[start+1] == nums[start] + 1 and nums[start+2] == nums[start+1] + 1:
+                    is_seq = True
+                    break
+            if is_seq:
+                print(f"DEBUG: Skipping row-enumerator: {row_vals}")
+                continue
+            
+        pos = row_vals[col_pos]
+        name = row_vals[col_name]
+        
+        # Check others (any data besides pos/name)
+        other_vals = [v for idx, v in enumerate(row_vals) if idx != col_pos and idx != col_name and v != ""]
+        is_others_empty = (len(other_vals) == 0)
         
         # 2. Pre-parsing Groups (L1)
-        # Match "1. Items" where pos is empty
-        if (pos == "" or pos == "nan" or pos == "None") and name:
-            group_match = re.match(r'^(\d+(\.\d+)*)\.?\s+(.*)', name)
+        # Match "1. Items" or " 1. Items" where pos is empty
+        if pos == "" and name:
+            group_match = re.match(r'^\s*(\d+(\.\d+)*)\.?\s+(.*)', name)
             if group_match:
-                current_row.iloc[col_pos] = group_match.group(1) # Extracted number "1.1"
-                current_row.iloc[col_name] = group_match.group(3) # Remaining name
-                new_rows.append(current_row)
+                row.iloc[col_pos] = group_match.group(1) # Extracted number "1" or "1.1"
+                row.iloc[col_name] = group_match.group(3) # Remaining name
+                new_rows.append(row)
                 continue
                 
         # 3. Mark Locations (L0)
         # Empty Pos, empty Others, Name has no digits at start
-        if (pos == "" or pos == "nan" or pos == "None") and name and is_others_empty:
+        if pos == "" and name and is_others_empty:
              if not re.match(r'^\d', name):
-                 # BOLD CAPS
-                 current_row.iloc[col_name] = f"**{name.upper()}**"
-                 new_rows.append(current_row)
+                 # BOLD CAPS for visual anchor
+                 row.iloc[col_name] = f"**{name.upper()}**"
+                 new_rows.append(row)
                  continue
                  
-        new_rows.append(current_row)
+        new_rows.append(row)
         
-    if not new_rows:
-        return df
     return pd.DataFrame(new_rows)
 
 
