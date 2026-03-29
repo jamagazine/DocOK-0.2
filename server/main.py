@@ -463,9 +463,14 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
                 return i, False, None, 0, str(chunk_err)
 
     tasks = [process_single_chunk(i, chunk) for i, chunk in enumerate(chunks)]
-    results = await asyncio.gather(*tasks)
+    results = []
     
-    # Sort results by chunk index to maintain order
+    for coro in asyncio.as_completed(tasks):
+        res = await coro
+        results.append(res)
+        yield {"type": "progress", "index": res[0]+1, "total": len(chunks)}
+    
+    # Sort results STRICTLY by chunk index to maintain order
     results.sort(key=lambda x: x[0])
     
     for i, ok, parsed, tokens, err_msg in results:
@@ -480,14 +485,16 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
             all_items.append({
                 "pos": "ERROR",
                 "name": f"Ошибка обработки блока строк {i+1}",
-                "note": err_msg or "Неизвестная ошибка"
+                "note": err_msg or "Неизвестная ошибка",
+                "is_error_chunk": True
             })
             
     # If all items failed but we have a main_doc (unlikely), or no items at all
     if not all_items and not main_doc:
-        return None, total_tokens, None, chunks_report
+        yield {"type": "result", "items": None, "tokens": total_tokens, "main_doc": None, "chunks_report": chunks_report}
+        return
         
-    return all_items, total_tokens, main_doc, chunks_report
+    yield {"type": "result", "items": all_items, "tokens": total_tokens, "main_doc": main_doc, "chunks_report": chunks_report}
 
 def to_float(val) -> float:
     if not val: return 0.0
@@ -582,204 +589,231 @@ async def process_invoice(
     with open(temp_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
         
-    # CACHE CHECK
-    cache_path = os.path.join(STORAGE_DIR, f"{secured_name}.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached_data = json.load(f)
+    async def event_generator():
+        yield f"data: {json.dumps({'status': 'stage', 'step': 'prep'}, ensure_ascii=False)}\n\n"
+        # CACHE CHECK
+        cache_path = os.path.join(STORAGE_DIR, f"{secured_name}.json")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                    
+                cached_data["cost"] = 0
+                cached_data["method"] = "CACHED"
+                cached_data["model"] = "CACHED"
                 
-            cached_data["cost"] = 0
-            cached_data["method"] = "CACHED"
-            cached_data["model"] = "CACHED"
+                append_history({
+                    "fileName": original_name,
+                    "method": "CACHED",
+                    "model": "CACHED",
+                    "cost": 0,
+                    "tokens": 0,
+                    "status": "CACHED_RESTORE"
+                })
+                
+                manifest = _load_manifest()
+                for k, v in manifest.items():
+                    if isinstance(v, dict) and k == secured_name:
+                        v["cost"] = 0
+                        v["tokens"] = 0
+                        v["method"] = "CACHED"
+                        v["model"] = "CACHED"
+                        break
+                _save_manifest(manifest)
+                
+                yield f"data: {json.dumps({'status': 'final', 'data': cached_data}, ensure_ascii=False)}\n\n"
+                return
+            except Exception as e:
+                print(f"Cache read error: {e}")
+    
+        extracted_text = ""
+        has_low_confidence = False
+        parse_method = "direct_text"
+        num_pages = 0
+        
+        try:
+            if filename.endswith(".pdf"):
+                ext_text = ""
+                try:
+                    with pdfplumber.open(temp_path) as pdf:
+                        for page in pdf.pages:
+                            page_text = page.extract_text(x_tolerance=2, y_tolerance=3)
+                            # Attempt to replace multiple spaces with | to form logical columns for GPT
+                            if page_text:
+                                formatted_lines = [re.sub(r'\s{2,}', ' | ', line) for line in page_text.split('\n')]
+                                ext_text += "\n".join(formatted_lines) + "\n"
+                except Exception as e:
+                    print(f"pdfplumber error: {e}")
+    
+                if ext_text.strip():
+                    extracted_text = ext_text
+                    parse_method = "direct_text"
+                else:
+                    print("No text layer found. Falling back to OCR.")
+                    parse_method = "ocr_table"
+                    extracted_text = "" # Reset
+                    with pdfplumber.open(temp_path) as pdf:
+                        num_pages = len(pdf.pages)
+                        for i, page in enumerate(pdf.pages):
+                            page_img = page.to_image(resolution=150)
+                            img_byte_arr = io.BytesIO()
+                            page_img.original.save(img_byte_arr, format='PNG')
+                            b64_str = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+                            
+                            txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
+                            # OCR response is raw so we don't have delimiters easily, but we can do a simple split join
+                            formatted_ocr = " | ".join([line.strip() for line in txt.split("\n") if line.strip()])
+                            extracted_text += f"\n--- Page {i+1} ---\n | {formatted_ocr}\n"
+                            if low_conf:
+                                has_low_confidence = True
+                
+            elif filename.endswith((".png", ".jpg", ".jpeg")):
+                parse_method = "ocr_table"
+                num_pages = 1
+                with open(temp_path, "rb") as fimg:
+                    b64_str = base64.b64encode(fimg.read()).decode('utf-8')
+                txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
+                formatted_ocr = " | ".join([line.strip() for line in txt.split("\n") if line.strip()])
+                extracted_text += f" | {formatted_ocr}"
+                if low_conf:
+                    has_low_confidence = True
+                    
+            elif filename.endswith((".xlsx", ".xls", ".csv")):
+                if filename.endswith(".csv"):
+                    df = pd.read_csv(temp_path)
+                elif filename.endswith(".xls"):
+                    df = pd.read_excel(temp_path, engine='xlrd')
+                else:
+                    df = pd.read_excel(temp_path, engine='openpyxl')
+                
+                df = df.dropna(how='all')
+                df = df.fillna("")
+                
+                # Serialize with | for GPT consistency
+                header = " | ".join(map(str, df.columns))
+                rows = []
+                for _, row in df.iterrows():
+                    rows.append(" | ".join(map(str, row.values)))
+                extracted_text = header + "\n" + "\n".join(rows)
+                has_low_confidence = False
+                
+            else:
+                yield f"data: {json.dumps({'status': 'error', 'detail': 'Unsupported file format.'}, ensure_ascii=False)}\n\n"
+                return
+                
+            if not extracted_text.strip():
+                 yield f"data: {json.dumps({'status': 'error', 'detail': 'No readable text found in document.'}, ensure_ascii=False)}\n\n"
+                 return
+                 
+            # Call GPT to structure the data using chunking
+            model_type = "pro" if parse_method == "ocr_table" else "lite"
+            all_items = None
+            total_tokens = 0
+            main_doc_info = None
+            all_chunks_report = []
+            async for event in process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type):
+                if event["type"] == "progress":
+                    msg = {"status": "chunk", "index": event["index"], "total": event["total"]}
+                    yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                elif event["type"] == "result":
+                    all_items = event["items"]
+                    total_tokens = event["tokens"]
+                    main_doc_info = event["main_doc"]
+                    all_chunks_report = event["chunks_report"]
             
+            if all_items is None:
+                yield f"data: {json.dumps({'status': 'error', 'detail': 'ИИ вернул невалидный ответ'}, ensure_ascii=False)}\n\n"
+                return
+            
+            # Merge into a single struct for compatibility with existing calculate_uncertainty
+            merged_struct = {
+                "document": main_doc_info or {"name": file.filename, "metadata": {}},
+                "items": all_items
+            }
+            
+            # Override document name for UI grouping if GPT couldn't figure it out
+            if not merged_struct["document"].get("name"):
+                 merged_struct["document"]["name"] = file.filename
+            else:
+                 merged_struct["document"]["filename"] = file.filename
+                 
+            try:
+                final_struct = calculate_uncertainty(merged_struct, has_low_confidence)
+            except Exception as e:
+                print(f"calculate_uncertainty error: {e}")
+                final_struct = merged_struct
+            
+            # Pro rate: 1.2 RUB per 1000 tokens, Lite: 0.2 RUB per 1000 tokens
+            model_rate = 1.2 if model_type == "pro" else 0.2
+            cost = round((total_tokens * model_rate) / 1000, 2)
+            if parse_method == "ocr_table":
+                cost += round(num_pages * 1.22, 2)
+            
+            # Add usage and cost to the final return
+            final_struct["usage"] = {"total_tokens": total_tokens}
+            final_struct["cost"] = round(cost, 2)
+            final_struct["method"] = parse_method
+            final_struct["model"] = model_type
+            final_struct["chunks_report"] = all_chunks_report
+            final_struct["total_chunks"] = len(all_chunks_report) if all_chunks_report else 1
+            final_struct["processed_count"] = sum(1 for c in all_chunks_report if c.get("ok")) if all_chunks_report else 1
+            
+            # Save cache
+            try:
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(final_struct, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"Failed to write cache: {e}")
+                
             append_history({
                 "fileName": original_name,
-                "method": "CACHED",
-                "model": "CACHED",
-                "cost": 0,
-                "tokens": 0,
-                "status": "CACHED_RESTORE"
+                "method": parse_method,
+                "model": model_type,
+                "cost": round(cost, 2),
+                "tokens": total_tokens,
+                "status": "FIRST_RUN"
             })
             
+            # Persist cost + tokens to manifest
             manifest = _load_manifest()
             for k, v in manifest.items():
-                if isinstance(v, dict) and k == secured_name:
-                    v["cost"] = 0
-                    v["tokens"] = 0
-                    v["method"] = "CACHED"
-                    v["model"] = "CACHED"
+                if isinstance(v, dict) and v.get("originalName") == original_name:
+                    v["cost"] = round(cost, 2)
+                    v["tokens"] = total_tokens
+                    v["method"] = parse_method
+                    v["model"] = model_type
+                    break
+                elif isinstance(v, dict) and v.get("original_name") == original_name:
+                    v["cost"] = round(cost, 2)
+                    v["tokens"] = total_tokens
+                    v["method"] = parse_method
+                    v["model"] = model_type
                     break
             _save_manifest(manifest)
             
-            return cached_data
-        except Exception as e:
-            print(f"Cache read error: {e}")
-
-    extracted_text = ""
-    has_low_confidence = False
-    parse_method = "direct_text"
-    num_pages = 0
+            # Get estimated from manifest
+            estimated_cost = 0.0
+            for k, v in manifest.items():
+                if isinstance(v, dict) and (v.get("originalName") == original_name or v.get("original_name") == original_name):
+                    estimated_cost = v.get("estimated_cost", 0.0)
+                    break
+            
+            print(f"DEBUG ECONOMY: {filename} | Est: {estimated_cost} руб | Real: {cost} руб")
+            
+            yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
     
-    try:
-        if filename.endswith(".pdf"):
-            ext_text = ""
-            try:
-                with pdfplumber.open(temp_path) as pdf:
-                    for page in pdf.pages:
-                        page_text = page.extract_text(x_tolerance=2, y_tolerance=3)
-                        # Attempt to replace multiple spaces with | to form logical columns for GPT
-                        if page_text:
-                            formatted_lines = [re.sub(r'\s{2,}', ' | ', line) for line in page_text.split('\n')]
-                            ext_text += "\n".join(formatted_lines) + "\n"
-            except Exception as e:
-                print(f"pdfplumber error: {e}")
-
-            if ext_text.strip():
-                extracted_text = ext_text
-                parse_method = "direct_text"
-            else:
-                print("No text layer found. Falling back to OCR.")
-                parse_method = "ocr_table"
-                extracted_text = "" # Reset
-                with pdfplumber.open(temp_path) as pdf:
-                    num_pages = len(pdf.pages)
-                    for i, page in enumerate(pdf.pages):
-                        page_img = page.to_image(resolution=150)
-                        img_byte_arr = io.BytesIO()
-                        page_img.original.save(img_byte_arr, format='PNG')
-                        b64_str = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
-                        
-                        txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
-                        # OCR response is raw so we don't have delimiters easily, but we can do a simple split join
-                        formatted_ocr = " | ".join([line.strip() for line in txt.split("\n") if line.strip()])
-                        extracted_text += f"\n--- Page {i+1} ---\n | {formatted_ocr}\n"
-                        if low_conf:
-                            has_low_confidence = True
-            
-        elif filename.endswith((".png", ".jpg", ".jpeg")):
-            parse_method = "ocr_table"
-            num_pages = 1
-            with open(temp_path, "rb") as fimg:
-                b64_str = base64.b64encode(fimg.read()).decode('utf-8')
-            txt, low_conf = await ocr_yandex(b64_str, str(api_key), str(folder_id))
-            formatted_ocr = " | ".join([line.strip() for line in txt.split("\n") if line.strip()])
-            extracted_text += f" | {formatted_ocr}"
-            if low_conf:
-                has_low_confidence = True
-                
-        elif filename.endswith((".xlsx", ".xls", ".csv")):
-            if filename.endswith(".csv"):
-                df = pd.read_csv(temp_path)
-            elif filename.endswith(".xls"):
-                df = pd.read_excel(temp_path, engine='xlrd')
-            else:
-                df = pd.read_excel(temp_path, engine='openpyxl')
-            
-            df = df.dropna(how='all')
-            df = df.fillna("")
-            
-            # Serialize with | for GPT consistency
-            header = " | ".join(map(str, df.columns))
-            rows = []
-            for _, row in df.iterrows():
-                rows.append(" | ".join(map(str, row.values)))
-            extracted_text = header + "\n" + "\n".join(rows)
-            has_low_confidence = False
-            
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file format.")
-            
-        if not extracted_text.strip():
-             raise HTTPException(status_code=400, detail="No readable text found in document.")
-             
-        # Call GPT to structure the data using chunking
-        model_type = "pro" if parse_method == "ocr_table" else "lite"
-        all_items, total_tokens, main_doc_info, all_chunks_report = await process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type)
-        
-        if all_items is None:
-            raise HTTPException(status_code=422, detail="ИИ вернул невалидный ответ")
-        
-        # Merge into a single struct for compatibility with existing calculate_uncertainty
-        merged_struct = {
-            "document": main_doc_info or {"name": file.filename, "metadata": {}},
-            "items": all_items
-        }
-        
-        # Override document name for UI grouping if GPT couldn't figure it out
-        if not merged_struct["document"].get("name"):
-             merged_struct["document"]["name"] = file.filename
-        else:
-             merged_struct["document"]["filename"] = file.filename
-             
-        try:
-            final_struct = calculate_uncertainty(merged_struct, has_low_confidence)
         except Exception as e:
-            print(f"calculate_uncertainty error: {e}")
-            final_struct = merged_struct
-        
-        # Pro rate: 1.2 RUB per 1000 tokens, Lite: 0.2 RUB per 1000 tokens
-        model_rate = 1.2 if model_type == "pro" else 0.2
-        cost = round((total_tokens * model_rate) / 1000, 2)
-        if parse_method == "ocr_table":
-            cost += round(num_pages * 1.22, 2)
-        
-        # Add usage and cost to the final return
-        final_struct["usage"] = {"total_tokens": total_tokens}
-        final_struct["cost"] = round(cost, 2)
-        final_struct["method"] = parse_method
-        final_struct["model"] = model_type
-        final_struct["chunks_report"] = all_chunks_report
-        final_struct["total_chunks"] = len(all_chunks_report) if all_chunks_report else 1
-        final_struct["processed_count"] = sum(1 for c in all_chunks_report if c.get("ok")) if all_chunks_report else 1
-        
-        # Save cache
-        try:
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(final_struct, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"Failed to write cache: {e}")
-            
-        append_history({
-            "fileName": original_name,
-            "method": parse_method,
-            "model": model_type,
-            "cost": round(cost, 2),
-            "tokens": total_tokens,
-            "status": "FIRST_RUN"
-        })
-        
-        # Persist cost + tokens to manifest
-        manifest = _load_manifest()
-        for k, v in manifest.items():
-            if isinstance(v, dict) and v.get("originalName") == original_name:
-                v["cost"] = round(cost, 2)
-                v["tokens"] = total_tokens
-                v["method"] = parse_method
-                v["model"] = model_type
-                break
-            elif isinstance(v, dict) and v.get("original_name") == original_name:
-                v["cost"] = round(cost, 2)
-                v["tokens"] = total_tokens
-                v["method"] = parse_method
-                v["model"] = model_type
-                break
-        _save_manifest(manifest)
-        
-        return final_struct
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'status': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            # DEBUG: Disabled cleanup per user request to inspect temp files
+            # if os.path.exists(temp_path):
+            #     os.remove(temp_path)
+            pass
 
-    except HTTPException:
-        # Re-raise HTTP exceptions directly
-        raise
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # DEBUG: Disabled cleanup per user request to inspect temp files
-        # if os.path.exists(temp_path):
-        #     os.remove(temp_path)
-        pass
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 
 def transliterate(text: str) -> str:
@@ -913,7 +947,7 @@ async def storage_upload(file: UploadFile = File(...)):
             if ext_text.strip():
                 # Read ALL available text for maximum token estimation accuracy
                 input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                estimated_tokens = int(input_tokens * 2.3)
+                estimated_tokens = int(input_tokens * 1.5)
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")

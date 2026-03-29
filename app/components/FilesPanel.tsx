@@ -129,9 +129,25 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
               {/* Inline Progress Bar for Loading State (when no report yet) */}
               {isLoading && (!data.chunks_report || data.chunks_report.length === 0) && (
-                <div className="h-1 w-full bg-slate-100 rounded-full mt-1 overflow-hidden">
-                  <div className={cn("h-full bg-indigo-500", statusStr.includes('ИИ') ? "animate-progress-indeterminate" : "w-[90%] transition-all duration-[2000ms] ease-out")} />
-                </div>
+                <>
+                  <div className="h-1.5 w-full bg-slate-100 rounded-full mt-1 overflow-hidden">
+                    <div 
+                      className={cn("h-full bg-indigo-500", statusStr.includes('ИИ') ? "transition-all duration-500 ease-out" : "w-[90%] transition-all duration-[2000ms] ease-out")}
+                      style={statusStr.includes('ИИ') ? { 
+                        width: data.current_step === 'prep' ? '5%' : 
+                               data.current_step === 'ai' ? `${5 + ((data.processed_count || 0) / (data.total_chunks || 1)) * 90}%` : 
+                               (data.current_step === 'final' || data.status?.includes('Готово')) ? '100%' : '5%'
+                      } : undefined}
+                    />
+                  </div>
+                  {data.current_step && (
+                    <div className="text-[10px] text-indigo-600 mt-0.5 font-medium animate-pulse">
+                      {data.current_step === 'prep' && 'Подготовка...'}
+                      {data.current_step === 'ai' && `Обработка: [${data.processed_count || 0} из ${data.total_chunks || '?'}] чанков...`}
+                      {data.current_step === 'final' && 'Сборка данных...'}
+                    </div>
+                  )}
+                </>
               )}
 
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">

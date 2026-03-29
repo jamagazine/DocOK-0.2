@@ -25,6 +25,9 @@ export interface UploadStatus {
   error?: string;
   chunks?: { current: number; total: number };
   chunks_report?: { id: number; ok: boolean }[];
+  processed_count?: number;
+  total_chunks?: number;
+  current_step?: 'prep' | 'ai' | 'final';
 }
 
 export interface UploadedFile {
