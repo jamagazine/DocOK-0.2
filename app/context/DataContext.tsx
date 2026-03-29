@@ -426,89 +426,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const useAi = forceAI || isPdfOrImage;
 
     if (!useAi) {
-      setUploadStatuses((prev: Record<string, any>) => ({ 
+      setUploadStatuses((prev: any) => ({ 
         ...prev, 
-        [file.name]: { ...prev[file.name], status: 'Локальный парсинг...' } 
+        [file.name]: { 
+          ...prev[file.name], 
+          status: 'Готово (MD)', 
+          time: currentTime,
+          method: 'MD_Instant'
+        } 
       }));
-      try {
-        const { headers, rows: parsedRawRows, gridX } = await parseFile(file);
-        
-        // Дополнительно парсим геометрию для "Цифрового двойника" если это этап спецификации
-        if (stage === 'spec' && file.name.toLowerCase().endsWith('.pdf')) {
-          const geometry = await parsePdfGeometry(file);
-          setPdfGeometry(geometry);
-        }
-
-        const aliases = stage === 'spec' ? SPEC_ALIASES : INVOICE_ALIASES;
-        const detected = autoDetectMapping(headers, aliases);
-        
-        const mapping = Object.fromEntries(
-          Object.entries(detected).map(([key, value]) => [key, value.index])
-        );
-
-        if (stage === 'spec') {
-            const newRows: SpecRow[] = parsedRawRows.map((row) => ({
-              id: genId(),
-              fileId: file.name,
-              name: mapping.name !== undefined ? (row[mapping.name] || '') : '',
-              brand: mapping.brand !== undefined ? (row[mapping.brand] || '') : '',
-              code: mapping.code !== undefined ? (row[mapping.code] || '') : '',
-              supplier: mapping.supplier !== undefined ? (row[mapping.supplier] || '') : '',
-              unit: mapping.unit !== undefined ? (row[mapping.unit] || '') : '',
-              quantity: mapping.quantity !== undefined ? (row[mapping.quantity] || '') : '',
-              mass: mapping.mass !== undefined ? (row[mapping.mass] || '') : '',
-              note: mapping.note !== undefined ? (row[mapping.note] || '') : '',
-              originalRowsIds: [],
-              children: [],
-            }));
-
-            setSpecRows((prev) => [...prev, ...newRows]);
-            setBackupSpecRows((prev) => [...prev, ...newRows]);
-            setIsMerged(false);
-        } else {
-          const newRowsToAppend: InvoiceRow[] = parsedRawRows.map((row) => {
-            const r = emptyInvoiceRow();
-            r.fileId = file.name;
-            r.documentName = file.name;
-            if (mapping.article !== undefined) r.article = row[mapping.article] || '';
-            if (mapping.name !== undefined) r.name = row[mapping.name] || '';
-            if (mapping.supplier !== undefined) r.supplier = row[mapping.supplier] || '';
-            if (mapping.quantity !== undefined) r.quantity = row[mapping.quantity] || '';
-            if (mapping.unit !== undefined) r.unit = row[mapping.unit] || '';
-            if (mapping.price !== undefined) r.price = row[mapping.price] || '';
-            if (mapping.vat !== undefined) r.vatRate = row[mapping.vat] || '';
-            if (mapping.vatAmount !== undefined) r.vatAmount = row[mapping.vatAmount] || '';
-            if (mapping.total !== undefined) r.total = row[mapping.total] || '';
-
-            const qty = parseFloat(String(r.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-            const price = parseFloat(String(r.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-            const subtotal = qty * price;
-
-            if (!r.total && subtotal > 0) {
-              r.total = subtotal.toFixed(2);
-            }
-            return r;
-          });
-
-            setInvoiceRows((prev) => [...prev, ...newRowsToAppend]);
-          }
-          
-        setUploadStatuses((prev: any) => ({ 
-          ...prev, 
-          [file.name]: { 
-            ...prev[file.name], 
-            status: 'Готово (Локально)', 
-            time: currentTime,
-            model: prev[file.name]?.model || '',
-            method: 'CACHED'
-          } 
-        }));
-        setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-        // Sync status 'ok' to server
-        updateFileStatusOnServer(file.name, 'ok');
-      } catch (e: any) {
-        setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
-      }
+      // Sync status 'ok' to server
+      updateFileStatusOnServer(file.name, 'ok');
     } else if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
