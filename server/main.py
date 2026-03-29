@@ -302,10 +302,9 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
         "Content-Type": "application/json"
     }
 
-    INVOICE_PROMPT = """Ты специализированный парсер счетов на оплату и накладных.
-Текст извлечен из таблицы в формате Markdown (с разделителями `|`). Будь внимателен к структуре колонок. Ориентируйся на разметку таблицы при разборе.
+    INVOICE_PROMPT = """Ты — интеллектуальный редактор-корректор табличных данных. Тебе подана Markdown-таблица, которая может содержать ошибки: разорванные строки, смещенные колонки или неточное распознавание текста.
 
-Извлеки из текста документа данные и верни СТРОГО В ВИДЕ JSON:
+Твоя задача — "починить" таблицу и вернуть СТРОГО В ВИДЕ JSON:
 {
   "document": {
     "name": "Название формы (Счет на оплату №123, УПД и т.д.)",
@@ -340,13 +339,14 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
 9. КОНТЕКСТ ЕДИНИЦ: Если единица измерения не указана явно, но понятна из контекста — заполни unit (по умолчанию ставь 'шт').
 10. МАРКИРОВКА СИСТЕМ (ПЕ1, В1, К1 и т.д.): Если перед названием товара стоит короткий код системы (ПЕ, В, К, П + цифра), он ОБЯЗАН быть частью поля name. Пример: | ПЕ1 | Клапан... -> name: "ПЕ1 Клапан...". НИКОГДА не клади эти коды в поле article. Артикул — это только заводской шифр производителя."""
 
-    SPEC_PROMPT = """Ты — эксперт по анализу инженерных спецификаций. Тебе подана таблица в формате Markdown.
-Твоя задача: извлечь позиции и вернуть JSON.
+    SPEC_PROMPT = """Ты — эксперт-корректор инженерных спецификаций. Тебе подана Markdown-таблица.
+Твоя задача — исправить возможные ошибки распознавания (склеить разорванные строки, сопоставить данные с ключами) и вернуть результат в JSON.
+
 Колонки (разделитель |): 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
 
 ПРАВИЛА:
-1. ОДНА СТРОКА ТЕКСТА = ОДИН ОБЪЕКТ В JSON. Не объединяй разные строки таблицы без необходимости.
-2. ПЕРЕНОСЫ: Если одно наименование разбито на несколько строк таблицы (пустые ячейки в соседних колонках), ты ОБЯЗАН объединить их в одну позицию.
+1. ОДНА СТРОКА ТЕКСТА = ОДИН ОБЪЕКТ В JSON.
+2. ПЕРЕНОСЫ: Если одно наименование разбито на несколько строк таблицы (пустые ячейки в соседних колонках), объедини их в одну позицию.
 3. ПРИМЕЧАНИЕ (Footer): Если после таблицы идет свободный текст, запиши его в поле 'note' последней позиции.
 4. ЗАГОЛОВКИ: Если в строке нет количества (кол. 7), но есть имя — ставь "is_header": true.
 5. ФОРМАТ: СТРОГО JSON вида {"items": [...]}. Без пояснений и markdown."""
@@ -946,6 +946,11 @@ async def storage_upload(file: UploadFile = File(...)):
                 df = df.dropna(how='all')
                 df = df.fillna("")
                 
+                # Smart Clean: Remove only columns that are both Unnamed and totally empty
+                unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
+                if unnamed_empty:
+                    df = df.drop(columns=unnamed_empty)
+                
                 # Pre-generate Markdown for better estimates and processing
                 md_text = df.to_markdown(index=False, tablefmt="pipe")
                 md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
@@ -955,9 +960,9 @@ async def storage_upload(file: UploadFile = File(...)):
                 ext_text = md_text
                 
             if ext_text.strip():
-                # For Markdown-on-start, we use character length * 2.0 as highly accurate token estimate
+                # For Markdown-on-start, we use character length (divided by 4 for avg token) * 2.0
                 if is_spreadsheet:
-                    estimated_tokens = int(len(ext_text) * 2.0)
+                    estimated_tokens = int((len(ext_text) / 4) * 2.0)
                 else:
                     input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
                     estimated_tokens = int(input_tokens * 1.5)
@@ -991,7 +996,13 @@ async def storage_upload(file: UploadFile = File(...)):
         "status": "UPLOAD"
     })
     
-    return {"status": "success", "filename": secured_name, "estimated_cost": estimated_cost, "estimated_tokens": estimated_tokens}
+    return {
+        "status": "success", 
+        "filename": secured_name, 
+        "estimated_cost": estimated_cost, 
+        "estimated_tokens": estimated_tokens,
+        "raw_markdown": ext_text if is_spreadsheet else None
+    }
 
 
 @app.get("/api/storage/files")

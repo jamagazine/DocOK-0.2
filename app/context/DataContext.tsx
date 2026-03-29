@@ -321,6 +321,51 @@ export function DataProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('docok_yandex_config', JSON.stringify(config));
   }, []);
 
+  const parseMarkdownToRows = (md: string, stage: string, fileName: string) => {
+    const lines = md.split('\n').filter(l => l.trim().length > 0);
+    // Skip Markdown header (separator line is at index 1)
+    const dataLines = lines.length >= 2 ? lines.slice(2) : [];
+    
+    if (stage === 'spec') {
+      return dataLines.map(line => {
+        const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+        return {
+          id: genId(),
+          fileId: fileName,
+          pos: cols[0] || '',
+          name: cols[1] || '',
+          brand: cols[2] || '',
+          code: cols[3] || '',
+          supplier: cols[4] || '',
+          unit: cols[5] || '',
+          quantity: cols[6] || '',
+          mass: cols[7] || '',
+          note: cols[8] || '',
+          is_header: !cols[6],
+          originalRowsIds: [],
+          children: []
+        };
+      });
+    } else {
+      return dataLines.map(line => {
+        const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+        const r = emptyInvoiceRow();
+        r.fileId = fileName;
+        r.documentName = fileName;
+        // Basic mapping for Invoice from MD: 
+        // We might not know the exact order if it's dynamic, 
+        // but for now we follow the same logical order as Spec if it was spreadsheet
+        r.article = cols[0] || '';
+        r.name = cols[1] || '';
+        r.quantity = cols[2] || '1';
+        r.unit = cols[3] || 'шт';
+        r.price = cols[4] || '0';
+        r.total = cols[5] || '0';
+        return r;
+      });
+    }
+  };
+
   const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
@@ -361,6 +406,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
                  ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens })
                }
              }));
+          }
+
+          // TK v1.6: Instant Markdown population
+          if (resData.raw_markdown) {
+            const instantRows = parseMarkdownToRows(resData.raw_markdown, stage, file.name);
+            if (stage === 'spec') {
+              setSpecRows(prev => [...prev, ...instantRows as SpecRow[]]);
+            } else {
+              setInvoiceRows(prev => [...prev, ...instantRows as InvoiceRow[]]);
+            }
           }
         }
       } catch (e) {
