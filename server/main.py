@@ -908,11 +908,40 @@ async def storage_upload(file: UploadFile = File(...)):
     estimated_tokens = 0
     api_key, folder_id = get_yandex_keys()
     
-    if api_key and folder_id:
+    ext_text = ""
+    is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
+    
+    if is_spreadsheet:
         try:
-            ext_text = ""
-            is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
+            if original_filename.lower().endswith(".csv"):
+                df = pd.read_csv(dest_path)
+            elif original_filename.lower().endswith(".xls"):
+                df = pd.read_excel(dest_path, engine='xlrd')
+            else:
+                df = pd.read_excel(dest_path, engine='openpyxl')
             
+            df = df.dropna(how='all')
+            df = df.fillna("")
+            
+            # Smart Clean: Remove only columns that are both Unnamed and totally empty
+            unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
+            if unnamed_empty:
+                df = df.drop(columns=unnamed_empty)
+            
+            # Pre-generate Markdown for better estimates and processing
+            md_text = df.to_markdown(index=False, tablefmt="pipe")
+            md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
+            with open(md_path, "w", encoding="utf-8") as fmd:
+                fmd.write(md_text)
+            
+            ext_text = md_text
+            estimated_tokens = int((len(ext_text) / 4) * 2.0)
+            estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+        except Exception as e:
+            print(f"Spreadsheet processing error: {e}")
+            
+    elif api_key and folder_id:
+        try:
             if original_filename.lower().endswith(".pdf"):
                 try:
                     with pdfplumber.open(dest_path) as pdf:
@@ -930,38 +959,10 @@ async def storage_upload(file: UploadFile = File(...)):
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 estimated_tokens = 5000
                 estimated_cost = 7.0
-            elif is_spreadsheet:
-                if original_filename.lower().endswith(".csv"):
-                    df = pd.read_csv(dest_path)
-                elif original_filename.lower().endswith(".xls"):
-                    df = pd.read_excel(dest_path, engine='xlrd')
-                else:
-                    df = pd.read_excel(dest_path, engine='openpyxl')
                 
-                df = df.dropna(how='all')
-                df = df.fillna("")
-                
-                # Smart Clean: Remove only columns that are both Unnamed and totally empty
-                unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
-                if unnamed_empty:
-                    df = df.drop(columns=unnamed_empty)
-                
-                # Pre-generate Markdown for better estimates and processing
-                md_text = df.to_markdown(index=False, tablefmt="pipe")
-                md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
-                with open(md_path, "w", encoding="utf-8") as fmd:
-                    fmd.write(md_text)
-                
-                ext_text = md_text
-                
-            if ext_text.strip():
-                # For Markdown-on-start, we use character length (divided by 4 for avg token) * 2.0
-                if is_spreadsheet:
-                    estimated_tokens = int((len(ext_text) / 4) * 2.0)
-                else:
-                    input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
-                    estimated_tokens = int(input_tokens * 1.5)
-                
+            if ext_text.strip() and not is_spreadsheet:
+                input_tokens = await get_token_count(ext_text, "lite", api_key, folder_id)
+                estimated_tokens = int(input_tokens * 1.5)
                 estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
         except Exception as e:
             print(f"Error estimating cost: {e}")

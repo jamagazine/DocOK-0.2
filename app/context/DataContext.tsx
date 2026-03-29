@@ -430,13 +430,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         ...prev, 
         [file.name]: { 
           ...prev[file.name], 
-          status: 'Готово (MD)', 
+          status: 'READY_MD', 
           time: currentTime,
           method: 'MD_Instant'
         } 
       }));
-      // Sync status 'ok' to server
-      updateFileStatusOnServer(file.name, 'ok');
+      // Sync status 'READY_MD' to server (was 'ok')
+      updateFileStatusOnServer(file.name, 'READY_MD');
     } else if (useAi) {
       if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
