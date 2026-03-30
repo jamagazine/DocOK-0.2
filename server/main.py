@@ -682,11 +682,11 @@ async def process_invoice(
                 else:
                     # Fallback to direct reading if .md missing
                     if filename.endswith(".csv"):
-                        df = pd.read_csv(temp_path)
+                        df = pd.read_csv(temp_path, dtype=str)
                     elif filename.endswith(".xls"):
-                        df = pd.read_excel(temp_path, engine='xlrd')
+                        df = pd.read_excel(temp_path, engine='xlrd', dtype=str)
                     else:
-                        df = pd.read_excel(temp_path, engine='openpyxl')
+                        df = pd.read_excel(temp_path, engine='openpyxl', dtype=str)
                     
                     df = df.dropna(how='all')
                     df = df.fillna("")
@@ -888,78 +888,61 @@ async def match_items_endpoint(request: Request):
 
 
 def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    print("--- [DEBUG] Starting sanitization ---")
-    # 1. Стерилизация: всё в строки, убираем мусор
+    # 1. Стерилизация: превращаем всё в строки, убираем мусор
     df = df.fillna("").astype(str)
     for col in df.columns:
         df[col] = df[col].str.strip()
-    
-    # 2. Поиск колонок Поз и Наименование
-    col_pos, col_name = 0, 1
-    pos_aliases = ["поз", "№", "pos", "п/п", "index", "unnamed: 0"]
-    name_aliases = ["наименование", "название", "товар", "item", "name"]
-    
-    pos_found, name_found = False, False
+
+    # 2. ЖЁСТКИЙ МАППИНГ КОЛОНОК (Защита от слепоты)
+    col_pos, col_name = 0, 1 # Дефолты
     for i, col in enumerate(df.columns):
         c_low = str(col).lower()
-        if not pos_found and any(a in c_low for a in pos_aliases):
+        if "поз" in c_low or "№" in c_low or "unnamed: 0" in c_low:
             col_pos = i
-            pos_found = True
-        if not name_found and any(a in c_low for a in name_aliases):
+        elif "наименован" in c_low or "названи" in c_low or "unnamed: 1" in c_low:
             col_name = i
-            name_found = True
-        if pos_found and name_found:
-            break
-    
-    print(f"--- [DEBUG] Mapping: Pos at idx {col_pos}, Name at idx {col_name}")
+
+    print(f"--- [DEBUG] REAL MAPPING: Pos={col_pos}, Name={col_name} ---")
 
     new_rows = []
-    last_dot_pos = "" # Для отслеживания 1.9 -> 1.10
+    last_dot_pos = ""
 
     for idx, row in df.iterrows():
-        r = row.to_dict() # Работаем со словарем, чтобы изменения точно сохранились
+        r = row.to_dict()
         vals = list(r.values())
         pos = str(vals[col_pos]).strip()
         name = str(vals[col_name]).strip()
 
-        # А) Проверка на цифровой мусор (1|2|3|4...)
-        digit_vals = [v for v in vals if v.isdigit()]
-        if len(digit_vals) >= 4: continue
+        # 3. ФИКС 1.10: Если pandas всё-таки сожрал ноль
+        if pos.endswith(".1") and last_dot_pos.endswith(".9"):
+            if pos[:-2] == last_dot_pos[:-2]: # Сверяем базу (напр. '1.' == '1.')
+                pos = pos + "0" # 1.1 -> 1.10
+                r[df.columns[col_pos]] = pos
 
-        # Б) Фикс 1.10 (Проверка X.1 после X.9)
-        if "." in pos and re.match(r'^\d+(\.\d+)+$', pos):
-            p_parts = pos.split('.')
-            if p_parts[-1] == '1' and last_dot_pos:
-                lp_parts = last_dot_pos.split('.')
-                if len(p_parts) == len(lp_parts) and p_parts[:-1] == lp_parts[:-1] and lp_parts[-1] == '9':
-                    pos = ".".join(p_parts[:-1]) + ".10"
-                    r[df.columns[col_pos]] = pos
-                    print(f"--- [DEBUG] Fixed 1.10: row {idx} -> {pos}")
+        if re.match(r'^\d+(\.\d+)+$', pos):
             last_dot_pos = pos
 
-        # В) L1: Группы (вырезаем цифры из начала названия)
-        if (pos == "" or pos == "nan") and name:
-            group_match = re.match(r'^\s*(\d+(?:\.\d+)*)\.?\s+(.*)', name)
-            if group_match:
-                extracted_num = group_match.group(1).strip()
-                r[df.columns[col_pos]] = extracted_num
-                r[df.columns[col_name]] = group_match.group(2).strip()
+        # 4. РАЗДЕЛЕНИЕ ГРУПП (L1): "1. Электромонтажные изделия"
+        if (not pos or pos == "nan") and name:
+            match = re.match(r'^(\d+(?:\.\d+)*)\.?\s+(.*)', name)
+            if match:
+                r[df.columns[col_pos]] = match.group(1)
+                r[df.columns[col_name]] = match.group(2)
+                last_dot_pos = match.group(1)
                 new_rows.append(r)
-                if "." in extracted_num: last_dot_pos = extracted_num
                 continue
 
-        # Г) L0: Локации (маркер §)
+        # 5. МАРКЕР ЛОКАЦИЙ (L0): "Маслопрессовый цех"
         others = [v for i, v in enumerate(vals) if i not in [col_pos, col_name] and v != ""]
-        if (pos == "" or pos == "nan") and name and not others:
+        if (not pos or pos == "nan") and name and not others:
             if not re.match(r'^\d', name):
                 r[df.columns[col_pos]] = "§"
+                last_dot_pos = ""
                 new_rows.append(r)
-                # TK v2.3: НЕ сбрасываем last_dot_pos, чтобы "помнить" состояние сквозь локации
                 continue
 
         new_rows.append(r)
-        
-    print(f"--- [DEBUG] Sanitization finished. Rows kept: {len(new_rows)} ---")
+
     return pd.DataFrame(new_rows)
 
 
