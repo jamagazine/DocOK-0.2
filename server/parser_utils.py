@@ -150,31 +150,57 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         elif "ед" in cl and "изм" in cl: c_u = i
         elif "кол" in cl: c_q = i
         elif "__id__" in cl: c_id = i
-    items = []
+        
+    raw_list = []
     for idx, row in df.iterrows():
         v = [str(x).strip() for x in row.values]
         if not any(v): continue
         if v[c_p]=="1" and v[c_n]=="2" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
         
         row_id = v[c_id] if c_id != -1 else f"idx_{idx}"
-        pos_val = v[c_p]
-        name_val = v[c_n]
+        raw_list.append({
+            "id": row_id, 
+            "pos": v[c_p], 
+            "name": v[c_n], 
+            "unit": v[c_u] if c_u!=-1 else "", 
+            "quantity": v[c_q] if c_q!=-1 else ""
+        })
         
-        # Prelim heuristic typing
+    items = []
+    for i, raw in enumerate(raw_list):
+        pos_val = raw["pos"]
+        name_val = raw["name"]
+        
         r_type = "ITEM"
-        if pos_val == "§": r_type = "LOCATION"
+        if pos_val == "§": 
+            r_type = "LOCATION"
         elif re.match(r'^(\d+)(\.\d+)*\.$', pos_val) or re.match(r'^(\d+)(\.\d+)*\s', name_val) or (pos_val and not name_val and not re.search(r'[a-zA-Zа-яА-Я]', pos_val)): 
             r_type = "GROUP"
+        else:
+            # Lookahead check for hierarchies
+            next_pos = raw_list[i+1]["pos"] if i + 1 < len(raw_list) else ""
+            if re.match(r'^\d+$', pos_val) and next_pos.startswith(f"{pos_val}."):
+                r_type = "GROUP"
+                
+        # Field Cleaning & Formatting logic
+        if r_type == "LOCATION":
+            # Force § in pos, strip § from name, clear note
+            raw["pos"] = "§"
+            raw["name"] = re.sub(r'^[§\s]+|[§\s]+$', '', name_val).strip()
+            raw["note"] = ""
+        elif r_type == "GROUP":
+            # Extract leading number/dot from name if pos is not already better
+            # Matches "1. ", "1.1 ", "1.1. ", etc.
+            m = re.match(r'^(\d+(?:\.\d+)*\.?)\s+(.*)', name_val)
+            if m:
+                raw["pos"] = m.group(1)
+                raw["name"] = m.group(2).strip()
+            raw["note"] = ""
             
-        items.append({
-            "id": row_id, 
-            "pos": pos_val, 
-            "name": name_val, 
-            "unit": v[c_u] if c_u!=-1 else "", 
-            "quantity": v[c_q] if c_q!=-1 else "", 
-            "row_type": r_type, 
-            "is_header": r_type in ["LOCATION", "GROUP"]
-        })
+        raw["row_type"] = r_type
+        raw["is_header"] = r_type in ["LOCATION", "GROUP"]
+        items.append(raw)
+        
     return items
 
 def extract_text_from_pdf(path: str) -> str:

@@ -50,9 +50,9 @@ export const TableRow = React.memo(({
 }: TableRowProps) => {
 
   const hasChildren = row.children && row.children.length > 1;
-  const isLocation = row.row_type === 'LOCATION';
-  const isGroup = row.row_type === 'GROUP';
-  const isHeader = isLocation || isGroup || row.is_header;
+  const isLocation = row.row_type === 'LOCATION' || row.pos === '§';
+  const isGroup = row.row_type === 'GROUP' || (row.is_header && !isLocation);
+  const isHeader = isLocation || isGroup;
 
   const baseRowClasses = cn(
     "flex items-center text-sm border-b border-slate-100 transition-colors group cursor-pointer",
@@ -63,10 +63,9 @@ export const TableRow = React.memo(({
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
     stage === 'spec' && hasChildren && "bg-slate-50/30",
-    stage === 'spec' && isLocation && "bg-slate-800 text-white hover:bg-slate-700",
-    stage === 'spec' && isGroup && "bg-slate-100 text-slate-800 border-l-4 border-l-indigo-400 hover:bg-slate-200",
-    stage === 'spec' && !isHeader && "hover:bg-slate-50/80 cursor-pointer",
-    stage === 'spec' && row.is_header && !isLocation && !isGroup && "bg-amber-50/60 border-l-2 border-l-amber-400"
+    stage === 'spec' && isLocation && "bg-[#1e293b] text-white hover:bg-slate-800 font-bold border-b border-white/10",
+    stage === 'spec' && isGroup && "bg-blue-50/40 text-slate-900 shadow-[inset_4px_0_0_0_#4f46e5] hover:bg-blue-100/40",
+    stage === 'spec' && !isHeader && "hover:bg-slate-50/80 cursor-pointer"
   );
 
   return (
@@ -78,21 +77,34 @@ export const TableRow = React.memo(({
         }}
         className={baseRowClasses}
       >
-        {stage === 'spec' && (isLocation || isGroup) ? (
+        {stage === 'spec' && (isHeader) ? (
           // Special Header Rendering (Full Width) for SpecTable
-          <div className="flex w-full items-center px-4 py-3">
-            <div className="flex-none p-1.5 mr-4 opacity-50 shrink-0 h-6 w-6 flex items-center justify-center">
-              <span className={cn("font-bold text-xs", isLocation ? "text-slate-400" : "text-indigo-400")}>
-                {isLocation ? "L0" : "L1"}
-              </span>
+          <div className="flex w-full items-center select-none">
+            {/* Position Placeholder (Exactly matches standard pos column index 0) */}
+            <div 
+              className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent"
+            >
+              <div className="relative w-full h-full flex items-center justify-center">
+                <span className={cn(
+                  "font-black tabular-nums whitespace-nowrap",
+                  isLocation ? "text-blue-300 text-xl" : "text-indigo-700 text-sm"
+                )}>
+                  {row.pos}
+                </span>
+              </div>
             </div>
+            {/* Content Area */}
             <div className={cn(
-              "flex-grow font-bold tracking-tight",
-              isLocation ? "text-base uppercase" : "text-sm"
+              "flex-grow px-4 py-3 tracking-tight",
+              isLocation ? "text-base uppercase underline underline-offset-8 decoration-blue-500/30" : "text-sm font-bold"
             )}>
-              {isGroup && row.pos ? `${row.pos}. ${row.name}` : row.name}
+              {row.name}
             </div>
-            {row.pos && <div className="flex-none px-3 py-1 bg-black/10 rounded text-xs font-mono ml-4 opacity-60">{row.pos}</div>}
+            {isGroup && row.pos?.includes('.') && (
+              <div className="flex-none px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold mr-6 opacity-80 shrink-0">
+                L1
+              </div>
+            )}
           </div>
         ) : (
           // Standard Row Rendering
