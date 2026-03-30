@@ -893,69 +893,28 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].str.strip()
 
-    # 2. ЖЁСТКИЙ МАППИНГ КОЛОНОК (со строгими ограничениями и break!)
-    col_pos, col_name = 0, 1 # Дефолты
+    # 2. Поиск колонки позиции (только для фикса 1.10)
+    col_pos = 0
     for i, col in enumerate(df.columns):
         c_low = str(col).lower()
-        if "поз" in c_low or "№" in c_low or c_low == "unnamed: 0":
+        if "поз" in c_low or "№" in c_low or "unnamed: 0" in c_low:
             col_pos = i
             break
-            
-    for i, col in enumerate(df.columns):
-        c_low = str(col).lower()
-        if "наименован" in c_low or "названи" in c_low or c_low == "unnamed: 1":
-            col_name = i
-            break
 
-    print(f"--- [DEBUG] REAL MAPPING: Pos={col_pos}, Name={col_name} ---")
-
-    new_rows = []
     last_dot_pos = ""
-
     for idx, row in df.iterrows():
-        r = row.to_dict()
-        vals = list(r.values())
-        pos = str(vals[col_pos]).strip()
-        name = str(vals[col_name]).strip()
-        
-        # 3. Спасение текста из объединенных ячеек (когда текст падает в Unnamed: 1, а колонка Наименование пустая)
-        if not name and len(vals) > 1:
-            potential_name = str(vals[1]).strip()
-            if potential_name:
-                name = potential_name
+        pos = str(row.iloc[col_pos]).strip()
 
-        # 4. ФИКС 1.10: Если pandas всё-таки сожрал ноль
+        # 3. ФИКС 1.10: Если pandas всё-таки сожрал ноль
         if pos.endswith(".1") and last_dot_pos.endswith(".9"):
             if pos[:-2] == last_dot_pos[:-2]: # Сверяем базу (напр. '1.' == '1.')
                 pos = pos + "0" # 1.1 -> 1.10
-                r[df.columns[col_pos]] = pos
+                df.iloc[idx, col_pos] = pos
 
         if re.match(r'^\d+(\.\d+)+$', pos):
             last_dot_pos = pos
 
-        # 5. РАЗДЕЛЕНИЕ ГРУПП (L1): "1. Электромонтажные изделия"
-        if (not pos or pos == "nan") and name:
-            match = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(.*)', name)
-            if match:
-                r[df.columns[col_pos]] = match.group(1)
-                r[df.columns[col_name]] = match.group(2)
-                last_dot_pos = match.group(1)
-                new_rows.append(r)
-                continue
-
-        # 6. МАРКЕР ЛОКАЦИЙ (L0): "Маслопрессовый цех"
-        others = [v for i, v in enumerate(vals) if i not in [col_pos, col_name] and v != ""]
-        if (not pos or pos == "nan") and name and not others:
-            if not re.match(r'^\d', name):
-                r[df.columns[col_pos]] = "§"
-                last_dot_pos = ""
-                new_rows.append(r)
-                continue
-
-        new_rows.append(r)
-
-    return pd.DataFrame(new_rows)
-
+    return df
 
 
 @app.post("/api/storage/upload")
