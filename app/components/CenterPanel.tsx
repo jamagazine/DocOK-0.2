@@ -1,85 +1,30 @@
 import React from 'react';
 import {
   Search,
-  Folder,
   Edit2,
   Upload,
-  GripHorizontal,
   FolderOpen,
   Plus,
-  Trash2,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
-  Settings,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  MoreVertical,
-  Undo2,
-  Table as TableIcon,
-  ChevronDown,
-  Split,
   ArrowUpDown,
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import type { Stage, SpecRow, EstimateRow } from '../types';
+import type { Stage } from '../types';
 import { FilesPanel } from './FilesPanel';
-import { useData, genId, emptyInvoiceRow, InvoiceRow, SPEC_COLUMNS, emptySpecRow } from '../context/DataContext';
+import { useData, emptyInvoiceRow, emptySpecRow } from '../context/DataContext';
+import { useTableEditor } from '../hooks/useTableEditor';
+import { useTableNavigation } from '../hooks/useTableNavigation';
+import { TableRow, Column } from './Table/TableRow';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-interface AutoResizingTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
-  value: string;
-}
-
-const AutoResizingTextarea = React.forwardRef<HTMLTextAreaElement, AutoResizingTextareaProps>(
-  ({ className, value, ...props }, ref) => {
-    const internalRef = React.useRef<HTMLTextAreaElement>(null);
-    const combinedRef = (ref as React.RefObject<HTMLTextAreaElement>) || internalRef;
-
-    const adjustHeight = React.useCallback(() => {
-      const textarea = combinedRef.current;
-      if (textarea) {
-        textarea.style.height = 'auto';
-        textarea.style.height = `${textarea.scrollHeight}px`;
-      }
-    }, [combinedRef]);
-
-    React.useEffect(() => {
-      adjustHeight();
-      const timer = setTimeout(adjustHeight, 10);
-      return () => clearTimeout(timer);
-    }, [value, adjustHeight]);
-
-    return (
-      <textarea
-        ref={combinedRef}
-        value={value}
-        className={cn(
-          "bg-transparent border-none focus:ring-0 rounded-none px-1 w-full text-slate-900 resize-none overflow-hidden py-0 block min-h-[1.5rem] antialiased",
-          props.readOnly && "cursor-default",
-          className
-        )}
-        rows={1}
-        onInput={(e) => {
-          adjustHeight();
-          props.onInput?.(e);
-        }}
-        {...props}
-      />
-    );
-  }
-);
-AutoResizingTextarea.displayName = 'AutoResizingTextarea';
 
 interface CenterPanelProps {
   currentStage: Stage;
@@ -90,27 +35,11 @@ interface CenterPanelProps {
 export function CenterPanel({ currentStage, projectName, setProjectName }: CenterPanelProps) {
   const {
     uploadStatuses,
-    invoiceRows,
-    specRows,
-    requestRows,
-    estimateRows,
-    setInvoiceRows,
-    setSpecRows,
-    setRequestRows,
-    setEstimateRows,
     searchQuery,
     setSearchQuery,
-    handleFile,
-    selectedIds,
-    setSelectedIds,
-    toggleRowSelection,
-    currentPage,
     setCurrentPage,
-    rowsPerPage,
-    setRowsPerPage,
-    isOnlySelectedView,
-    setIsOnlySelectedView,
-    handleRowChange
+    setSelectedIds,
+    setIsOnlySelectedView
   } = useData();
 
   const [isEditingName, setIsEditingName] = React.useState(false);
@@ -124,14 +53,12 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
     }
   }, [isEditingName]);
 
-  // Reset pagination and selection when currentStage changes
   React.useEffect(() => {
     setCurrentPage(1);
-    setSelectedIds([]); // Clear selection on stage change
-    setIsOnlySelectedView(false); // Reset "Only Selected" view
+    setSelectedIds([]);
+    setIsOnlySelectedView(false);
   }, [currentStage, setCurrentPage, setSelectedIds, setIsOnlySelectedView]);
 
-  // Reset pagination on search query change
   React.useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, setCurrentPage]);
@@ -139,10 +66,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
   return (
     <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
       <div className="flex flex-col h-full flex-1 min-h-0">
-        {/* Header - Attic */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shadow-sm h-[72px] shrink-0">
-
-          {/* Left: Project Name */}
           <div className="flex-1 min-w-0 flex items-center gap-2">
             {isEditingName ? (
               <input
@@ -166,7 +90,6 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
             )}
           </div>
 
-          {/* Center: Search */}
           <div className="flex-1 flex justify-center px-4">
             <div className="relative w-full max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -180,10 +103,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
             </div>
           </div>
 
-          {/* Right: Upload Statuses & Files Button */}
           <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
-
-
             <button
               onClick={() => setFilesOpen(!filesOpen)}
               className={cn(
@@ -203,7 +123,6 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
           </div>
         </div>
 
-        {/* Middle: Table Container */}
         <div className="flex-1 overflow-auto relative bg-white">
           <div className="min-w-max h-full">
             {currentStage === 'spec' && <SpecTable />}
@@ -214,10 +133,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
         </div>
       </div>
 
-      {/* Footer */}
       <Footer />
-
-      {/* Slide-in Files Overlay */}
       <FilesPanel isOpen={filesOpen} onClose={() => setFilesOpen(false)} />
     </div>
   );
@@ -225,19 +141,15 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
 
 function Footer() {
   const {
-    currentStage,
     getCurrentRows,
     selectedIds,
     currentPage,
     setCurrentPage,
     rowsPerPage,
     setRowsPerPage,
-    isOnlySelectedView,
-    setIsOnlySelectedView
   } = useData();
 
   const totalRows = getCurrentRows().length;
-
   const totalPages = Math.ceil(totalRows / rowsPerPage) || 1;
 
   const handlePageChange = (page: number) => {
@@ -251,25 +163,20 @@ function Footer() {
         <div className="flex items-center gap-1 text-slate-400 whitespace-nowrap">
           <span>Всего строк:</span>
           <span className="font-semibold text-slate-700">{totalRows}</span>
-
           {selectedIds.length > 0 && (
             <>
               <span>/</span>
-              <span className="font-semibold text-slate-700">
-                {selectedIds.length}
-              </span>
+              <span className="font-semibold text-slate-700">{selectedIds.length}</span>
             </>
           )}
         </div>
       </div>
 
-      {/* Center: Pagination */}
       <div className="flex items-center justify-center gap-1">
         <button
           onClick={() => setCurrentPage(1)}
           disabled={currentPage === 1 || totalPages === 1}
           className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
-          title="Первая страница"
         >
           <ChevronsLeft size={16} />
         </button>
@@ -277,7 +184,6 @@ function Footer() {
           onClick={() => handlePageChange(currentPage - 1)}
           disabled={currentPage === 1 || totalPages === 1}
           className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors mr-2"
-          title="Назад"
         >
           <ChevronLeft size={16} />
         </button>
@@ -286,20 +192,16 @@ function Footer() {
           {(() => {
             const pages: (number | string)[] = [];
             const maxVisible = 7;
-
             if (totalPages <= maxVisible) {
               for (let i = 1; i <= totalPages; i++) pages.push(i);
             } else {
               pages.push(1);
               if (currentPage > 3) pages.push('...');
-
               const start = Math.max(2, currentPage - 1);
               const end = Math.min(totalPages - 1, currentPage + 1);
-
               for (let i = start; i <= end; i++) {
                 if (!pages.includes(i)) pages.push(i);
               }
-
               if (currentPage < totalPages - 2) pages.push('...');
               pages.push(totalPages);
             }
@@ -329,7 +231,6 @@ function Footer() {
           onClick={() => handlePageChange(currentPage + 1)}
           disabled={currentPage === totalPages || totalPages === 1}
           className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors ml-2"
-          title="Вперед"
         >
           <ChevronRight size={16} />
         </button>
@@ -337,13 +238,11 @@ function Footer() {
           onClick={() => setCurrentPage(totalPages)}
           disabled={currentPage === totalPages || totalPages === 1}
           className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
-          title="Последняя страница"
         >
           <ChevronsRight size={16} />
         </button>
       </div>
 
-      {/* Right: Rows per page */}
       <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
         <span className="hidden sm:inline">Строк на странице:</span>
         <select
@@ -393,25 +292,10 @@ function EmptyStateBlock({ handleFile, currentStage }: { handleFile: any, curren
   );
 }
 
-interface Column {
-  key: string;
-  label: string;
-  align?: 'left' | 'center' | 'right';
-  sortable?: boolean;
-  width?: string;
-}
-
 function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: string[] }) {
-  const {
-    sortConfig,
-    handleSort,
-    selectedIds,
-    toggleSelectAllPage
-  } = useData();
-
+  const { sortConfig, handleSort, selectedIds, toggleSelectAllPage } = useData();
   const [isHovered, setIsHovered] = React.useState(false);
 
-  // Состояние выбора для всей страницы
   const isAllSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.includes(id));
   const isSomeSelected = pageIds.some(id => selectedIds.includes(id)) && !isAllSelected;
 
@@ -438,15 +322,9 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
             onMouseLeave={() => idx === 0 && setIsHovered(false)}
           >
             {idx === 0 && col.key === 'pos' ? (
-              <div
-                className="flex items-center justify-center w-full"
-                onClick={(e) => e.stopPropagation()}
-              >
+              <div className="flex items-center justify-center w-full" onClick={(e) => e.stopPropagation()}>
                 {(isHovered || isAllSelected || isSomeSelected) ? (
-                  <div
-                    className="relative flex items-center justify-center cursor-pointer"
-                    onClick={() => toggleSelectAllPage(pageIds)}
-                  >
+                  <div className="relative flex items-center justify-center cursor-pointer" onClick={() => toggleSelectAllPage(pageIds)}>
                     <input
                       type="checkbox"
                       className={cn(
@@ -454,10 +332,8 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
                         isSomeSelected && "opacity-100"
                       )}
                       checked={isAllSelected}
-                      onChange={() => { }} // Обработка в onClick выше для стоп-пропагейшн
-                      ref={(el) => {
-                        if (el) el.indeterminate = isSomeSelected;
-                      }}
+                      onChange={() => { }} 
+                      ref={(el) => { if (el) el.indeterminate = isSomeSelected; }}
                     />
                   </div>
                 ) : (
@@ -467,7 +343,6 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
             ) : (
               <span className="break-words whitespace-normal">{col.label}</span>
             )}
-
             {isSortable && col.key !== 'pos' && (
               <div className={cn(
                 "shrink-0 transition-opacity",
@@ -488,12 +363,14 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
 }
 
 function SpecTable() {
-  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, handleRowChange, isOnlySelectedView } = useData();
+  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
+  const { handleCellUpdate } = useTableEditor('spec');
+  const { handleKeyDown } = useTableNavigation();
 
-  const toggleExpand = (id: string) => {
+  const toggleExpand = React.useCallback((id: string) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  }, []);
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
@@ -517,162 +394,22 @@ function SpecTable() {
         <div className="bg-white min-w-full">
           <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => {
-              const actualIndex = startIndex + i;
-              const hasChildren = row.children && row.children.length > 1;
-              const isExpanded = !!expandedRows[row.id];
-              const isSelected = selectedIds.includes(row.id);
-              const isLocation = row.row_type === 'LOCATION';
-              const isGroup = row.row_type === 'GROUP';
-              const isHeader = isLocation || isGroup || row.is_header;
-
-              return (
-                <React.Fragment key={row.id}>
-                  <div
-                    onClick={() => !isHeader && toggleRowSelection(row.id, false)}
-                    className={cn(
-                      "flex items-center text-sm border-b border-slate-100 transition-colors group min-h-[48px]",
-                      hasChildren && "bg-slate-50/30",
-                      isSelected && "bg-indigo-50/50",
-                      isLocation && "bg-slate-800 text-white hover:bg-slate-700",
-                      isGroup && "bg-slate-100 text-slate-800 border-l-4 border-l-indigo-400 hover:bg-slate-200",
-                      !isHeader && "hover:bg-slate-50/80 cursor-pointer",
-                      row.is_header && !isLocation && !isGroup && "bg-amber-50/60 border-l-2 border-l-amber-400"
-                    )}
-                  >
-                    {isLocation || isGroup ? (
-                      // Special Header Rendering (Full Width)
-                      <div className="flex w-full items-center px-4 py-3">
-                        <div className="flex-none p-1.5 mr-4 opacity-50 shrink-0 h-6 w-6 flex items-center justify-center">
-                          <span className={cn("font-bold text-xs", isLocation ? "text-slate-400" : "text-indigo-400")}>
-                            {isLocation ? "L0" : "L1"}
-                          </span>
-                        </div>
-                        <div className={cn(
-                          "flex-grow font-bold tracking-tight",
-                          isLocation ? "text-base uppercase" : "text-sm"
-                        )}>
-                          {isGroup && row.pos ? `${row.pos}. ${row.name}` : row.name}
-                        </div>
-                        {row.pos && <div className="flex-none px-3 py-1 bg-black/10 rounded text-xs font-mono ml-4 opacity-60">{row.pos}</div>}
-                      </div>
-                    ) : (
-                      // Standard Row Rendering
-                      columns.map(col => (
-                        <div
-                          key={col.key}
-                          className={cn(
-                            "px-4 py-3 overflow-hidden border-r border-slate-100 last:border-0 h-full flex items-center break-words whitespace-normal",
-                            col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                          )}
-                          style={{
-                            flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                            minWidth: col.width || '100px'
-                          }}
-                          onClick={col.key === 'pos' && !isHeader ? (e) => {
-                            e.stopPropagation();
-                            toggleRowSelection(row.id, true);
-                          } : undefined}
-                        >
-                          {col.key === 'pos' ? (
-                            <div className="relative w-full h-full flex items-center justify-center font-medium">
-                              {hasChildren && !isHeader && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleExpand(row.id);
-                                  }}
-                                  className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
-                                >
-                                  {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
-                                </button>
-                              )}
-                              {isLocation ? (
-                                <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
-                              ) : isGroup ? (
-                                <span className="text-indigo-700 font-bold text-xs">{row.pos}</span>
-                              ) : isHeader ? (
-                                <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
-                              ) : isSelected ? (
-                                <input
-                                  type="checkbox"
-                                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                  checked={true}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleRowSelection(row.id, true);
-                                  }}
-                                  onChange={() => { }}
-                                />
-                              ) : (
-                                <>
-                                  <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                    {row.pos || (actualIndex + 1).toString().padStart(2, '0')}
-                                  </span>
-                                  <input
-                                    type="checkbox"
-                                    className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                    checked={false}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleRowSelection(row.id, true);
-                                    }}
-                                    onChange={() => { }}
-                                  />
-                                </>
-                              )}
-                            </div>
-                          ) : isHeader && col.key === 'name' ? (
-                            <span className="text-amber-800 font-bold text-sm">{String((row as any)[col.key] || '')}</span>
-                          ) : (
-                            <AutoResizingTextarea
-                              value={String((row as any)[col.key] || '')}
-                              readOnly={selectedIds.length > 0 || isHeader}
-                              tabIndex={selectedIds.length > 0 || isHeader ? -1 : 0}
-                              onChange={(e) => handleRowChange('spec', row.id, col.key, e.target.value)}
-                              onClick={(e) => {
-                                if (selectedIds.length === 0 && !isHeader) e.stopPropagation();
-                              }}
-                              className={cn(
-                                col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
-                                col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left",
-                                isHeader && "italic text-amber-700"
-                              )}
-                            />
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {isExpanded && row.children?.map((child, childIdx) => (
-                    <div key={child.id} className="flex items-center text-xs bg-slate-50/20 border-b border-slate-100 h-10 italic group/child">
-                      {columns.map(col => (
-                        <div
-                          key={col.key}
-                          className={cn(
-                            "px-4 py-1 overflow-hidden border-r border-slate-100/50 last:border-0 h-full flex items-center",
-                            col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                          )}
-                          style={{
-                            flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                            minWidth: col.width || '100px'
-                          }}
-                        >
-                          {col.key === 'pos' ? (
-                            <div className="flex items-center gap-2 pl-6">
-                              <span className="text-slate-300 tabular-nums">{(childIdx + 1)}</span>
-                            </div>
-                          ) : (
-                            <span className="text-slate-500 break-words whitespace-normal">{String((child as any)[col.key] || '')}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </React.Fragment>
-              );
-            })}
+            {slicedRows.map((row, i) => (
+              <TableRow
+                key={row.id}
+                row={row}
+                columns={columns}
+                stage="spec"
+                actualIndex={startIndex + i}
+                isSelected={selectedIds.includes(row.id)}
+                selectedIds={selectedIds}
+                toggleRowSelection={toggleRowSelection}
+                onUpdate={handleCellUpdate}
+                isExpanded={!!expandedRows[row.id]}
+                toggleExpand={toggleExpand}
+                onKeyDown={handleKeyDown}
+              />
+            ))}
           </div>
         </div>
       ) : (
@@ -680,7 +417,6 @@ function SpecTable() {
           <EmptyStateBlock handleFile={handleFile} currentStage="spec" />
         </div>
       )}
-
       {specRows.length > 0 && (
         <button
           onClick={() => setSpecRows([...specRows, emptySpecRow()])}
@@ -696,6 +432,8 @@ function SpecTable() {
 
 function RequestTable() {
   const { requestRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
+  const { handleCellUpdate } = useTableEditor('request');
+  const { handleKeyDown } = useTableNavigation();
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
@@ -717,82 +455,20 @@ function RequestTable() {
         <>
           <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => {
-              const actualIndex = startIndex + i;
-              const isSelected = selectedIds.includes(row.id);
-              return (
-                <div
-                  key={row.id}
-                  onClick={() => toggleRowSelection(row.id, false)}
-                  className={cn(
-                    "flex items-center text-sm border-b border-slate-50 hover:bg-slate-50 transition-colors group min-h-[48px] cursor-pointer",
-                    isSelected && "bg-indigo-50/50",
-                    row.math_error && "bg-red-50/70 hover:bg-red-100/70"
-                  )}
-                >
-                  {columns.map(col => (
-                    <div
-                      key={col.key}
-                      className={cn(
-                        "px-4 py-3 border-r border-slate-100 last:border-0 h-full flex items-center break-words whitespace-normal",
-                        col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                      )}
-                      style={{
-                        flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                        minWidth: col.width || '100px'
-                      }}
-                      onClick={col.key === 'pos' ? (e) => {
-                        e.stopPropagation();
-                        toggleRowSelection(row.id, true);
-                      } : undefined}
-                    >
-                      {col.key === 'pos' ? (
-                        <div className="relative w-full h-full flex items-center justify-center font-medium">
-                          {isSelected ? (
-                            <input
-                              type="checkbox"
-                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                              checked={true}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleRowSelection(row.id, true);
-                              }}
-                              onChange={() => { }}
-                            />
-                          ) : (
-                            <>
-                              <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                {(actualIndex + 1).toString().padStart(2, '0')}
-                              </span>
-                              <input
-                                type="checkbox"
-                                className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                checked={false}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleRowSelection(row.id, true);
-                                }}
-                                onChange={() => { }}
-                              />
-                            </>
-                          )}
-                        </div>
-                      ) : (
-                        <AutoResizingTextarea
-                          value={String((row as any)[col.key] || '')}
-                          readOnly={true}
-                          tabIndex={-1}
-                          className={cn(
-                            "text-slate-600",
-                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                          )}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
+            {slicedRows.map((row, i) => (
+              <TableRow
+                key={row.id}
+                row={row}
+                columns={columns}
+                stage="request"
+                actualIndex={startIndex + i}
+                isSelected={selectedIds.includes(row.id)}
+                selectedIds={selectedIds}
+                toggleRowSelection={toggleRowSelection}
+                onUpdate={handleCellUpdate}
+                onKeyDown={handleKeyDown}
+              />
+            ))}
           </div>
         </>
       ) : (
@@ -805,7 +481,9 @@ function RequestTable() {
 }
 
 function InvoiceTable() {
-  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, handleRowChange, isOnlySelectedView } = useData();
+  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, specRows } = useData();
+  const { handleCellUpdate } = useTableEditor('invoice');
+  const { handleKeyDown } = useTableNavigation();
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
@@ -829,130 +507,21 @@ function InvoiceTable() {
         <div className="bg-white">
           <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => {
-              const actualIndex = startIndex + i;
-              const isSelected = selectedIds.includes(row.id);
-              return (
-                <div
-                  key={row.id}
-                  onClick={() => toggleRowSelection(row.id, false)}
-                  className={cn(
-                    "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50 transition-colors group min-h-[48px] cursor-pointer",
-                    row.isUncertain && "bg-amber-50/50",
-                    isSelected && "bg-indigo-50/50"
-                  )}
-                >
-                  {columns.map(col => (
-                    <div
-                      key={col.key}
-                      className={cn(
-                        "px-4 py-3 border-r border-slate-100 last:border-0 h-full flex items-center break-words whitespace-normal",
-                        col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                      )}
-                      style={{
-                        flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                        minWidth: col.width || '100px'
-                      }}
-                      onClick={col.key === 'pos' ? (e) => {
-                        e.stopPropagation();
-                        toggleRowSelection(row.id, true);
-                      } : undefined}
-                    >
-                      {col.key === 'pos' ? (
-                        <div className="relative w-full h-full flex items-center justify-center font-medium">
-                          {isSelected ? (
-                            <input
-                              type="checkbox"
-                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                              checked={true}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleRowSelection(row.id, true);
-                              }}
-                              onChange={() => { }}
-                            />
-                          ) : (
-                            <>
-                              {row.isUncertain && <AlertTriangle className="absolute left-1 w-3 h-3 text-amber-500 shrink-0" />}
-                              <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                {(actualIndex + 1).toString().padStart(2, '0')}
-                              </span>
-                              <input
-                                type="checkbox"
-                                className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                checked={false}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleRowSelection(row.id, true);
-                                }}
-                                onChange={() => { }}
-                              />
-                            </>
-                          )}
-                        </div>
-                      ) : col.key === 'match_data' ? (
-                        <div className="relative w-full h-full flex items-center gap-2 group/match overflow-visible">
-                          {row.match_data?.status === 'perfect' && <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] shrink-0" title="Идеальное совпадение" />}
-                          {row.match_data?.status === 'warning' && <div className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)] shrink-0" title="Возможное совпадение" />}
-                          {row.match_data?.status === 'none' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] shrink-0" title="Нет совпадений" />}
-
-                          {(!row.match_data || row.match_data.status === 'none') && <span className="text-xs text-slate-400 italic">Связи нет</span>}
-
-                          {row.match_data?.status === 'warning' && (
-                            <div className="flex flex-col text-[11px] leading-tight min-w-0" title={row.match_data.target_name || ''}>
-                              <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
-                              <span className="text-amber-600 font-semibold">{row.match_data.score}% сходства</span>
-                            </div>
-                          )}
-                          {row.match_data?.status === 'perfect' && (
-                            <div className="flex flex-col text-[11px] leading-tight min-w-0" title={row.match_data.target_name || ''}>
-                              <span className="text-slate-700 truncate font-medium">{row.match_data.target_name}</span>
-                              <span className="text-emerald-600 font-semibold">{row.match_data.score}%</span>
-                            </div>
-                          )}
-
-                          {/* Manual Override Select */}
-                          <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover/match:opacity-100 transition-opacity">
-                            <select
-                              className="w-5 h-5 opacity-0 absolute inset-0 cursor-pointer z-10"
-                              title="Изменить связь вручную"
-                              value={row.match_data?.target_id || ''}
-                              onChange={(e) => {
-                                const specId = e.target.value;
-                                if (!specId) return;
-                                const specName = e.target.options[e.target.selectedIndex].text;
-                                const newMatch = { target_id: specId, target_name: specName, score: 100, status: 'perfect' };
-                                handleRowChange('invoice', row.id, 'match_data', newMatch);
-                              }}
-                            >
-                              <option value="">-- Выбрать из спецификации --</option>
-                              {useData().specRows.map(s => <option key={s.id} value={s.id}>{s.name || s.code}</option>)}
-                            </select>
-                            <div className="w-5 h-5 rounded hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer pointer-events-none">
-                              <Edit2 className="w-3 h-3" />
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <AutoResizingTextarea
-                          value={String((row as any)[col.key] || '')}
-                          readOnly={selectedIds.length > 0}
-                          tabIndex={selectedIds.length > 0 ? -1 : 0}
-                          onChange={(e) => handleRowChange('invoice', row.id, col.key, e.target.value)}
-                          onClick={(e) => {
-                            if (selectedIds.length === 0) e.stopPropagation();
-                          }}
-                          className={cn(
-                            col.key === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
-                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                          )}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
+            {slicedRows.map((row, i) => (
+              <TableRow
+                key={row.id}
+                row={row}
+                columns={columns}
+                stage="invoice"
+                actualIndex={startIndex + i}
+                isSelected={selectedIds.includes(row.id)}
+                selectedIds={selectedIds}
+                toggleRowSelection={toggleRowSelection}
+                onUpdate={handleCellUpdate}
+                specRows={specRows}
+                onKeyDown={handleKeyDown}
+              />
+            ))}
           </div>
         </div>
       ) : (
@@ -974,7 +543,9 @@ function InvoiceTable() {
 }
 
 function EstimateTable() {
-  const { estimateRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, handleRowChange, isOnlySelectedView } = useData();
+  const { estimateRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
+  const { handleCellUpdate } = useTableEditor('estimate');
+  const { handleKeyDown } = useTableNavigation();
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
@@ -996,106 +567,20 @@ function EstimateTable() {
         <div className="bg-white min-w-full shadow-sm rounded-xl overflow-hidden border border-slate-200/60">
           <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => {
-              const actualIndex = startIndex + i;
-              const isSelected = selectedIds.includes(row.id);
-              return (
-                <div
-                  key={row.id}
-                  onClick={() => toggleRowSelection(row.id, false)}
-                  className={cn(
-                    "flex items-center text-sm border-b border-slate-100 hover:bg-slate-50 transition-colors group min-h-[56px] cursor-pointer",
-                    isSelected && "bg-indigo-50/50"
-                  )}
-                >
-                  {columns.map(col => (
-                    <div
-                      key={col.key}
-                      className={cn(
-                        "px-4 py-3 border-r border-slate-100 last:border-0 h-full flex items-center break-words whitespace-normal",
-                        col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                      )}
-                      style={{
-                        flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                        minWidth: col.width || '100px'
-                      }}
-                      onClick={col.key === 'pos' ? (e) => {
-                        e.stopPropagation();
-                        toggleRowSelection(row.id, true);
-                      } : undefined}
-                    >
-                      {col.key === 'pos' ? (
-                        <div className="relative w-full h-full flex items-center justify-center font-medium">
-                          {isSelected ? (
-                            <input
-                              type="checkbox"
-                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                              checked={true}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleRowSelection(row.id, true);
-                              }}
-                              onChange={() => { }}
-                            />
-                          ) : (
-                            <>
-                              <span className="group-hover:hidden text-slate-400 tabular-nums">
-                                {(actualIndex + 1).toString().padStart(2, '0')}
-                              </span>
-                              <input
-                                type="checkbox"
-                                className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                checked={false}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleRowSelection(row.id, true);
-                                }}
-                                onChange={() => { }}
-                              />
-                            </>
-                          )}
-                        </div>
-                      ) : col.key === 'costPrice' || col.key === 'clientPrice' ? (
-                        <div className="flex flex-col items-end w-full">
-                          <input
-                            className={cn(
-                              "bg-transparent border-none focus:ring-2 focus:ring-indigo-500/20 rounded px-1 w-full text-right",
-                              col.key === 'costPrice' ? "text-blue-600" : "text-emerald-600",
-                              selectedIds.length === 0 ? "cursor-text" : "cursor-pointer"
-                            )}
-                            value={String((row as any)[col.key] || '')}
-                            readOnly={selectedIds.length > 0}
-                            tabIndex={selectedIds.length > 0 ? -1 : 0}
-                            onClick={(e) => {
-                              if (selectedIds.length === 0) e.stopPropagation();
-                            }}
-                            onChange={(e) => handleRowChange('estimate', row.id, col.key as 'quantity' | 'price' | 'clientPrice', e.target.value)}
-                          />
-                          <span className="text-[10px] text-slate-400 px-1 antialiased">
-                            {new Intl.NumberFormat('ru-RU').format(Number((row as any)[col.key] || 0))} ₽
-                          </span>
-                        </div>
-                      ) : (
-                        <AutoResizingTextarea
-                          value={String((row as any)[col.key] || '')}
-                          readOnly={selectedIds.length > 0}
-                          tabIndex={selectedIds.length > 0 ? -1 : 0}
-                          onChange={(e) => handleRowChange('estimate', row.id, col.key, e.target.value)}
-                          onClick={(e) => {
-                            if (selectedIds.length === 0) e.stopPropagation();
-                          }}
-                          className={cn(
-                            col.key === 'name' ? "text-slate-900 font-medium" :
-                              col.key === 'workType' ? "text-slate-500 text-xs" : "text-slate-600",
-                            col.align === 'center' ? "text-center" : col.align === 'right' ? "text-right" : "text-left"
-                          )}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
+            {slicedRows.map((row, i) => (
+              <TableRow
+                key={row.id}
+                row={row}
+                columns={columns}
+                stage="estimate"
+                actualIndex={startIndex + i}
+                isSelected={selectedIds.includes(row.id)}
+                selectedIds={selectedIds}
+                toggleRowSelection={toggleRowSelection}
+                onUpdate={handleCellUpdate}
+                onKeyDown={handleKeyDown}
+              />
+            ))}
           </div>
         </div>
       ) : (
