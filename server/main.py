@@ -291,21 +291,21 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
         "Content-Type": "application/json"
     }
 
-    INVOICE_PROMPT = \"\"\"Ты — интеллектуальный редакторТабличных данных. Тебе подана Markdown-таблица.
-1. ВЕРНИ СТРОГО JSON: {\"items\": [...]}.
+    INVOICE_PROMPT = """Ты — интеллектуальный редакторТабличных данных. Тебе подана Markdown-таблица.
+1. ВЕРНИ СТРОГО JSON: {"items": [...]}.
 2. ТОЛЬКО ТОВАРЫ. Игнорируй заголовки, разделители, Итого.
 3. МАТЕМАТИКА: quantity = total / price если количество пустое.
 4. РАЗДЕЛЯЙ quantity и unit (напр. '10 кг' -> 10 и 'кг').
 5. МАРКИРОВКА: коды систем ПЕ1, В1 и т.д. должны быть в name.
-\"\"\"
+"""
 
-    SPEC_PROMPT = \"\"\"Ты — эксперт-корректор спецификаций. Markdown-таблица.
+    SPEC_PROMPT = """Ты — эксперт-корректор спецификаций. Markdown-таблица.
 Колонки: 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
-1. ВЕРНИ JSON: {\"items\": [...]}.
+1. ВЕРНИ JSON: {"items": [...]}.
 2. row_type: LOCATION, GROUP или ITEM.
 3. НУМЕРАЦИЯ: Соблюдай иерархию (1.1, 1.2...).
 4. ИГНОРИРУЙ технические строки (1 | 2 | 3...).
-\"\"\"
+"""
 
     system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
     user_text = f"Текст документа:\n{text}"
@@ -487,6 +487,7 @@ async def process_invoice(
         with open(temp_path, "wb") as f: shutil.copyfileobj(file.file, f)
 
     async def event_generator():
+        yield f"data: {{json.dumps({{'status': 'stage', 'step': 'prep'}}, ensure_ascii=False)}}\n\n"
         if os.path.exists(cache_path):
             try:
                 with open(cache_path, "r", encoding="utf-8") as f:
@@ -521,8 +522,10 @@ async def process_invoice(
             elif filename.endswith((".xlsx", ".xls", ".csv")):
                 df = pd.read_csv(temp_path, dtype=str) if filename.endswith(".csv") else pd.read_excel(temp_path, dtype=str)
                 df = sanitize_dataframe(df.fillna(""))
-                extracted_text = df.to_markdown(index=False, tablefmt="pipe")
-                p_method = "auto"
+                unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
+                if unnamed_empty: df = df.drop(columns=unnamed_empty)
+                extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+                p_method = "excel_ai"
             else:
                 p_method = "ocr_table"
                 with open(temp_path, "rb") as f:
@@ -557,9 +560,9 @@ async def process_invoice(
 
 
 def transliterate(text: str) -> str:
-    ru = \"абвгдёезийклмнопрстуфхцчшщъыьэюяАБВГДЁЕЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ\"
-    en = [\"a\", \"b\", \"v\", \"g\", \"d\", \"yo\", \"e\", \"z\", \"i\", \"j\", \"k\", \"l\", \"m\", \"n\", \"o\", \"p\", \"r\", \"s\", \"t\", \"u\", \"f\", \"h\", \"ts\", \"ch\", \"sh\", \"shch\", \"\", \"y\", \"\", \"e\", \"yu\", \"ya\", \"A\", \"B\", \"V\", \"G\", \"D\", \"Yo\", \"E\", \"Z\", \"I\", \"J\", \"K\", \"L\", \"M\", \"N\", \"O\", \"P\", \"R\", \"S\", \"T\", \"U\", \"F\", \"H\", \"Ts\", \"Ch\", \"Sh\", \"Shch\", \"\", \"Y\", \"\", \"E\", \"Yu\", \"Ya\"]
-    return \"\".join({ru[i]: en[i] for i in range(len(ru))}.get(c, c) for c in text)
+    ru = "абвгдёезийклмнопрстуфхцчшщъыьэюяАБВГДЁЕЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+    en = ["a", "b", "v", "g", "d", "yo", "e", "z", "i", "j", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya", "A", "B", "V", "G", "D", "Yo", "E", "Z", "I", "J", "K", "L", "M", "N", "O", "P", "R", "S", "T", "U", "F", "H", "Ts", "Ch", "Sh", "Shch", "", "Y", "", "E", "Yu", "Ya"]
+    return "".join({ru[i]: en[i] for i in range(len(ru))}.get(c, c) for c in text)
 
 def secure_filename(filename: str) -> str:
     return re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
@@ -567,59 +570,121 @@ def secure_filename(filename: str) -> str:
 @app.post("/api/match-items")
 async def match_items_endpoint(request: Request):
     data = await request.json()
-    invoice_items, spec_items = data.get(\"invoice_items\", []), data.get(\"spec_items\", [])
-    spec_dict = [{\"id\": s.get(\"id\"), \"raw\": s.get(\"name\", \"\"), \"norm\": normalize_for_match(str(s.get(\"name\", \"\")))} for s in spec_items if s.get(\"id\")]
+    invoice_items, spec_items = data.get("invoice_items", []), data.get("spec_items", [])
+    spec_dict = [{"id": s.get("id"), "raw": s.get("name", ""), "norm": normalize_for_match(str(s.get("name", "")))} for s in spec_items if s.get("id")]
     for item in invoice_items:
-        norm_i, best, best_s = normalize_for_match(str(item.get(\"name\", \"\"))), None, 0
+        norm_i, best, best_s = normalize_for_match(str(item.get("name", ""))), None, 0
         if norm_i and spec_dict:
             for s in spec_dict:
-                sc = rapidfuzz.fuzz.token_sort_ratio(norm_i, s[\"norm\"])
+                sc = rapidfuzz.fuzz.token_sort_ratio(norm_i, s["norm"])
                 if sc > best_s: best_s, best = sc, s
-        item[\"match_data\"] = {\"target_id\": best[\"id\"] if best else None, \"target_name\": best[\"raw\"] if best else None, \"score\": round(best_s, 1), \"status\": \"perfect\" if best_s > 90 else (\"warning\" if best_s >= 60 else \"none\")}
-    return {\"invoice_items\": invoice_items}
+        item["match_data"] = {"target_id": best["id"] if best else None, "target_name": best["raw"] if best else None, "score": round(best_s, 1), "status": "perfect" if best_s > 90 else ("warning" if best_s >= 60 else "none")}
+    return {"invoice_items": invoice_items}
 
 def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.fillna(\"\").astype(str)
+    df = df.fillna("").astype(str)
     c_p, c_n = 0, 1
     for i, c in enumerate(df.columns):
         cl = str(c).lower()
-        if any(x in cl for x in [\"поз\", \"№\", \"unnamed: 0\"]): c_p = i
-        elif any(x in cl for x in [\"наименован\", \"названи\", \"товар\"]): c_n = i
-    last = \"\"
+        if any(x in cl for x in ["поз", "№", "unnamed: 0"]): c_p = i
+        elif any(x in cl for x in ["наименован", "названи", "товар"]): c_n = i
+    last = ""
     for i in range(len(df)):
         p, n = df.iloc[i, c_p].strip(), df.iloc[i, c_n].strip()
-        if (not p or p==\"nan\") and n:
-            m = re.match(r'^(\\d+(?:\\.\\d+)*)\\.?\\s*(.*)', n)
+        if (not p or p=="nan") and n:
+            m = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(.*)', n)
             if m: df.iloc[i, c_p], df.iloc[i, c_n], p = m.group(1), m.group(2), m.group(1)
-        if p.endswith(\".1\") and last.endswith(\".9\") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + \"0\"
-        if re.match(r'^\\d+(\\.\\d+)+$', p): last = p
+        if p.endswith(".1") and last.endswith(".9") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + "0"
+        if re.match(r'^\d+(\.\d+)+$', p): last = p
     return df
 
 def convert_df_to_items(df: pd.DataFrame) -> list:
     c_p, c_n, c_u, c_q = 0, 1, -1, -1
     for i, c in enumerate(df.columns):
         cl = str(c).lower()
-        if \"поз\" in cl or \"№\" in cl: c_p = i
-        elif \"наимен\" in cl or \"товар\" in cl: c_n = i
-        elif \"ед\" in cl and \"изм\" in cl: c_u = i
-        elif \"кол\" in cl: c_q = i
+        if "поз" in cl or "№" in cl: c_p = i
+        elif "наимен" in cl or "товар" in cl: c_n = i
+        elif "ед" in cl and "изм" in cl: c_u = i
+        elif "кол" in cl: c_q = i
     items = []
     for idx, row in df.iterrows():
         v = [str(x).strip() for x in row.values]
-        if v[c_p]==\"1\" and v[c_n]==\"2\" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
+        if v[c_p]=="1" and v[c_n]=="2" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
         if not v[c_p] and not v[c_n]: continue
-        items.append({\"id\": f\"idx_{idx}\", \"pos\": v[c_p], \"name\": v[c_n], \"unit\": v[c_u] if c_u!=-1 else \"\", \"quantity\": v[c_q] if c_q!=-1 else \"1\", \"row_type\": \"ITEM\", \"is_header\": False})
+        items.append({"id": f"idx_{idx}", "pos": v[c_p], "name": v[c_n], "unit": v[c_u] if c_u!=-1 else "", "quantity": v[c_q] if c_q!=-1 else "1", "row_type": "ITEM", "is_header": False})
     return items
 
 @app.post("/api/storage/upload")
 async def storage_upload(file: UploadFile = File(...)):
-    sn = secure_filename(transliterate(file.filename))
-    p = os.path.join(STORAGE_DIR, sn)
-    with open(p, \"wb\") as f: shutil.copyfileobj(file.file, f)
+    original_filename = file.filename
+    transliterated = transliterate(original_filename)
+    secured_name = secure_filename(transliterated)
+    dest_path = os.path.join(STORAGE_DIR, secured_name)
+    with open(dest_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+        
+    estimated_cost = 0.0
+    estimated_tokens = 0
+    api_key, folder_id = get_yandex_keys()
+    ext_text = ""
+    is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
+    
+    # Pre-parse format immediately
+    if is_spreadsheet:
+        try:
+            if original_filename.lower().endswith(".csv"): df = pd.read_csv(dest_path, dtype=str)
+            elif original_filename.lower().endswith(".xls"): df = pd.read_excel(dest_path, engine='xlrd', dtype=str)
+            else: df = pd.read_excel(dest_path, engine='openpyxl', dtype=str)
+            
+            df = df.dropna(how='all').fillna("")
+            df = sanitize_dataframe(df)
+            unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
+            if unnamed_empty: df = df.drop(columns=unnamed_empty)
+            md_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+            ext_text = md_text
+            estimated_tokens = int((len(ext_text) / 4) * 2.0)
+            estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+        except Exception as e:
+            print(f"Spreadsheet processing error: {e}")
+    elif api_key and folder_id:
+        try:
+            if original_filename.lower().endswith(".pdf"):
+                with pdfplumber.open(dest_path) as pdf:
+                    pages = len(pdf.pages)
+                    if pages > 0:
+                        estimated_cost = round(pages * 7.0, 2)
+                        estimated_tokens = pages * 5000
+            elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
+                estimated_tokens = 5000
+                estimated_cost = 7.0
+        except Exception as e:
+            print(f"Error estimating cost: {e}")
+            
     manifest = _load_manifest()
-    manifest[sn] = {\"originalName\": file.filename, \"status\": \"ok\", \"cost\": 0, \"tokens\": 0}
+    existing = manifest.get(secured_name, {})
+    manifest[secured_name] = {
+        "originalName": original_filename,
+        "status": "READY_MD" if is_spreadsheet else "ok",
+        "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
+        "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
+        "model": existing.get("model", "") if isinstance(existing, dict) else "",
+        "method": existing.get("method", "") if isinstance(existing, dict) else "",
+        "estimated_cost": estimated_cost,
+        "estimated_tokens": estimated_tokens
+    }
     _save_manifest(manifest)
-    return {\"status\": \"success\", \"filename\": sn}
+    
+    append_history({
+        "fileName": original_filename, "method": "", "model": "", "cost": 0, "tokens": 0, "status": "UPLOAD"
+    })
+    
+    return {
+        "status": "success", 
+        "filename": secured_name, 
+        "estimated_cost": estimated_cost, 
+        "estimated_tokens": estimated_tokens, 
+        "raw_markdown": ext_text if is_spreadsheet else None
+    }
 
 @app.get("/api/storage/files")
 async def storage_list():
@@ -627,18 +692,18 @@ async def storage_list():
     files = []
     if os.path.exists(STORAGE_DIR):
         for f in os.listdir(STORAGE_DIR):
-            if f==\"manifest.json\" or f.startswith('.') or f.endswith((\".json\", \".md\")): continue
+            if f=="manifest.json" or f.startswith('.') or f.endswith((".json", ".md")): continue
             entry = manifest.get(f, {})
-            files.append({\"name\": entry.get(\"originalName\", f), \"disk_name\": f, \"status\": entry.get(\"status\", \"ok\"), \"cost\": entry.get(\"cost\", 0)})
+            files.append({"name": entry.get("originalName", f), "disk_name": f, "status": entry.get("status", "ok"), "cost": entry.get("cost", 0)})
     return files
 
 @app.patch("/api/storage/files/{name}")
 async def storage_update_file(name: str, data: dict):
     m = _load_manifest()
     for k, v in m.items():
-        if isinstance(v, dict) and v.get(\"originalName\")==name:
-            v.update({ki: vi for ki, vi in data.items() if ki in [\"status\", \"cost\", \"tokens\"]})
-            _save_manifest(m); return {\"ok\": True}
+        if isinstance(v, dict) and v.get("originalName")==name:
+            v.update({ki: vi for ki, vi in data.items() if ki in ["status", "cost", "tokens"]})
+            _save_manifest(m); return {"ok": True}
     raise HTTPException(status_code=404)
 
 @app.delete("/api/storage/files/{name}")
@@ -646,20 +711,20 @@ async def storage_delete(name: str, nuclear: bool = False):
     m = _load_manifest()
     dk = None
     for k, v in m.items():
-        if isinstance(v, dict) and v.get(\"originalName\")==name: dk = k; break
+        if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
     if not dk: dk = secure_filename(name)
-    for ext in [\"\", \".json\", \".md\"]:
+    for ext in ["", ".json", ".md"]:
         p = os.path.join(STORAGE_DIR, dk + ext)
         if os.path.exists(p): os.remove(p)
     if dk in m: del m[dk]; _save_manifest(m)
-    return {\"status\": \"success\"}
+    return {"status": "success"}
 
 @app.get("/api/storage/files/{name}")
 async def storage_get(name: str):
     m = _load_manifest()
     dk = None
     for k, v in m.items():
-        if isinstance(v, dict) and v.get(\"originalName\")==name: dk = k; break
+        if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
     p = os.path.join(STORAGE_DIR, dk or secure_filename(name))
     if os.path.exists(p): return FileResponse(p)
     raise HTTPException(status_code=404)
