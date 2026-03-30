@@ -692,7 +692,7 @@ async def process_invoice(
                     df = df.fillna("")
                     # TK v2.3 FIX: Centralized sanitization for fallback reading
                     df = sanitize_dataframe(df)
-                    extracted_text = df.to_markdown(index=False, tablefmt="pipe")
+                    extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
                 has_low_confidence = False
                 
             else:
@@ -989,7 +989,7 @@ async def storage_upload(file: UploadFile = File(...)):
                 df = df.drop(columns=unnamed_empty)
             
             # Pre-generate Markdown for better estimates and processing
-            md_text = df.to_markdown(index=False, tablefmt="pipe")
+            md_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
 
             md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
             with open(md_path, "w", encoding="utf-8") as fmd:
