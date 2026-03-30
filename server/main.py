@@ -133,6 +133,17 @@ def get_yandex_keys():
     except:
         return None, None
 
+def load_prompt(name: str) -> str:
+    path = os.path.join(os.path.dirname(__file__), "prompts", f"{name}_prompt.md")
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception as e:
+        print(f"Error loading prompt {name}: {e}")
+        return ""
+
 @app.get("/api/storage/history/export")
 async def export_history():
     if not os.path.exists(HISTORY_FILE):
@@ -291,23 +302,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = 
         "Content-Type": "application/json"
     }
 
-    INVOICE_PROMPT = """Ты — интеллектуальный редакторТабличных данных. Тебе подана Markdown-таблица.
-1. ВЕРНИ СТРОГО JSON: {"items": [...]}.
-2. ТОЛЬКО ТОВАРЫ. Игнорируй заголовки, разделители, Итого.
-3. МАТЕМАТИКА: quantity = total / price если количество пустое.
-4. РАЗДЕЛЯЙ quantity и unit (напр. '10 кг' -> 10 и 'кг').
-5. МАРКИРОВКА: коды систем ПЕ1, В1 и т.д. должны быть в name.
-"""
-
-    SPEC_PROMPT = """Ты — эксперт-корректор спецификаций. Markdown-таблица.
-Колонки: 1:pos, 2:name, 3:brand, 4:code, 5:supplier, 6:unit, 7:quantity, 8:mass, 9:note.
-1. ВЕРНИ JSON: {"items": [...]}.
-2. row_type: LOCATION, GROUP или ITEM.
-3. НУМЕРАЦИЯ: Соблюдай иерархию (1.1, 1.2...).
-4. ИГНОРИРУЙ технические строки (1 | 2 | 3...).
-"""
-
-    system_prompt = SPEC_PROMPT if doc_type == "spec" else INVOICE_PROMPT
+    system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
     user_text = f"Текст документа:\n{text}"
     
     # Отладка промпта
@@ -692,7 +687,7 @@ async def storage_list():
     files = []
     if os.path.exists(STORAGE_DIR):
         for f in os.listdir(STORAGE_DIR):
-            if f=="manifest.json" or f.startswith('.') or f.endswith((".json", ".md")): continue
+            if f in ["manifest.json", "last_prompt.txt"] or f.startswith('.') or f.endswith((".json", ".md")): continue
             entry = manifest.get(f, {})
             files.append({"name": entry.get("originalName", f), "disk_name": f, "status": entry.get("status", "ok"), "cost": entry.get("cost", 0)})
     return files
