@@ -561,6 +561,7 @@ def calculate_uncertainty(struct: dict, global_low_conf: bool):
 async def process_invoice(
     file: UploadFile = File(...),
     doc_type: str = Form("invoice"),
+    parse_method: str = Form("auto"), # ТЗ v3.0: Добавлен параметр метода
     x_api_key: str | None = Header(None),
     x_folder_id: str | None = Header(None)
 ):
@@ -675,24 +676,25 @@ async def process_invoice(
                     has_low_confidence = True
                     
             elif filename.endswith((".xlsx", ".xls", ".csv")):
+                # ТЗ v3.0: Всегда грузим DF для прямого провода (даже если есть .md)
+                if filename.endswith(".csv"):
+                    df = pd.read_csv(temp_path, dtype=str)
+                elif filename.endswith(".xls"):
+                    df = pd.read_excel(temp_path, engine='xlrd', dtype=str)
+                else:
+                    df = pd.read_excel(temp_path, engine='openpyxl', dtype=str)
+                
+                df = df.dropna(how='all')
+                df = df.fillna("")
+                df = sanitize_dataframe(df)
+                
                 md_path = os.path.join(STORAGE_DIR, f"{secured_name}.md")
-                if os.path.exists(md_path):
+                if os.path.exists(md_path) and parse_method != "auto":
                     with open(md_path, "r", encoding="utf-8") as fmd:
                         extracted_text = fmd.read()
                 else:
-                    # Fallback to direct reading if .md missing
-                    if filename.endswith(".csv"):
-                        df = pd.read_csv(temp_path, dtype=str)
-                    elif filename.endswith(".xls"):
-                        df = pd.read_excel(temp_path, engine='xlrd', dtype=str)
-                    else:
-                        df = pd.read_excel(temp_path, engine='openpyxl', dtype=str)
-                    
-                    df = df.dropna(how='all')
-                    df = df.fillna("")
-                    # TK v2.3 FIX: Centralized sanitization for fallback reading
-                    df = sanitize_dataframe(df)
                     extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+                
                 has_low_confidence = False
                 
             else:
@@ -703,21 +705,28 @@ async def process_invoice(
                  yield f"data: {json.dumps({'status': 'error', 'detail': 'No readable text found in document.'}, ensure_ascii=False)}\n\n"
                  return
                  
-            # Call GPT to structure the data using chunking
-            model_type = "pro" if parse_method == "ocr_table" else "lite"
-            all_items = None
-            total_tokens = 0
-            main_doc_info = None
-            all_chunks_report = []
-            async for event in process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type):
-                if event["type"] == "progress":
-                    msg = {"status": "chunk", "index": event["index"], "total": event["total"]}
-                    yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-                elif event["type"] == "result":
-                    all_items = event["items"]
-                    total_tokens = event["tokens"]
-                    main_doc_info = event["main_doc"]
-                    all_chunks_report = event["chunks_report"]
+            # ТЗ v3.0: ПРЯМОЙ ПРОВОД ДЛЯ EXCEL/CSV (если метод auto)
+            if is_spreadsheet and parse_method == "auto":
+                all_items = convert_df_to_items(df)
+                total_tokens = 0
+                main_doc_info = {"name": original_name, "metadata": {}}
+                all_chunks_report = [{"index": 0, "status": "direct_import", "tokens": 0}]
+            else:
+                # Call GPT to structure the data using chunking
+                model_type = "pro" if parse_method == "ocr_table" else "lite"
+                all_items = None
+                total_tokens = 0
+                main_doc_info = None
+                all_chunks_report = []
+                async for event in process_chunks_with_gpt(extracted_text, str(api_key), str(folder_id), model_type, doc_type):
+                    if event["type"] == "progress":
+                        msg = {"status": "chunk", "index": event["index"], "total": event["total"]}
+                        yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                    elif event["type"] == "result":
+                        all_items = event["items"]
+                        total_tokens = event["tokens"]
+                        main_doc_info = event["main_doc"]
+                        all_chunks_report = event["chunks_report"]
             
             if all_items is None:
                 yield f"data: {json.dumps({'status': 'error', 'detail': 'ИИ вернул невалидный ответ'}, ensure_ascii=False)}\n\n"
@@ -725,15 +734,15 @@ async def process_invoice(
             
             # Merge into a single struct for compatibility with existing calculate_uncertainty
             merged_struct = {
-                "document": main_doc_info or {"name": file.filename, "metadata": {}},
+                "document": main_doc_info or {"name": original_name, "metadata": {}},
                 "items": all_items
             }
             
             # Override document name for UI grouping if GPT couldn't figure it out
             if not merged_struct["document"].get("name"):
-                 merged_struct["document"]["name"] = file.filename
+                 merged_struct["document"]["name"] = original_name
             else:
-                 merged_struct["document"]["filename"] = file.filename
+                 merged_struct["document"]["filename"] = original_name
                  
             try:
                 final_struct = calculate_uncertainty(merged_struct, has_low_confidence)
@@ -742,7 +751,7 @@ async def process_invoice(
                 final_struct = merged_struct
             
             # Pro rate: 1.2 RUB per 1000 tokens, Lite: 0.2 RUB per 1000 tokens
-            model_rate = 1.2 if model_type == "pro" else 0.2
+            model_rate = 1.2 if parse_method == "ocr_table" else 0.2
             cost = round((total_tokens * model_rate) / 1000, 2)
             if parse_method == "ocr_table":
                 cost += round(num_pages * 1.22, 2)
@@ -915,6 +924,68 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             last_dot_pos = pos
 
     return df
+
+
+def convert_df_to_items(df: pd.DataFrame) -> list:
+    """
+    ТЗ v3.0: Прямая конвертация DataFrame в JSON без ИИ.
+    """
+    col_pos, col_name = 0, 1
+    col_brand, col_code, col_supplier = -1, -1, -1
+    col_unit, col_quantity, col_mass, col_note = -1, -1, -1, -1
+    
+    # 1. Маппинг колонок по ключевым словам
+    for i, col in enumerate(df.columns):
+        c_low = str(col).lower()
+        # Позиция
+        if any(x in c_low for x in ["поз", "№", "unnamed: 0"]):
+            if col_pos == 0: col_pos = i
+        # Наименование
+        elif any(x in c_low for x in ["наименован", "названи", "товар"]):
+            if col_name == 1 or col_name == 0: col_name = i
+        # Остальные поля (для полноты картины)
+        elif "марка" in c_low or "тип" in c_low: col_brand = i
+        elif "код" in c_low: col_code = i
+        elif "поставщик" in c_low: col_supplier = i
+        elif "ед" in c_low and "изм" in c_low: col_unit = i
+        elif "кол" in c_low: col_quantity = i
+        elif "масса" in c_low: col_mass = i
+        elif "примеч" in c_low: col_note = i
+
+    items = []
+    for idx, row in df.iterrows():
+        # Извлекаем базовые значения
+        vals = [str(x).strip() for x in row.values]
+        pos = vals[col_pos] if col_pos < len(vals) else ""
+        name = vals[col_name] if col_name < len(vals) else ""
+        
+        # 2. Логика переноса цифр (MD-фикс)
+        if (not pos or pos == "nan") and name:
+            match = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(.*)', name)
+            if match:
+                pos = match.group(1)
+                name = match.group(2)
+
+        if not pos and not name:
+            continue
+
+        item = {
+            "id": f"idx_{idx}",
+            "pos": pos,
+            "name": name,
+            "brand": vals[col_brand] if col_brand != -1 else "",
+            "code": vals[col_code] if col_code != -1 else "",
+            "supplier": vals[col_supplier] if col_supplier != -1 else "",
+            "unit": vals[col_unit] if col_unit != -1 else "",
+            "quantity": vals[col_quantity] if col_quantity != -1 else "",
+            "mass": vals[col_mass] if col_mass != -1 else "",
+            "note": vals[col_note] if col_note != -1 else "",
+            "row_type": "ITEM", # ТЗ v3.0: Всем ITEM по умолчанию
+            "is_header": False
+        }
+        items.append(item)
+    
+    return items
 
 
 @app.post("/api/storage/upload")
