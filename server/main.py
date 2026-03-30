@@ -5,63 +5,23 @@ import json
 import os
 import shutil
 import base64
-import httpx
 import re
-import math
-import tempfile
 import asyncio
 import pandas as pd, io
-import pdfplumber
 import datetime
 from urllib.parse import quote
 import rapidfuzz
 
-UNITS_MAP = {
-    # базовые
-    "шт": "штука", "шт.": "штука", "штук": "штука", "штуки": "штука",
-    "м": "метр", "м.": "метр", "метр": "метр", "метры": "метр",
-    "м2": "квадратный метр", "м²": "квадратный метр", "м2.": "квадратный метр",
-    "м3": "кубический метр", "м³": "кубический метр",
-    "кг": "килограмм", "кг.": "килограмм",
-    "т": "тонна", "т.": "тонна", "тн": "тонна", "тн.": "тонна",
-    "л": "литр", "л.": "литр",
-    "компл": "комплект", "компл.": "комплект",
-    "наб": "набор", "наб.": "набор",
-    "рул": "рулон", "рул.": "рулон",
-    "упак": "упаковка", "упак.": "упаковка", "пач": "пачка", "пач.": "пачка",
-    "пог.м": "погонный метр", "п.м": "погонный метр", "погм": "погонный метр",
-    "тыс.шт": "тысяча штук", "тыс.шт.": "тысяча штук",
-    "mm": "миллиметр", "мм": "миллиметр", "мм.": "миллиметр",
-    "cm": "сантиметр", "см": "сантиметр", "см.": "сантиметр",
-    "km": "километр", "км": "километр", "км.": "километр",
-    "ga": "гектар",
-    "кв.м": "квадратный метр", "кв.м.": "квадратный метр",
-    "куб.м": "кубический метр", "куб.м.": "кубический метр",
-    # реже, но встречаются в стройке
-    "пар": "пара", "пар.": "пара",
-    "мест": "место", "мест.": "место",
-    "секц": "секция", "секц.": "секция",
-    "эл": "элемент", "эл.": "элемент",
-    "бух": "бухта", "бух.": "бухта",
-    "лист": "лист", "лист.": "лист",
-    "кг/м": "килограмм на метр",
-    "м/пог": "метр погонный",
-    "кор": "коробка", "кор.": "коробка", "ящ": "ящик", "ящ.": "ящик",
-    "банка": "банка", "б.": "банка"
-}
-
-def normalize_unit(unit_str: str) -> str:
-    if not unit_str:
-        return ""
-    cleaned = unit_str.lower().strip()
-    return UNITS_MAP.get(cleaned, unit_str)
-
-def normalize_for_match(text: str) -> str:
-    if not text: return ""
-    t = text.lower().strip()
-    t = re.sub(r'[^\w\sа-яё]', ' ', t)
-    t = re.sub(r'\s+', ' ', t).strip()
-    return t
+# Import modularized logic
+from parser_utils import (
+    normalize_for_match, calculate_uncertainty, 
+    transliterate, secure_filename, sanitize_dataframe, 
+    convert_df_to_items, extract_text_from_pdf
+)
+from ai_service import (
+    ocr_yandex, gpt_yandex, get_token_count, 
+    parse_gpt_json, process_chunks_with_gpt
+)
 
 app = FastAPI()
 
@@ -251,197 +211,6 @@ async def save_config(request: Request):
     return {"status": "success", "saved": True}
 
 
-async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
-    url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-    headers = {
-        "Authorization": f"Api-Key {api_key}",
-        "x-folder-id": folder_id,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "folderId": folder_id,
-        "analyze_specs": [{
-            "content": b64_img,
-            "features": [{
-                "type": "TEXT_DETECTION",
-                "text_detection_config": {
-                    "language_codes": ["*"]
-                }
-            }]
-        }]
-    }
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-    text_parts = []
-    has_low_confidence = False
-
-    for result in data.get('results', []):
-        for res2 in result.get('results', []):
-            text_detection = res2.get('textDetection', {})
-            for page in text_detection.get('pages', []):
-                for block in page.get('blocks', []):
-                    for line in block.get('lines', []):
-                        for word in line.get('words', []):
-                            conf = word.get('confidence', 1.0)
-                            if conf < 0.8:
-                                has_low_confidence = True
-                            text_parts.append(word.get('text', ''))
-                        text_parts.append('\n')
-
-    return "".join(text_parts), has_low_confidence
-
-async def gpt_yandex(text: str, api_key: str, folder_id: str, model_type: str = "lite", doc_type: str = "invoice"):
-    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-    headers = {
-        "Authorization": f"Api-Key {api_key}",
-        "x-folder-id": folder_id,
-        "Content-Type": "application/json"
-    }
-
-    system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
-    user_text = f"Текст документа:\n{text}"
-    
-    # Отладка промпта
-    try:
-        with open(os.path.join(STORAGE_DIR, "last_prompt.txt"), "w", encoding="utf-8") as f:
-            f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== USER ===\n{user_text}")
-    except: pass
-
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt/latest"
-    payload = {
-        "modelUri": model_uri,
-        "completionOptions": {"stream": False, "temperature": 0.1, "maxTokens": "8000"},
-        "messages": [
-            {"role": "system", "text": system_prompt},
-            {"role": "user", "text": user_text}
-        ]
-    }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        
-    usage = data.get('result', {}).get('usage', {})
-    total_tokens = int(usage.get('totalTokens', 0))
-    return data['result']['alternatives'][0]['message']['text'], total_tokens
-
-
-async def get_token_count(text: str, model_type: str, api_key: str, folder_id: str) -> int:
-    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
-    headers = {
-        "Authorization": f"Api-Key {api_key}",
-        "x-folder-id": folder_id,
-        "Content-Type": "application/json"
-    }
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt/latest"
-    payload = {"modelUri": model_uri, "text": text}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                return len(data.get("tokens", []))
-    except: pass
-    return 0
-
-
-def parse_gpt_json(text: str):
-    try:
-        text = re.sub(r'```json|```', '', text).strip()
-        match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        return json.loads(text.strip())
-    except:
-        return None
-
-async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, model_type: str = "lite", doc_type: str = "invoice"):
-    lines = full_text.split('\n')
-    header_block = "\n".join(lines[:2]) if len(lines) >= 2 else (lines[0] if lines else "")
-    data_lines = lines[2:] if len(lines) >= 2 else []
-    
-    CHUNK_SIZE = 30
-    all_items = []
-    total_tokens = 0
-    main_doc = {}
-
-    chunks = [data_lines[i:i + CHUNK_SIZE] for i in range(0, len(data_lines), CHUNK_SIZE)]
-    sem = asyncio.Semaphore(5)
-    
-    async def process_single_chunk(i, chunk):
-        async with sem:
-            chunk_text = header_block + "\n" + "\n".join(chunk)
-            try:
-                raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, model_type, doc_type)
-                parsed = parse_gpt_json(raw_res)
-                if parsed:
-                    return i, True, parsed, tokens, None
-                return i, False, None, tokens, "Невалидный JSON"
-            except Exception as e:
-                return i, False, None, 0, str(e)
-
-    tasks = [process_single_chunk(i, chunk) for i, chunk in enumerate(chunks)]
-    results = []
-    for coro in asyncio.as_completed(tasks):
-        res = await coro
-        results.append(res)
-        yield {"type": "progress", "index": res[0]+1, "total": len(chunks)}
-    
-    results.sort(key=lambda x: x[0])
-    
-    for i, ok, parsed, tokens, err_msg in results:
-        total_tokens += tokens
-        if ok and parsed:
-            items_to_add = []
-            if isinstance(parsed, list):
-                items_to_add = parsed
-            elif isinstance(parsed, dict):
-                items_to_add = parsed.get('items', [])
-            all_items.extend(items_to_add)
-            if not main_doc and isinstance(parsed, dict) and parsed.get('document'):
-                main_doc = parsed.get('document', {})
-        else:
-            all_items.append({"pos": "ERR", "name": f"Ошибка чанка {i+1}", "note": err_msg, "is_error_chunk": True})
-            
-    yield {"type": "result", "items": all_items, "tokens": total_tokens, "main_doc": main_doc, "chunks_report": []}
-
-def to_float(val) -> float:
-    if not val: return 0.0
-    val_str = str(val).replace(' ', '').replace(',', '.')
-    match = re.search(r'-?\d+(\.\d+)?', val_str)
-    return float(match.group(0)) if match else 0.0
-
-def calculate_uncertainty(struct: dict, global_low_conf: bool):
-    items = struct.get("items", [])
-    for item in items:
-        is_uncertain = global_low_conf
-        raw_qty = str(item.get("quantity", "")).strip()
-        match_qty = re.match(r'^([\d\.\,\s]+)(.*?)$', raw_qty)
-        if match_qty and match_qty.group(2).strip():
-            item["quantity"] = match_qty.group(1).strip()
-            if not item.get("unit"): item["unit"] = match_qty.group(2).strip()
-                
-        if item.get("unit"): item["unit"] = normalize_unit(str(item.get("unit")))
-
-        qty = to_float(item.get("quantity"))
-        price = to_float(item.get("price"))
-        total = to_float(item.get("total"))
-        
-        if qty > 0 and price > 0 and total > 0:
-            if abs(qty * price - total) > (0.05 * total): is_uncertain = True
-            if abs(qty * price - total) >= 0.1: item["math_error"] = True
-                
-        if not item.get("name"): is_uncertain = True
-        item["isUncertain"] = is_uncertain
-        
-    return struct
-
-
 @app.post("/api/process-invoice")
 async def process_invoice(
     file: UploadFile | None = File(None),
@@ -498,14 +267,11 @@ async def process_invoice(
         
         try:
             if filename.endswith(".pdf"):
-                ext_text = ""
-                with pdfplumber.open(temp_path) as pdf:
-                    for page in pdf.pages:
-                        t = page.extract_text(x_tolerance=2, y_tolerance=3)
-                        if t: ext_text += "\n".join([re.sub(r'\s{2,}', ' | ', l) for l in t.split('\n')]) + "\n"
-                if ext_text.strip(): extracted_text = ext_text; p_method = "direct_text"
+                extracted_text = extract_text_from_pdf(temp_path)
+                if extracted_text.strip(): p_method = "direct_text"
                 else:
                     p_method = "ocr_table"
+                    import pdfplumber
                     with pdfplumber.open(temp_path) as pdf:
                         num_pages = len(pdf.pages)
                         for i, pg in enumerate(pdf.pages):
@@ -534,7 +300,15 @@ async def process_invoice(
                 main_doc = {"name": original_name}
             else:
                 model = "pro" if p_method == "ocr_table" else "lite"
-                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, model, doc_type):
+                system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
+                
+                # Debug prompt
+                try:
+                    with open(os.path.join(STORAGE_DIR, "last_prompt.txt"), "w", encoding="utf-8") as f:
+                        f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== TEXT ===\n{extracted_text[:1000]}...")
+                except: pass
+
+                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model):
                     if ev["type"] == "progress":
                         yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
                     elif ev["type"] == "result":
@@ -549,18 +323,12 @@ async def process_invoice(
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"})
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-
-def transliterate(text: str) -> str:
-    ru = "абвгдёезийклмнопрстуфхцчшщъыьэюяАБВГДЁЕЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
-    en = ["a", "b", "v", "g", "d", "yo", "e", "z", "i", "j", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya", "A", "B", "V", "G", "D", "Yo", "E", "Z", "I", "J", "K", "L", "M", "N", "O", "P", "R", "S", "T", "U", "F", "H", "Ts", "Ch", "Sh", "Shch", "", "Y", "", "E", "Yu", "Ya"]
-    return "".join({ru[i]: en[i] for i in range(len(ru))}.get(c, c) for c in text)
-
-def secure_filename(filename: str) -> str:
-    return re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
 
 @app.post("/api/match-items")
 async def match_items_endpoint(request: Request):
@@ -576,44 +344,11 @@ async def match_items_endpoint(request: Request):
         item["match_data"] = {"target_id": best["id"] if best else None, "target_name": best["raw"] if best else None, "score": round(best_s, 1), "status": "perfect" if best_s > 90 else ("warning" if best_s >= 60 else "none")}
     return {"invoice_items": invoice_items}
 
-def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.fillna("").astype(str)
-    c_p, c_n = 0, 1
-    for i, c in enumerate(df.columns):
-        cl = str(c).lower()
-        if any(x in cl for x in ["поз", "№", "unnamed: 0"]): c_p = i
-        elif any(x in cl for x in ["наименован", "названи", "товар"]): c_n = i
-    last = ""
-    for i in range(len(df)):
-        p, n = df.iloc[i, c_p].strip(), df.iloc[i, c_n].strip()
-        if (not p or p=="nan") and n:
-            m = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(.*)', n)
-            if m: df.iloc[i, c_p], df.iloc[i, c_n], p = m.group(1), m.group(2), m.group(1)
-        if p.endswith(".1") and last.endswith(".9") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + "0"
-        if re.match(r'^\d+(\.\d+)+$', p): last = p
-    return df
-
-def convert_df_to_items(df: pd.DataFrame) -> list:
-    c_p, c_n, c_u, c_q = 0, 1, -1, -1
-    for i, c in enumerate(df.columns):
-        cl = str(c).lower()
-        if "поз" in cl or "№" in cl: c_p = i
-        elif "наимен" in cl or "товар" in cl: c_n = i
-        elif "ед" in cl and "изм" in cl: c_u = i
-        elif "кол" in cl: c_q = i
-    items = []
-    for idx, row in df.iterrows():
-        v = [str(x).strip() for x in row.values]
-        if v[c_p]=="1" and v[c_n]=="2" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
-        if not v[c_p] and not v[c_n]: continue
-        items.append({"id": f"idx_{idx}", "pos": v[c_p], "name": v[c_n], "unit": v[c_u] if c_u!=-1 else "", "quantity": v[c_q] if c_q!=-1 else "1", "row_type": "ITEM", "is_header": False})
-    return items
-
 @app.post("/api/storage/upload")
 async def storage_upload(file: UploadFile = File(...)):
     original_filename = file.filename
-    transliterated = transliterate(original_filename)
-    secured_name = secure_filename(transliterated)
+    transliterated_name = transliterate(original_filename)
+    secured_name = secure_filename(transliterated_name)
     dest_path = os.path.join(STORAGE_DIR, secured_name)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
@@ -624,7 +359,6 @@ async def storage_upload(file: UploadFile = File(...)):
     ext_text = ""
     is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
     
-    # Pre-parse format immediately
     if is_spreadsheet:
         try:
             if original_filename.lower().endswith(".csv"): df = pd.read_csv(dest_path, dtype=str)
@@ -644,6 +378,7 @@ async def storage_upload(file: UploadFile = File(...)):
     elif api_key and folder_id:
         try:
             if original_filename.lower().endswith(".pdf"):
+                import pdfplumber
                 with pdfplumber.open(dest_path) as pdf:
                     pages = len(pdf.pages)
                     if pages > 0:
