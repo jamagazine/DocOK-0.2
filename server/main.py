@@ -690,6 +690,8 @@ async def process_invoice(
                     
                     df = df.dropna(how='all')
                     df = df.fillna("")
+                    # TK v2.3 FIX: Centralized sanitization for fallback reading
+                    df = sanitize_dataframe(df)
                     extracted_text = df.to_markdown(index=False, tablefmt="pipe")
                 has_low_confidence = False
                 
@@ -897,10 +899,17 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     pos_aliases = ["поз", "№", "pos", "п/п", "index", "unnamed: 0"]
     name_aliases = ["наименование", "название", "товар", "item", "name"]
     
+    pos_found, name_found = False, False
     for i, col in enumerate(df.columns):
         c_low = str(col).lower()
-        if any(a in c_low for a in pos_aliases): col_pos = i
-        if any(a in c_low for a in name_aliases): col_name = i
+        if not pos_found and any(a in c_low for a in pos_aliases):
+            col_pos = i
+            pos_found = True
+        if not name_found and any(a in c_low for a in name_aliases):
+            col_name = i
+            name_found = True
+        if pos_found and name_found:
+            break
     
     print(f"--- [DEBUG] Mapping: Pos at idx {col_pos}, Name at idx {col_name}")
 
@@ -936,7 +945,7 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
                 r[df.columns[col_pos]] = extracted_num
                 r[df.columns[col_name]] = group_match.group(2).strip()
                 new_rows.append(r)
-                last_dot_pos = extracted_num
+                if "." in extracted_num: last_dot_pos = extracted_num
                 continue
 
         # Г) L0: Локации (маркер §)
@@ -945,7 +954,7 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             if not re.match(r'^\d', name):
                 r[df.columns[col_pos]] = "§"
                 new_rows.append(r)
-                last_dot_pos = ""
+                # TK v2.3: НЕ сбрасываем last_dot_pos, чтобы "помнить" состояние сквозь локации
                 continue
 
         new_rows.append(r)
