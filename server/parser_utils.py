@@ -136,22 +136,45 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
         if p.endswith(".1") and last.endswith(".9") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + "0"
         if re.match(r'^\d+(\.\d+)+$', p): last = p
+        
+    # Append technical ID column for AI patching
+    df['__ID__'] = [f"idx_{i}" for i in range(len(df))]
     return df
 
 def convert_df_to_items(df: pd.DataFrame) -> list:
-    c_p, c_n, c_u, c_q = 0, 1, -1, -1
+    c_p, c_n, c_u, c_q, c_id = 0, 1, -1, -1, -1
     for i, c in enumerate(df.columns):
         cl = str(c).lower()
         if "поз" in cl or "№" in cl: c_p = i
         elif "наимен" in cl or "товар" in cl: c_n = i
         elif "ед" in cl and "изм" in cl: c_u = i
         elif "кол" in cl: c_q = i
+        elif "__id__" in cl: c_id = i
     items = []
     for idx, row in df.iterrows():
         v = [str(x).strip() for x in row.values]
+        if not any(v): continue
         if v[c_p]=="1" and v[c_n]=="2" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
-        if not v[c_p] and not v[c_n]: continue
-        items.append({"id": f"idx_{idx}", "pos": v[c_p], "name": v[c_n], "unit": v[c_u] if c_u!=-1 else "", "quantity": v[c_q] if c_q!=-1 else "1", "row_type": "ITEM", "is_header": False})
+        
+        row_id = v[c_id] if c_id != -1 else f"idx_{idx}"
+        pos_val = v[c_p]
+        name_val = v[c_n]
+        
+        # Prelim heuristic typing
+        r_type = "ITEM"
+        if pos_val == "§": r_type = "LOCATION"
+        elif re.match(r'^(\d+)(\.\d+)*\.$', pos_val) or re.match(r'^(\d+)(\.\d+)*\s', name_val) or (pos_val and not name_val and not re.search(r'[a-zA-Zа-яА-Я]', pos_val)): 
+            r_type = "GROUP"
+            
+        items.append({
+            "id": row_id, 
+            "pos": pos_val, 
+            "name": name_val, 
+            "unit": v[c_u] if c_u!=-1 else "", 
+            "quantity": v[c_q] if c_q!=-1 else "", 
+            "row_type": r_type, 
+            "is_header": r_type in ["LOCATION", "GROUP"]
+        })
     return items
 
 def extract_text_from_pdf(path: str) -> str:

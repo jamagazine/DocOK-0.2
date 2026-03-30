@@ -302,6 +302,8 @@ async def process_invoice(
                 model = "pro" if p_method == "ocr_table" else "lite"
                 system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
                 
+                base_items = convert_df_to_items(df) if is_spreadsheet else []
+                
                 # Debug prompt
                 try:
                     with open(os.path.join(STORAGE_DIR, "last_prompt.txt"), "w", encoding="utf-8") as f:
@@ -312,7 +314,22 @@ async def process_invoice(
                     if ev["type"] == "progress":
                         yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
                     elif ev["type"] == "result":
-                        all_items, total_tokens, main_doc = ev["items"], ev["tokens"], ev["main_doc"]
+                        total_tokens = ev["tokens"]
+                        main_doc = ev["main_doc"]
+                        fixes = ev.get("fixes", [])
+                        gen_items = ev.get("items", [])
+                        
+                        if is_spreadsheet:
+                            items_dict = {str(item["id"]): item for item in base_items}
+                            for fix in fixes:
+                                fid = str(fix.get("id"))
+                                field = fix.get("field")
+                                val = fix.get("value")
+                                if fid in items_dict and field:
+                                    items_dict[fid][field] = val
+                            all_items = [v for v in items_dict.values() if v.get("row_type") not in ["DELETE", "IGNORE"]]
+                        else:
+                            all_items = gen_items
 
             final_struct = calculate_uncertainty({"document": main_doc or {"name": original_name}, "items": all_items}, has_low_confidence)
             rate = 1.2 if p_method == "ocr_table" else 0.2

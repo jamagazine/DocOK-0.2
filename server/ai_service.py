@@ -114,6 +114,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     
     CHUNK_SIZE = 30
     all_items = []
+    all_fixes = []
     total_tokens = 0
     main_doc = {}
 
@@ -144,15 +145,19 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     for i, ok, parsed, tokens, err_msg in results:
         total_tokens += tokens
         if ok and parsed:
+            fixes_to_add = []
             items_to_add = []
             if isinstance(parsed, list):
                 items_to_add = parsed
             elif isinstance(parsed, dict):
+                fixes_to_add = parsed.get('fixes', [])
                 items_to_add = parsed.get('items', [])
+            all_fixes.extend(fixes_to_add)
             all_items.extend(items_to_add)
+            
             if not main_doc and isinstance(parsed, dict) and parsed.get('document'):
                 main_doc = parsed.get('document', {})
         else:
             all_items.append({"pos": "ERR", "name": f"Ошибка чанка {i+1}", "note": err_msg, "is_error_chunk": True})
             
-    yield {"type": "result", "items": all_items, "tokens": total_tokens, "main_doc": main_doc, "chunks_report": []}
+    yield {"type": "result", "items": all_items, "fixes": all_fixes, "tokens": total_tokens, "main_doc": main_doc, "chunks_report": []}
