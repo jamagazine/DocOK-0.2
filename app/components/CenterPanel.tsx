@@ -588,11 +588,11 @@ function SpecTable() {
                                 </button>
                               )}
                               {isLocation ? (
-                                <span className="text-amber-700 font-bold text-xs">§</span>
+                                <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
                               ) : isGroup ? (
                                 <span className="text-indigo-700 font-bold text-xs">{row.pos}</span>
                               ) : isHeader ? (
-                                <span className="text-amber-700 font-bold text-xs">§</span>
+                                <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
                               ) : isSelected ? (
                                 <input
                                   type="checkbox"

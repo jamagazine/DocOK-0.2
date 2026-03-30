@@ -360,6 +360,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (stage === 'spec') {
       return dataLines.map(line => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+        
+        // Фильтр технической строки 1 | 2 | 3...
+        if (cols[0] === '1' && cols[1] === '2' && (cols[2] === '3' || cols[3] === '4')) {
+          return null;
+        }
+
         return {
           id: genId(),
           fileId: fileName,
@@ -376,16 +382,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
           originalRowsIds: [],
           children: []
         };
-      });
+      }).filter(Boolean);
     } else {
       return dataLines.map(line => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+        
+        // Фильтр технической строки 1 | 2 | 3...
+        if (cols[0] === '1' && cols[1] === '2' && (cols[2] === '3' || cols[3] === '4')) {
+          return null;
+        }
+
         const r = emptyInvoiceRow();
         r.fileId = fileName;
         r.documentName = fileName;
         // Basic mapping for Invoice from MD: 
-        // We might not know the exact order if it's dynamic, 
-        // but for now we follow the same logical order as Spec if it was spreadsheet
         r.article = cols[0] || '';
         r.name = cols[1] || '';
         r.quantity = cols[2] || '1';
@@ -393,7 +403,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         r.price = cols[4] || '0';
         r.total = cols[5] || '0';
         return r;
-      });
+      }).filter(Boolean);
     }
   };
 
@@ -418,6 +428,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     fileArray.forEach(async (file) => {
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...' } }));
 
+      let serverFilename = '';
       // Upload to physical storage
       try {
         const uploadData = new FormData();
@@ -428,6 +439,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         });
         if (res.ok) {
           const resData = await res.json();
+          serverFilename = resData.filename || '';
           if (resData.estimated_cost !== undefined || resData.estimated_tokens !== undefined) {
             setUploadStatuses((prev: any) => ({
               ...prev,
@@ -477,7 +489,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
         const formData = new FormData();
         formData.append('doc_type', stage); // СТРОГО ПЕРВЫМ!
-        formData.append('file', file);
+        
+        // Если файл уже на сервере в хранилище — используем его ID (disk_name)
+        if (serverFilename) {
+           formData.append('file_id', serverFilename);
+        } else {
+           formData.append('file', file);
+        }
 
         try {
           const res = await fetch('http://localhost:8000/api/process-invoice', {
