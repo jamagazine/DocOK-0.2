@@ -1,9 +1,9 @@
 import React, { useRef } from 'react';
-import { 
-  Menu, 
-  Settings2, 
-  Info, 
-  Calculator, 
+import {
+  Menu,
+  Settings2,
+  Info,
+  Calculator,
   ArrowRight,
   Download,
   UploadCloud,
@@ -38,15 +38,15 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const NavNode = ({ 
-  node, activeIds, onSolo, onToggle, level = 0 
-}: { 
-  key?: string; 
-  node: any; 
-  activeIds: string[]; 
+const NavNode = ({
+  node, activeIds, onSolo, onToggle, level = 0
+}: {
+  key?: string;
+  node: any;
+  activeIds: string[];
   onSolo: (id: string) => void;
-  onToggle: (id: string) => void; 
-  level?: number 
+  onToggle: (id: string) => void;
+  level?: number
 }) => {
   const isActive = activeIds.includes(node.id);
   const [isExpanded, setIsExpanded] = React.useState(true);
@@ -56,8 +56,8 @@ const NavNode = ({
   const labelCls = level === 0
     ? 'text-[12px] font-bold tracking-tight'
     : level === 1
-    ? 'text-[11px] font-semibold'
-    : 'text-[11px] font-medium';
+      ? 'text-[11px] font-semibold'
+      : 'text-[11px] font-medium';
 
   const colorCls = isActive
     ? 'text-indigo-700'
@@ -134,8 +134,8 @@ interface RightPanelProps {
 export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasNextStage, canProceed }: RightPanelProps) {
   const [activeTab, setActiveTab] = React.useState<RightPanelTab>('tools');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { 
-    handleFile, viewMode, setViewMode, pdfGeometry, 
+  const {
+    handleFile, viewMode, setViewMode, pdfGeometry,
     estimateRows, estimateTotal, specRows, invoiceRows,
     resetData, sortRows, groupRows, filesMap, completeStage,
     selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
@@ -157,7 +157,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     if (currentStage === 'spec') {
       const currentRows = getCurrentRows();
       let rowsToExport = currentRows;
-      
+
       if (selectedIds.length > 0) {
         rowsToExport = currentRows.filter(r => selectedIds.includes(r.id));
       }
@@ -194,7 +194,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
   const getIntermediateTotal = () => {
     if (parseFloat(estimateTotal) > 0) return estimateTotal;
-    
+
     if (currentStage === 'invoice') {
       return invoiceRows.reduce((acc: number, r: InvoiceRow) => acc + (parseFloat(String(r.total)) || 0), 0).toFixed(2);
     }
@@ -220,7 +220,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   ];
 
   return (
-    <div 
+    <div
       className={cn(
         "flex flex-col bg-white border-l border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full overflow-hidden shadow-lg z-20",
         expanded ? "w-72" : "w-16"
@@ -234,7 +234,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
       )}>
         {!expanded && (
-          <button 
+          <button
             onClick={onToggle}
             className="w-12 h-12 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center"
             title="Развернуть"
@@ -244,7 +244,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         )}
 
         {tabs.map((tab) => (
-          <button 
+          <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
@@ -259,7 +259,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         ))}
 
         {expanded && (
-          <button 
+          <button
             onClick={onToggle}
             className="w-9 h-9 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors flex items-center justify-center ml-auto"
             title="Свернуть"
@@ -290,12 +290,12 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                     {/* View switcher */}
                     <div className="shrink-0 bg-slate-50 border-b border-slate-200 p-2">
                       <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-lg h-9">
-                        <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Оригинальный вид (ГОСТ)"><FileText className="w-3.5 h-3.5" />Док</button>
-                        <button onClick={() => setViewMode('supplier')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Группировка по поставщикам"><Truck className="w-3.5 h-3.5" />Пост</button>
-                        <button onClick={() => setViewMode('merged')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Сводная таблица материалов"><Layers className="w-3.5 h-3.5" />Свод</button>
+                        <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Оригинальный вид (ГОСТ)">Оригинал</button>
+                        <button onClick={() => setViewMode('supplier')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Группировка по поставщикам">Поставщик</button>
+                        <button onClick={() => setViewMode('merged')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Сводная таблица материалов">Сводная</button>
                       </div>
                     </div>
-                    
+
                     {/* Navigator tree (hidden in merged mode) */}
                     {viewMode !== 'merged' && (
                       <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 pb-3">
@@ -308,7 +308,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                                 key={node.id}
                                 node={node}
                                 activeIds={activeHeaderIds}
-                                onSolo={(id: string) => setActiveHeaderIds([id])}
+                                onSolo={(id: string) => setActiveHeaderIds((prev: string[]) => prev.length === 1 && prev[0] === id ? [] : [id])}
                                 onToggle={(id: string) => setActiveHeaderIds((prev: string[]) => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id])}
                               />
                             ))
@@ -336,15 +336,15 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                         isOnlySelectedView
                           ? "bg-emerald-500 border-emerald-600 text-white hover:bg-emerald-600"
                           : selectedIds.length === 0
-                          ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed"
-                          : "bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100"
+                            ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed"
+                            : "bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100"
                       )}
                       title={isOnlySelectedView ? "Показать все строки" : "Показать только выделенные"}
                     >
                       <Filter className="w-4 h-4" /> {isOnlySelectedView ? 'Показать все' : 'Оставить выбранные'}
                     </button>
                     <button onClick={deleteSelectedRows} disabled={selectedIds.length === 0} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", selectedIds.length === 0 ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100")} title="Удалить выделенные строки (с историей)">
-                      <Trash2 className="w-4 h-4" /> Удалить
+                      <Trash2 className="w-4 h-4" /> Удалить выбранные
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -369,9 +369,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                 {/* View mode icons */}
                 {currentStage === 'spec' && (
                   <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
-                    <FileText className={cn("w-5 h-5 cursor-pointer", viewMode==='original'?"text-indigo-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('original')} title="Оригинал" />
-                    <Truck className={cn("w-5 h-5 cursor-pointer", viewMode==='supplier'?"text-blue-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('supplier')} title="Поставщики" />
-                    <Layers className={cn("w-5 h-5 cursor-pointer", viewMode==='merged'?"text-emerald-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('merged')} title="Сводная" />
+                    <FileText className={cn("w-5 h-5 cursor-pointer", viewMode === 'original' ? "text-indigo-600" : "text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('original')} title="Оригинал" />
+                    <Truck className={cn("w-5 h-5 cursor-pointer", viewMode === 'supplier' ? "text-blue-600" : "text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('supplier')} title="Поставщики" />
+                    <Layers className={cn("w-5 h-5 cursor-pointer", viewMode === 'merged' ? "text-emerald-600" : "text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('merged')} title="Сводная" />
                   </div>
                 )}
 
@@ -387,10 +387,10 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                     onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
                     title={isOnlySelectedView ? "Показать все" : "Оставить выбранные"}
                   />
-                  <Trash2 className={cn("w-4 h-4 cursor-pointer", selectedIds.length>0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows} title="Удалить выделенные" />
+                  <Trash2 className={cn("w-4 h-4 cursor-pointer", selectedIds.length > 0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows} title="Удалить выделенные" />
                   <div className="w-6 h-px bg-slate-200 my-0.5" />
-                  <Undo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canUndo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={undo} title="Отменить" />
-                  <Redo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canRedo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={redo} title="Повторить" />
+                  <Undo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canUndo ? "text-slate-600 hover:text-indigo-600" : "text-slate-200 pointer-events-none")} onClick={undo} title="Отменить" />
+                  <Redo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canRedo ? "text-slate-600 hover:text-indigo-600" : "text-slate-200 pointer-events-none")} onClick={redo} title="Повторить" />
                 </div>
               </div>
             )}
@@ -399,95 +399,95 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
         {activeTab === 'info' && (
           <div className="flex flex-col gap-6">
-             {expanded ? (
-               <>
-                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Общая сводка</div>
-                 <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col gap-4 text-sm">
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500 font-medium">{getStageLabel(currentStage)}:</span>
-                      <span className="font-bold text-slate-900 tabular-nums">{currentCount()}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500 font-medium">Загружено файлов:</span>
-                      <span className="font-bold text-slate-900 tabular-nums">
-                        {currentStage === 'invoice' 
-                          ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length 
-                          : currentStage === 'estimate' 
-                          ? new Set(estimateRows.map(r => r.fileId)).size 
+            {expanded ? (
+              <>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Общая сводка</div>
+                <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col gap-4 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">{getStageLabel(currentStage)}:</span>
+                    <span className="font-bold text-slate-900 tabular-nums">{currentCount()}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Загружено файлов:</span>
+                    <span className="font-bold text-slate-900 tabular-nums">
+                      {currentStage === 'invoice'
+                        ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length
+                        : currentStage === 'estimate'
+                          ? new Set(estimateRows.map(r => r.fileId)).size
                           : Object.keys(filesMap || {}).length
-                        }
-                      </span>
+                      }
+                    </span>
+                  </div>
+                  <div className="h-px w-full bg-slate-200" />
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">Итого по этапу</span>
+                    <span className="font-extrabold text-indigo-700 text-xl tabular-nums">{getIntermediateTotal()} ₽</span>
+                  </div>
+                </div>
+
+                {currentStage === 'invoice' && invoiceRows.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Статус связей</div>
+                    <div className="bg-indigo-50/40 border border-indigo-100 p-5 rounded-xl flex flex-col gap-4 text-sm">
+                      <div className="flex justify-between items-center">
+                        <span className="flex items-center gap-3 font-medium text-slate-700">
+                          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Идеальных:
+                        </span>
+                        <span className="font-bold text-emerald-700 tabular-nums">{invoiceRows.filter(r => r.match_data?.status === 'perfect').length}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="flex items-center gap-3 font-medium text-slate-700">
+                          <div className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Неточных:
+                        </span>
+                        <span className="font-bold text-amber-700 tabular-nums">{invoiceRows.filter(r => r.match_data?.status === 'warning').length}</span>
+                      </div>
+                      <div className="flex justify-between items-center pb-2 border-b border-indigo-100">
+                        <span className="flex items-center gap-3 font-medium text-slate-700">
+                          <div className="w-2.5 h-2.5 rounded-full bg-red-400" /> Без связи:
+                        </span>
+                        <span className="font-bold text-red-600 tabular-nums">{invoiceRows.filter(r => !r.match_data || r.match_data.status === 'none').length}</span>
+                      </div>
+                      <div className="flex flex-col gap-1 pt-1">
+                        <span className="text-[10px] uppercase font-bold text-red-400 tracking-tight">Сумма не связанных</span>
+                        <span className="text-red-700 font-extrabold text-lg tabular-nums">{
+                          invoiceRows
+                            .filter(r => !r.match_data || r.match_data.status === 'none')
+                            .reduce((acc, r) => acc + (parseFloat(String(r.total)) || 0), 0)
+                            .toFixed(2)
+                        } ₽</span>
+                      </div>
                     </div>
-                    <div className="h-px w-full bg-slate-200" />
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">Итого по этапу</span>
-                      <span className="font-extrabold text-indigo-700 text-xl tabular-nums">{getIntermediateTotal()} ₽</span>
-                    </div>
-                 </div>
-                 
-                 {currentStage === 'invoice' && invoiceRows.length > 0 && (
-                   <div className="space-y-3">
-                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Статус связей</div>
-                     <div className="bg-indigo-50/40 border border-indigo-100 p-5 rounded-xl flex flex-col gap-4 text-sm">
-                        <div className="flex justify-between items-center">
-                          <span className="flex items-center gap-3 font-medium text-slate-700">
-                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Идеальных:
-                          </span>
-                          <span className="font-bold text-emerald-700 tabular-nums">{invoiceRows.filter(r => r.match_data?.status === 'perfect').length}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="flex items-center gap-3 font-medium text-slate-700">
-                            <div className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Неточных:
-                          </span>
-                          <span className="font-bold text-amber-700 tabular-nums">{invoiceRows.filter(r => r.match_data?.status === 'warning').length}</span>
-                        </div>
-                        <div className="flex justify-between items-center pb-2 border-b border-indigo-100">
-                          <span className="flex items-center gap-3 font-medium text-slate-700">
-                            <div className="w-2.5 h-2.5 rounded-full bg-red-400" /> Без связи:
-                          </span>
-                          <span className="font-bold text-red-600 tabular-nums">{invoiceRows.filter(r => !r.match_data || r.match_data.status === 'none').length}</span>
-                        </div>
-                        <div className="flex flex-col gap-1 pt-1">
-                          <span className="text-[10px] uppercase font-bold text-red-400 tracking-tight">Сумма не связанных</span>
-                          <span className="text-red-700 font-extrabold text-lg tabular-nums">{
-                            invoiceRows
-                              .filter(r => !r.match_data || r.match_data.status === 'none')
-                              .reduce((acc, r) => acc + (parseFloat(String(r.total)) || 0), 0)
-                              .toFixed(2)
-                          } ₽</span>
-                        </div>
-                     </div>
-                   </div>
-                 )}
-               </>
-             ) : (
-               <div className="flex flex-col gap-4 items-center group cursor-help" title={`Итого: ${getIntermediateTotal()} ₽`}>
-                  <Info className="w-6 h-6 text-slate-400 group-hover:text-indigo-600 transition-colors" />
-               </div>
-             )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col gap-4 items-center group cursor-help" title={`Итого: ${getIntermediateTotal()} ₽`}>
+                <Info className="w-6 h-6 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'calc' && (
           <div className="flex flex-col gap-4">
-             {expanded ? (
-               <>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Помощники</div>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center gap-4 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-all group">
-                    <div className="p-2.5 bg-white rounded-lg shadow-sm group-hover:scale-110 transition-transform"><CalcIcon className="w-5 h-5 text-indigo-600" /></div>
-                    <span className="text-sm font-bold text-slate-700">Единицы измерения</span>
-                  </div>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center gap-4 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-all group">
-                    <div className="p-2.5 bg-white rounded-lg shadow-sm group-hover:scale-110 transition-transform"><Percent className="w-5 h-5 text-indigo-600" /></div>
-                    <span className="text-sm font-bold text-slate-700">Расчет наценки</span>
-                  </div>
-               </>
-             ) : (
-               <div className="flex flex-col gap-6 items-center">
-                  <CalcIcon className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" title="Единицы измерения" />
-                  <Percent className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" title="Расчет наценки" />
-               </div>
-             )}
+            {expanded ? (
+              <>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Помощники</div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center gap-4 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-all group">
+                  <div className="p-2.5 bg-white rounded-lg shadow-sm group-hover:scale-110 transition-transform"><CalcIcon className="w-5 h-5 text-indigo-600" /></div>
+                  <span className="text-sm font-bold text-slate-700">Единицы измерения</span>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center gap-4 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-all group">
+                  <div className="p-2.5 bg-white rounded-lg shadow-sm group-hover:scale-110 transition-transform"><Percent className="w-5 h-5 text-indigo-600" /></div>
+                  <span className="text-sm font-bold text-slate-700">Расчет наценки</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col gap-6 items-center">
+                <CalcIcon className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" title="Единицы измерения" />
+                <Percent className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" title="Расчет наценки" />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -497,7 +497,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         "border-t border-slate-200 p-4 flex justify-center items-center h-20 bg-slate-50"
       )}>
         {hasNextStage ? (
-          <button 
+          <button
             onClick={() => {
               completeStage(currentStage);
               onNextStage();
@@ -506,8 +506,8 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
             className={cn(
               "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold transition-all",
               expanded ? "px-6 py-4" : "w-12 h-12 p-0",
-              canProceed 
-                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100 shadow-xl" 
+              canProceed
+                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100 shadow-xl"
                 : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
             )}
             title={canProceed ? "Перейти к следующему этапу" : "Загрузите данные для продолжения"}
@@ -516,12 +516,12 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
             <ArrowRight className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
           </button>
         ) : (
-           <div className={cn(
+          <div className={cn(
             "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold bg-indigo-600 text-white shadow-indigo-100 shadow-xl",
             expanded ? "px-6 py-4" : "w-12 h-12 p-0"
           )}>
-             {expanded && <span className="uppercase tracking-widest text-xs">Завершить</span>}
-             <CheckCircle2 className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
+            {expanded && <span className="uppercase tracking-widest text-xs">Завершить</span>}
+            <CheckCircle2 className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
           </div>
         )}
       </div>

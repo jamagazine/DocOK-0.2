@@ -331,6 +331,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [isOnlySelectedView, setIsOnlySelectedView] = useState(false);
+  const [frozenSelectedIds, setFrozenSelectedIds] = useState<string[]>([]);
+
+  // Wrapper: when activating "Keep Selected", freeze current selection and clear checkmarks
+  const toggleOnlySelectedView = useCallback((nextVal: boolean) => {
+    if (nextVal && selectedIds.length > 0) {
+      setFrozenSelectedIds([...selectedIds]);
+      setSelectedIds([]);
+    } else if (!nextVal) {
+      setFrozenSelectedIds([]);
+    }
+    setIsOnlySelectedView(nextVal);
+  }, [selectedIds]);
 
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
   const [viewMode, setViewMode] = useState<'original' | 'supplier' | 'merged'>('original');
@@ -951,20 +963,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const sortedSpecRows = React.useMemo(() =>
-    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView),
-    [specRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
+    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], frozenSelectedIds, isOnlySelectedView),
+    [specRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
   );
   const sortedRequestRows = React.useMemo(() =>
-    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], selectedIds, isOnlySelectedView),
-    [requestRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
+    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], frozenSelectedIds, isOnlySelectedView),
+    [requestRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
   );
   const sortedInvoiceRows = React.useMemo(() =>
-    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier'], selectedIds, isOnlySelectedView),
-    [invoiceRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
+    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier'], frozenSelectedIds, isOnlySelectedView),
+    [invoiceRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
   );
   const sortedEstimateRows = React.useMemo(() =>
-    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier'], selectedIds, isOnlySelectedView),
-    [estimateRows, sortConfig, searchQuery, selectedIds, isOnlySelectedView]
+    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier'], frozenSelectedIds, isOnlySelectedView),
+    [estimateRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
   );
 
   const groupRows = useCallback((stage: Stage, field: string) => {
@@ -1092,6 +1104,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const niceName = group.names.find(n => /^[A-ZА-ЯЁ]/.test(n)) || group.names[0];
         group.name = niceName;
       }
+      // Sequential numbering per supplier group
+      let posCounter = 1;
+      group.children = group.children.map((child: any) => ({
+        ...child,
+        pos: String(posCounter++)
+      }));
       return group;
     });
 
@@ -1463,8 +1481,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Use row_type as primary signal — robust regardless of is_header value in cached data
       const type = r.row_type;
       if (!type || type === 'ITEM') return;
+      // Skip rows with empty or blank names
+      if (!r.name || !r.name.trim()) return;
 
-      const node = { id: r.id, name: r.name || '(без названия)', row_type: type, children: [] as any[] };
+      const node = { id: r.id, name: r.name.trim(), row_type: type, children: [] as any[] };
       if (type === 'WORK_TYPE') {
         currentL0 = node;
         currentL1 = null;
@@ -1532,7 +1552,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (viewMode === 'merged') return getMergedRows(filteredBaseRows);
 
     // Step 2: isOnlySelectedView filter – keep headers structurally but only show selected items
-    if (isOnlySelectedView && selectedIds.length > 0) {
+    // Uses frozenSelectedIds (snapshot from when filter was activated)
+    if (isOnlySelectedView && frozenSelectedIds.length > 0) {
       const keepStatus = new Set<string>();
       let activeL0: string | null = null;
       let activeL1: string | null = null;
@@ -1543,14 +1564,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
         else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
         else if (type === 'GROUP') { activeL2 = r.id; }
-        else if (selectedIds.includes(r.id)) {
+        else if (frozenSelectedIds.includes(r.id)) {
           keepStatus.add(r.id);
           if (activeL0) keepStatus.add(activeL0);
           if (activeL1) keepStatus.add(activeL1);
           if (activeL2) keepStatus.add(activeL2);
         }
       }
-      filteredBaseRows = filteredBaseRows.filter(r => r.is_header ? keepStatus.has(r.id) : selectedIds.includes(r.id));
+      filteredBaseRows = filteredBaseRows.filter(r => r.is_header ? keepStatus.has(r.id) : frozenSelectedIds.includes(r.id));
     }
 
     // Step 3: searchQuery filter
@@ -1582,7 +1603,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     return filteredBaseRows;
-  }, [currentStage, viewMode, sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows, activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery, getSupplierRows, getMergedRows]);
+  }, [currentStage, viewMode, sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows, activeHeaderIds, isOnlySelectedView, frozenSelectedIds, selectedIds, searchQuery, getSupplierRows, getMergedRows]);
 
   return (
     <DataContext.Provider
@@ -1639,7 +1660,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         rowsPerPage,
         setRowsPerPage,
         isOnlySelectedView,
-        setIsOnlySelectedView,
+        setIsOnlySelectedView: toggleOnlySelectedView,
         handleRowChange,
         currentStage,
         setCurrentStage,
