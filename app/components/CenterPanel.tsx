@@ -412,9 +412,19 @@ function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: nu
         // Supplier rows are GROUP, their children are ITEM
         const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
         const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
+        const name = String(row.name || '').trim();
         
-        if (hideUntilLevel !== -1 && level <= hideUntilLevel) hideUntilLevel = -1;
+        // If we're inside a collapsed group, we only stop hiding if we hit a row of SAME or HIGHER level (smaller level number)
+        // AND that row must be a valid header with a name.
+        if (hideUntilLevel !== -1 && level <= hideUntilLevel && (row.is_header && name)) {
+            hideUntilLevel = -1;
+        }
+        
         if (hideUntilLevel !== -1) continue;
+        
+        // Don't show "ghost" rows that aren't valid items or meaningful headers
+        if (!name && !row.is_header) continue;
+        if (row.is_header && !name) continue; // Final safety for empty headers
         
         // Remove children from supplier header if flattened, so TableRow doesn't double-render them
         const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;

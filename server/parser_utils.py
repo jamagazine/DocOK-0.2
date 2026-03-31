@@ -170,8 +170,8 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
             return str(x).strip().lower() in ("", "0", "0.0", "nan", "none")
             
         # Step 1: Preliminary identification of potential headers
-        # Potential header = No unit, no quantity, no mass (columns after c_q)
-        is_potential = is_empty_val(unit_val) and is_empty_val(qty_val)
+        # Potential header = No unit, no quantity, no mass (columns after c_q) + HAS NAME
+        is_potential = is_empty_val(unit_val) and is_empty_val(qty_val) and bool(str(name_val).strip())
         if is_potential:
             # check mass and others
             for k in range(max(c_u, c_q) + 1, len(v) - 1): # skip last ID col
@@ -209,7 +209,12 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         
         # Signal Boosters (Priortize explicit markers)
         if (not raw["pos"] or str(raw["pos"]).lower() == "nan") and is_upper and len(name_clean) >= 2:
-            lvl = 0 # Forced WORK_TYPE
+            # We don't force lvl 0 anymore to allow logical boosters to work unless it's a known big category
+            # If no seen_l1/seen_l2, it will naturally become lvl 2 (GROUP) in Step 2 default
+            if len(name_clean) > 3 and " " not in name_clean:
+                lvl = 0 # Forced WORK_TYPE for single long words (e.g. ВЕНТИЛЯЦИЯ)
+            else:
+                lvl = 2 # Default for short ones like П1, will be boosted by logic below
         elif raw["pos"] == "§":
             lvl = 1 # Forced LOCATION
         elif re.match(r'^(\d+)(\.\d+)+\.?$', raw["pos"]) or re.match(r'^(\d+)(\.\d+)*\.(?:\s|$)', raw["name"]):
@@ -269,6 +274,12 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
 
         raw["row_type"] = r_type
         raw["is_header"] = r_type in ["WORK_TYPE", "LOCATION", "GROUP"]
+        
+        # Double check for empty names after logic transformations
+        if raw["is_header"] and not str(raw["name"]).strip():
+            raw["row_type"] = "ITEM"
+            raw["is_header"] = False
+            
         raw["hierarchy_level"] = lvl
         raw["parentId"] = parent_id
         raw["note"] = "" if raw["is_header"] else "" # Standard cleaning
