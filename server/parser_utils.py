@@ -122,21 +122,6 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             if m:
                 df.iloc[i, c_p], df.iloc[i, c_n], p = m.group(1), m.group(2), m.group(1)
         
-        # Location Marking: Mark as § if position is empty but technical columns are also empty
-        if (not p or p=="nan") and n:
-            other_cols_empty = True
-            for k in range(len(df.columns)):
-                if k != c_p and k != c_n:
-                    if df.iloc[i, k].strip():
-                        other_cols_empty = False
-                        break
-            if other_cols_empty:
-                # L0 (WORK_TYPE) check: UPPERCASE titles with no technical columns should stay empty (no §)
-                # L1 (LOCATION) check: Titles with lowercase (e.g. "Система П1") get §
-                if not n.isupper():
-                    p = "§"
-                    df.iloc[i, c_p] = p
-
         if p.endswith(".1") and last.endswith(".9") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + "0"
         if re.match(r'^\d+(\.\d+)+$', p): last = p
         
@@ -153,142 +138,146 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         elif "ед" in cl and "изм" in cl: c_u = i
         elif "кол" in cl: c_q = i
         elif "__id__" in cl: c_id = i
-        
+
+    def is_empty_val(x):
+        return str(x).strip().lower() in ("", "0", "0.0", "nan", "none")
+
+    # ── Step 1: Classify every row as HEADER or ITEM ──────────────────────────
+    # ITEM  = has a readable quantity
+    # HEADER= name present, quantity absent
     raw_list = []
     for idx, row in df.iterrows():
         v = [str(x).strip() for x in row.values]
         if not any(v): continue
-        if v[c_p]=="1" and v[c_n]=="2" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
-        
-        row_id = v[c_id] if c_id != -1 else f"idx_{idx}"
-        name_val = v[c_n]
-        pos_val = v[c_p]
-        unit_val = v[c_u] if c_u != -1 else ""
-        qty_val = v[c_q] if c_q != -1 else ""
-        
-        def is_empty_val(x):
-            return str(x).strip().lower() in ("", "0", "0.0", "nan", "none")
-            
-        # Step 1: Preliminary identification of potential headers
-        # Potential header = No unit, no quantity, no mass (columns after c_q) + HAS NAME
-        is_potential = is_empty_val(unit_val) and is_empty_val(qty_val) and bool(str(name_val).strip())
-        if is_potential:
-            # check mass and others
-            for k in range(max(c_u, c_q) + 1, len(v) - 1): # skip last ID col
-                if not is_empty_val(v[k]):
-                    is_potential = False
-                    break
-        
-        raw_list.append({
-            "id": row_id, 
-            "pos": pos_val, 
-            "name": name_val, 
-            "unit": unit_val, 
-            "quantity": qty_val,
-            "is_potential_header": is_potential
-        })
-        
-    # Step 2: Bottom-Up Level Calculation (HierarchyBuilder)
-    # 0 = WORK_TYPE, 1 = LOCATION, 2 = GROUP, None = ITEM
-    levels = [None] * len(raw_list)
-    
-    seen_l2 = False
-    seen_l1 = False
-    
-    for i in range(len(raw_list) - 1, -1, -1):
-        raw = raw_list[i]
-        if not raw["is_potential_header"]:
-            levels[i] = None
+        # Skip the column-header row of the table itself (1, 2, 3, ...)
+        if v[c_p] == "1" and v[c_n] == "2" and sum(1 for i, x in enumerate(v[:5]) if x == str(i+1)) >= 3:
             continue
-            
-        lvl = 2 # Default to GROUP if it's a header
-        
-        name_clean = str(raw["name"]).strip()
-        has_lower = any(c.islower() for c in name_clean)
-        is_upper = name_clean.isupper() or (name_clean and not has_lower and any(c.isalpha() for c in name_clean))
-        
-        # Signal Boosters (Priortize explicit markers)
-        if (not raw["pos"] or str(raw["pos"]).lower() == "nan") and is_upper and len(name_clean) >= 2:
-            # We don't force lvl 0 anymore to allow logical boosters to work unless it's a known big category
-            # If no seen_l1/seen_l2, it will naturally become lvl 2 (GROUP) in Step 2 default
-            if len(name_clean) > 3 and " " not in name_clean:
-                lvl = 0 # Forced WORK_TYPE for single long words (e.g. ВЕНТИЛЯЦИЯ)
+
+        row_id   = v[c_id] if c_id != -1 else f"idx_{idx}"
+        name_val = v[c_n]
+        pos_val  = v[c_p]
+        unit_val = v[c_u] if c_u != -1 else ""
+        qty_val  = v[c_q] if c_q != -1 else ""
+
+        name_clean = str(name_val).strip()
+        qty_clean  = str(qty_val).strip()
+
+        if not name_clean:
+            continue  # skip fully empty rows
+
+        has_qty = not is_empty_val(qty_clean) and bool(qty_clean)
+
+        raw_list.append({
+            "id":       row_id,
+            "pos":      pos_val,
+            "name":     name_clean,
+            "unit":     unit_val,
+            "quantity": qty_val,
+            "is_item":  has_qty,  # True = ITEM, False = potential HEADER
+        })
+
+    # ── Step 2: Split into Chunks [headers…, items…] ──────────────────────────
+    # One Chunk = 1+ consecutive HEADER rows + 1+ consecutive ITEM rows.
+    chunks = []
+    cur_headers: list = []
+    cur_items:   list = []
+
+    for raw in raw_list:
+        if raw["is_item"]:
+            cur_items.append(raw)
+        else:
+            # New header block starts — flush accumulated items first
+            if cur_items:
+                chunks.append({"headers": cur_headers, "items": cur_items})
+                cur_headers = []
+                cur_items   = []
+            cur_headers.append(raw)
+
+    # Flush the final chunk
+    if cur_headers or cur_items:
+        chunks.append({"headers": cur_headers, "items": cur_items})
+
+    # ── Step 3: Stack AST – build hierarchy ───────────────────────────────────
+    # current_stack[idx] is an ancestor header; idx == hierarchy level (0,1,2).
+    LEVEL_TYPES   = ["WORK_TYPE", "LOCATION", "GROUP"]
+    current_stack: list = []
+    items_out:     list = []
+    emitted_ids:   set  = set()
+
+    def is_global_section(name: str) -> bool:
+        """Single ALL-CAPS word with no lowercase letters (e.g. ВЕНТИЛЯЦИЯ, OTOPLENIE)."""
+        parts = name.split()
+        return (
+            len(parts) == 1
+            and len(name) > 2
+            and all(ch.isupper() or not ch.isalpha() for ch in name)
+        )
+
+    for chunk in chunks:
+        hdrs = chunk["headers"]
+        its  = chunk["items"]
+
+        if not hdrs and not its:
+            continue
+
+        # ── Update the stack based on this chunk's headers ────────────────────
+        if hdrs:
+            if len(hdrs) >= 2:
+                # Multiple headers → completely new branch, reset stack
+                current_stack = list(hdrs)
             else:
-                lvl = 2 # Default for short ones like П1, will be boosted by logic below
-        elif raw["pos"] == "§":
-            lvl = 1 # Forced LOCATION
-        elif re.match(r'^(\d+)(\.\d+)+\.?$', raw["pos"]) or re.match(r'^(\d+)(\.\d+)*\.(?:\s|$)', raw["name"]):
-            lvl = 2 # Forced GROUP
-        else:
-            # Logical booster based on what's below
-            if seen_l1: lvl = 0
-            elif seen_l2: lvl = 1
-            else: lvl = 2
-            
-        levels[i] = lvl
-        
-        # Update trackers for rows ABOVE
-        if lvl == 0:
-            seen_l1 = False
-            seen_l2 = False
-        elif lvl == 1:
-            seen_l1 = True
-            seen_l2 = False
-        elif lvl == 2:
-            seen_l2 = True
+                hdr    = hdrs[0]
+                name_h = hdr["name"]
+                if is_global_section(name_h):
+                    # Global ALL-CAPS word → new L0 root, reset stack
+                    current_stack = [hdr]
+                else:
+                    # Inherit: replace only the deepest slot in the stack
+                    if current_stack:
+                        current_stack[-1] = hdr
+                    else:
+                        current_stack = [hdr]
 
-    # Step 3: Forward Pass for Metadata Assignment (parentId)
-    items = []
-    l0_id = None
-    l1_id = None
-    l2_id = None
-    
-    for i, raw in enumerate(raw_list):
-        lvl = levels[i]
-        
-        if lvl == 0:
-            r_type = "WORK_TYPE"
-            l0_id = raw["id"]
-            l1_id = None
-            l2_id = None
-            raw["pos"] = "" # Clean pos for L0
-            parent_id = None
-        elif lvl == 1:
-            r_type = "LOCATION"
-            l1_id = raw["id"]
-            l2_id = None
-            raw["pos"] = "§" # Ensure § for L1
-            raw["name"] = re.sub(r'^[§\s]+|[§\s]+$', '', raw["name"]).strip()
-            parent_id = l0_id
-        elif lvl == 2:
-            r_type = "GROUP"
-            l2_id = raw["id"]
-            m = re.match(r'^(\d+(?:\.\d+)*\.?)\s+(.*)', raw["name"])
-            if m:
-                raw["pos"] = m.group(1)
-                raw["name"] = m.group(2).strip()
-            parent_id = l1_id or l0_id
-        else:
-            r_type = "ITEM"
-            parent_id = l2_id or l1_id or l0_id
+        # ── Emit header rows with assigned levels ─────────────────────────────
+        for depth, hdr in enumerate(current_stack):
+            if hdr["id"] in emitted_ids:
+                continue  # already emitted in a previous chunk
+            emitted_ids.add(hdr["id"])
 
-        raw["row_type"] = r_type
-        raw["is_header"] = r_type in ["WORK_TYPE", "LOCATION", "GROUP"]
-        
-        # Double check for empty names after logic transformations
-        if raw["is_header"] and not str(raw["name"]).strip():
-            raw["row_type"] = "ITEM"
-            raw["is_header"] = False
-            
-        raw["hierarchy_level"] = lvl
-        raw["parentId"] = parent_id
-        raw["note"] = "" if raw["is_header"] else "" # Standard cleaning
-        
-        # Remove internal helper
-        del raw["is_potential_header"]
-        items.append(raw)
-        
-    return items
+            lvl    = min(depth, 2)
+            r_type = LEVEL_TYPES[lvl]
+
+            if lvl == 0:
+                hdr["pos"] = ""
+            elif lvl == 1:
+                hdr["pos"]  = "§"
+                hdr["name"] = re.sub(r'^[§\s]+|[§\s]+$', '', hdr["name"]).strip()
+
+            parent_id = current_stack[depth - 1]["id"] if depth > 0 else None
+
+            hdr["row_type"]        = r_type
+            hdr["is_header"]       = True
+            hdr["hierarchy_level"] = lvl
+            hdr["parentId"]        = parent_id
+            hdr["note"]            = ""
+            hdr.pop("is_item", None)
+            items_out.append(hdr)
+
+        # Reset so the same chunk headers aren't emitted again on the next loop
+        current_stack = list(current_stack)
+
+        # ── Emit item rows, parented to the deepest header ────────────────────
+        deepest_parent = current_stack[-1]["id"] if current_stack else None
+        for item in its:
+            item["row_type"]        = "ITEM"
+            item["is_header"]       = False
+            item["hierarchy_level"] = None
+            item["parentId"]        = deepest_parent
+            item["note"]            = ""
+            item.pop("is_item", None)
+            items_out.append(item)
+
+    return items_out
 
 def extract_text_from_pdf(path: str) -> str:
     ext_text = ""
