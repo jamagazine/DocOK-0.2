@@ -166,13 +166,16 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         unit_val = v[c_u] if c_u != -1 else ""
         qty_val = v[c_q] if c_q != -1 else ""
         
+        def is_empty_val(x):
+            return str(x).strip().lower() in ("", "0", "0.0", "nan", "none")
+            
         # Step 1: Preliminary identification of potential headers
         # Potential header = No unit, no quantity, no mass (columns after c_q)
-        is_potential = not unit_val and not qty_val
+        is_potential = is_empty_val(unit_val) and is_empty_val(qty_val)
         if is_potential:
             # check mass and others
             for k in range(max(c_u, c_q) + 1, len(v) - 1): # skip last ID col
-                if v[k]:
+                if not is_empty_val(v[k]):
                     is_potential = False
                     break
         
@@ -200,8 +203,12 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
             
         lvl = 2 # Default to GROUP if it's a header
         
+        name_clean = str(raw["name"]).strip()
+        has_lower = any(c.islower() for c in name_clean)
+        is_upper = name_clean.isupper() or (name_clean and not has_lower and any(c.isalpha() for c in name_clean))
+        
         # Signal Boosters (Priortize explicit markers)
-        if (not raw["pos"] or raw["pos"] == "nan") and raw["name"].isupper() and len(raw["name"]) > 3:
+        if (not raw["pos"] or str(raw["pos"]).lower() == "nan") and is_upper and len(name_clean) >= 2:
             lvl = 0 # Forced WORK_TYPE
         elif raw["pos"] == "§":
             lvl = 1 # Forced LOCATION

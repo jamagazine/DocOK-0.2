@@ -79,7 +79,7 @@ export const TableRow = React.memo(({
     stage === 'spec' && !isSummaryRow && hasChildren && "bg-slate-50/30",
     stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
     stage === 'spec' && isLocation && "bg-indigo-900/80 text-white hover:bg-indigo-800/80 font-bold border-b border-white/10",
-    stage === 'spec' && isGroup && "bg-blue-50/50 text-slate-900 shadow-[inset_4px_0_0_0_#4f46e5] hover:bg-blue-100/40",
+    stage === 'spec' && isGroup && "bg-blue-50/50 text-slate-900 border-l-4 border-l-indigo-500 hover:bg-blue-100/40",
     stage === 'spec' && !isHeader && !isSummaryRow && "hover:bg-slate-50/80 cursor-pointer"
   );
 
@@ -138,8 +138,8 @@ export const TableRow = React.memo(({
             {/* Content Area */}
             <div className={cn(
               "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
-              isWorkType ? "text-base uppercase font-black" : 
-              isLocation ? "text-base uppercase underline underline-offset-8 decoration-blue-500/30 font-bold" : "text-sm font-bold"
+              isWorkType ? "text-sm uppercase" : 
+              isLocation ? "text-base uppercase underline underline-offset-8 decoration-white/20 font-bold" : "text-sm font-bold"
             )}>
               <span className="truncate flex-grow mr-4">{row.name}</span>
               
@@ -158,11 +158,6 @@ export const TableRow = React.memo(({
                 </button>
               )}
             </div>
-            {isGroup && row.pos?.includes('.') && (
-              <div className="flex-none px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold mr-6 opacity-80 shrink-0">
-                L1
-              </div>
-            )}
           </div>
         ) : (
           // Standard Row Rendering
@@ -205,7 +200,7 @@ export const TableRow = React.memo(({
                   ) : stage === 'spec' && isGroup ? (
                     <span className="text-indigo-700 font-bold text-xs">{row.pos}</span>
                   ) : stage === 'spec' && (isHeader || isSummaryRow) ? (
-                    <span className="text-slate-500 font-bold text-xs italic">{isSummaryRow ? 'Σ' : (row.pos || '§')}</span>
+                    <span className="text-slate-500 font-bold text-xs italic">{isSummaryRow ? (row.pos || '') : (row.pos || '§')}</span>
                   ) : isSelected ? (
                     <input
                       type="checkbox"

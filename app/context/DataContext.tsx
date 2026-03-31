@@ -891,6 +891,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     console.log(`Grouping ${stage} by ${field}`);
   }, []);
 
+  const generateStableId = (prefix: string, seed: string) => {
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) {
+        const char = seed.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    return `${prefix}_${Math.abs(hash)}`;
+  };
+
   const getMergedRows = useCallback((items: SpecRow[]) => {
     const onlyItems = items.filter(r => !r.is_header && r.row_type !== 'WORK_TYPE' && r.row_type !== 'LOCATION' && r.row_type !== 'GROUP');
     const map = new Map<string, SpecRow & { children: SpecRow[] }>();
@@ -904,7 +914,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         existing.quantity = String(q1 + q2);
         existing.children.push(item);
       } else {
-        map.set(fingerprint, { ...item, id: `merged_${item.id}`, children: [item] });
+        const safeId = generateStableId('merged', fingerprint);
+        map.set(fingerprint, { ...item, id: safeId, children: [item] });
       }
     });
 
@@ -924,8 +935,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         existing.quantity = String(q1 + q2);
         existing.children.push(item);
       } else {
+        const safeId = generateStableId('supp', s);
         map.set(s, { 
-          id: `supplier_${s}`, 
+          id: safeId, 
           name: s, 
           is_header: true, 
           row_type: 'GROUP', 

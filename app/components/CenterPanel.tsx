@@ -44,6 +44,7 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
 
   const [isEditingName, setIsEditingName] = React.useState(false);
   const [filesOpen, setFilesOpen] = React.useState(false);
+  const [visibleRowsCount, setVisibleRowsCount] = React.useState<number | undefined>(undefined);
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, { status: string; time: string }>);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -125,21 +126,21 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
 
         <div className="flex-1 overflow-auto relative bg-white">
           <div className="min-w-max h-full">
-            {currentStage === 'spec' && <SpecTable />}
-            {currentStage === 'request' && <RequestTable />}
-            {currentStage === 'invoice' && <InvoiceTable />}
-            {currentStage === 'estimate' && <EstimateTable />}
+            {currentStage === 'spec' && <SpecTable onVisibleCountChange={setVisibleRowsCount} />}
+            {currentStage === 'request' && <RequestTable onVisibleCountChange={setVisibleRowsCount} />}
+            {currentStage === 'invoice' && <InvoiceTable onVisibleCountChange={setVisibleRowsCount} />}
+            {currentStage === 'estimate' && <EstimateTable onVisibleCountChange={setVisibleRowsCount} />}
           </div>
         </div>
       </div>
 
-      <Footer />
+      <Footer visibleRowsCount={visibleRowsCount} />
       <FilesPanel isOpen={filesOpen} onClose={() => setFilesOpen(false)} />
     </div>
   );
 }
 
-function Footer() {
+function Footer({ visibleRowsCount }: { visibleRowsCount?: number }) {
   const {
     getCurrentRows,
     selectedIds,
@@ -149,7 +150,7 @@ function Footer() {
     setRowsPerPage,
   } = useData();
 
-  const totalRows = getCurrentRows().length;
+  const totalRows = visibleRowsCount !== undefined ? visibleRowsCount : getCurrentRows().length;
   const totalPages = Math.ceil(totalRows / rowsPerPage) || 1;
 
   const handlePageChange = (page: number) => {
@@ -362,7 +363,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
   );
 }
 
-function SpecTable() {
+function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
   const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, getCurrentRows, viewMode } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
@@ -424,6 +425,10 @@ function SpecTable() {
     return res;
   }, [displayRows, collapsedIds, viewMode]);
 
+  React.useEffect(() => {
+    onVisibleCountChange?.(visibleRows.length);
+  }, [visibleRows.length, onVisibleCountChange]);
+
   const startIndex = (currentPage - 1) * rowsPerPage;
   const slicedRows = visibleRows.slice(startIndex, startIndex + rowsPerPage);
 
@@ -472,7 +477,7 @@ function SpecTable() {
   );
 }
 
-function RequestTable() {
+function RequestTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
   const { requestRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
   const { handleCellUpdate } = useTableEditor('request');
   const { handleKeyDown } = useTableNavigation();
@@ -488,6 +493,11 @@ function RequestTable() {
   ];
 
   const displayRows = isOnlySelectedView ? requestRows.filter(r => selectedIds.includes(r.id)) : requestRows;
+  
+  React.useEffect(() => {
+    onVisibleCountChange?.(displayRows.length);
+  }, [displayRows.length, onVisibleCountChange]);
+
   const startIndex = (currentPage - 1) * rowsPerPage;
   const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
 
@@ -522,7 +532,7 @@ function RequestTable() {
   );
 }
 
-function InvoiceTable() {
+function InvoiceTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
   const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, specRows } = useData();
   const { handleCellUpdate } = useTableEditor('invoice');
   const { handleKeyDown } = useTableNavigation();
@@ -540,6 +550,11 @@ function InvoiceTable() {
   ];
 
   const displayRows = isOnlySelectedView ? invoiceRows.filter(r => selectedIds.includes(r.id)) : invoiceRows;
+  
+  React.useEffect(() => {
+    onVisibleCountChange?.(displayRows.length);
+  }, [displayRows.length, onVisibleCountChange]);
+
   const startIndex = (currentPage - 1) * rowsPerPage;
   const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
 
@@ -584,7 +599,7 @@ function InvoiceTable() {
   );
 }
 
-function EstimateTable() {
+function EstimateTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
   const { estimateRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
   const { handleCellUpdate } = useTableEditor('estimate');
   const { handleKeyDown } = useTableNavigation();
@@ -600,6 +615,11 @@ function EstimateTable() {
   ];
 
   const displayRows = isOnlySelectedView ? estimateRows.filter(r => selectedIds.includes(r.id)) : estimateRows;
+  
+  React.useEffect(() => {
+    onVisibleCountChange?.(displayRows.length);
+  }, [displayRows.length, onVisibleCountChange]);
+
   const startIndex = (currentPage - 1) * rowsPerPage;
   const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
 
