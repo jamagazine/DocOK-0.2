@@ -53,6 +53,7 @@ export interface SpecRow extends MaterialPosition {
   originalRowsIds?: string[];
   children?: SpecRow[];
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  weight?: string;
 }
 
 export const SPEC_COLUMNS = [
@@ -909,9 +910,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const fingerprint = `${item.name}|${item.brand}|${item.code}`.toLowerCase().trim();
       if (map.has(fingerprint)) {
         const existing = map.get(fingerprint)!;
+        
+        // Sum Qty
         const q1 = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         const q2 = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         existing.quantity = String(q1 + q2);
+
+        // Sum Weight (if exists)
+        const w1 = parseFloat(String(existing.weight || 0).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const w2 = parseFloat(String(item.weight || 0).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        if (w1 + w2 > 0) existing.weight = String((w1 + w2).toFixed(2));
+
+        // Merge Notes
+        const notes = new Set<string>();
+        if (existing.note) existing.note.split(';').forEach(n => notes.add(n.trim()));
+        if (item.note) item.note.split(';').forEach(n => notes.add(n.trim()));
+        existing.note = Array.from(notes).filter(Boolean).join('; ');
+
         existing.children.push(item);
       } else {
         const safeId = generateStableId('merged', fingerprint);

@@ -74,7 +74,10 @@ export const TableRow = React.memo(({
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
-    stage === 'spec' && isMergedRow && "bg-emerald-50/40 hover:bg-emerald-100/40 border-l-4 border-l-emerald-400",
+    stage === 'spec' && isMergedRow && cn(
+      "bg-emerald-50/20 hover:bg-emerald-100/30 border-l-4 border-l-emerald-500",
+      (parentIsExpanded || localExpanded) && "bg-emerald-50/60 shadow-sm"
+    ),
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 hover:bg-blue-100/40 border-l-4 border-l-blue-400",
     stage === 'spec' && !isSummaryRow && hasChildren && "bg-slate-50/30",
     stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
@@ -179,19 +182,15 @@ export const TableRow = React.memo(({
             >
               {col.key === 'pos' ? (
                 <div className="relative w-full h-full flex items-center justify-center font-medium">
-                  {(stage === 'spec' && hasChildren && !isHeader && viewMode === 'merged') && (
+                  {(stage === 'spec' && hasChildren && !isHeader && viewMode === 'merged') && !isMergedRow && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (isSummaryRow) setLocalExpanded(!localExpanded);
-                        else parentToggleExpand?.(row.id);
+                        parentToggleExpand?.(row.id);
                       }}
-                      className={cn(
-                        "absolute left-0 p-1 hover:bg-slate-200 rounded transition-colors z-10",
-                        isSummaryRow && "bg-white/50 shadow-sm"
-                      )}
+                      className="absolute left-0 p-1 hover:bg-slate-200 rounded transition-colors z-10"
                     >
-                      {(isSummaryRow ? localExpanded : parentIsExpanded) ? <ChevronDown className="w-4 h-4 text-slate-600" /> : <ChevronRight className="w-4 h-4 text-slate-600" />}
+                      {parentIsExpanded ? <ChevronDown className="w-4 h-4 text-slate-600" /> : <ChevronRight className="w-4 h-4 text-slate-600" />}
                     </button>
                   )}
 
@@ -234,23 +233,40 @@ export const TableRow = React.memo(({
                     </>
                   )}
                 </div>
-              ) : stage === 'spec' && (isHeader || isSummaryRow) && col.key === 'name' ? (
-                <div className="flex items-center w-full px-6 py-2 overflow-hidden">
-                  <div className="flex items-center gap-3 w-full">
+              ) : col.key === 'name' && (stage === 'spec' && (isHeader || isSummaryRow)) ? (
+                <div 
+                  className="flex justify-between items-start gap-2 w-full px-4 py-2 overflow-hidden"
+                  onClick={(e) => {
+                    if (isSummaryRow && row.children?.length > 1) {
+                      e.stopPropagation();
+                      setLocalExpanded(!localExpanded);
+                    }
+                  }}
+                >
+                  <div className="flex flex-col gap-1 min-w-0">
                     <span className={cn(
-                      "font-bold truncate",
+                      "font-bold whitespace-normal break-words leading-tight",
                       isWorkType ? "text-base uppercase tracking-wider" : "text-sm",
                       isLocation && !isSupplierRow && "text-slate-100 underline underline-offset-8 decoration-white/20",
-                      isSupplierRow && "text-indigo-900 border-b-2 border-indigo-200"
+                      isSupplierRow && "text-indigo-900 border-b-2 border-indigo-200",
+                      isMergedRow && "text-emerald-900"
                     )}>
                       {String(row.name || '')}
                     </span>
                     {isSummaryRow && (
-                      <span className="text-[10px] bg-white/60 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                        {row.children.length} поз.
-                      </span>
+                      <div className="flex gap-2">
+                        <span className="text-[10px] bg-white/60 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                          {row.children.length} поз.
+                        </span>
+                      </div>
                     )}
                   </div>
+
+                  {isSummaryRow && row.children?.length > 1 && (
+                    <div className="p-1 rounded bg-slate-100/50 text-slate-500 hover:bg-slate-200/80 transition-colors shrink-0 mt-1">
+                      {localExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </div>
+                  )}
                 </div>
               ) : stage === 'invoice' && col.key === 'match_data' ? (
                 <div className="relative w-full h-full flex items-center gap-2 group/match overflow-visible">
@@ -335,50 +351,58 @@ export const TableRow = React.memo(({
         )}
       </div>
 
-      {stage === 'spec' && (parentIsExpanded || localExpanded) && row.children?.map((child: any, childIdx: number) => (
-        <div key={child.id} className={cn(
-          "flex items-center text-xs border-b border-slate-100 h-10 group/child transition-colors",
-          isSummaryRow ? "bg-slate-50/60 hover:bg-slate-100/60" : "bg-slate-50/20 italic"
+      {/* Children Rows Container with Inner Shadows */}
+      {stage === 'spec' && (parentIsExpanded || localExpanded) && (
+        <div className={cn(
+          "flex flex-col",
+          isSummaryRow && "shadow-[inset_0_4px_6px_-1px_rgba(0,0,0,0.05),_inset_0_-4px_6px_-1px_rgba(0,0,0,0.05)] bg-slate-50/30"
         )}>
-          {columns.map((col) => (
-            <div
-              key={col.key}
-              className={cn(
-                "px-4 py-1 overflow-hidden border-r border-slate-100/50 last:border-0 h-full flex items-center",
-                col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-              )}
-              style={{
-                flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                minWidth: col.width || '100px'
-              }}
-            >
-              {col.key === 'pos' ? (
-                <div className="flex items-center gap-2 pl-6">
-                  <span className="text-slate-400 tabular-nums font-mono text-[10px]">
-                    {isSummaryRow ? (child.pos || '—') : (childIdx + 1)}
-                  </span>
-                </div>
-              ) : col.key === 'name' && isSummaryRow ? (
-                <div className="flex items-center gap-2 w-full overflow-hidden text-slate-600">
-                  <span className="truncate">{String(child[col.key] || '')}</span>
-                  {child.pos && (
-                    <span className="text-[9px] text-slate-400 font-bold border border-slate-200 px-1 rounded bg-white shrink-0">
-                      {child.pos}
+          {row.children?.map((child: any, childIdx: number) => (
+            <div key={child.id} className={cn(
+              "flex items-center text-xs border-b border-slate-100 h-10 group/child transition-colors",
+              isSummaryRow ? "hover:bg-slate-100/40" : "bg-slate-50/20 italic"
+            )}>
+              {columns.map((col) => (
+                <div
+                  key={col.key}
+                  className={cn(
+                    "px-4 py-1 overflow-hidden border-r border-slate-100/50 last:border-0 h-full flex items-center",
+                    col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
+                  )}
+                  style={{
+                    flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
+                    minWidth: col.width || '100px'
+                  }}
+                >
+                  {col.key === 'pos' ? (
+                    <div className="flex items-center gap-2 pl-6">
+                      <span className="text-slate-400 tabular-nums font-mono text-[10px]">
+                        {isSummaryRow ? (child.pos || '—') : (childIdx + 1)}
+                      </span>
+                    </div>
+                  ) : col.key === 'name' && isSummaryRow ? (
+                    <div className="flex items-center gap-2 w-full overflow-hidden text-slate-600">
+                      <span className="truncate">{String(child[col.key] || '')}</span>
+                      {child.pos && (
+                        <span className="text-[9px] text-slate-400 font-bold border border-slate-200 px-1 rounded bg-white shrink-0">
+                          {child.pos}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className={cn(
+                      "break-words whitespace-normal truncate",
+                      isSummaryRow ? "text-slate-600" : "text-slate-500"
+                    )}>
+                      {String(child[col.key] || '')}
                     </span>
                   )}
                 </div>
-              ) : (
-                <span className={cn(
-                  "break-words whitespace-normal truncate",
-                  isSummaryRow ? "text-slate-600" : "text-slate-500"
-                )}>
-                  {String(child[col.key] || '')}
-                </span>
-              )}
+              ))}
             </div>
           ))}
         </div>
-      ))}
+      )}
     </Fragment>
   );
 });
