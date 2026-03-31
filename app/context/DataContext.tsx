@@ -265,10 +265,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem('docok_specRows');
       if (saved) {
         const rows = JSON.parse(saved);
-        // Migrate: ensure WORK_TYPE/LOCATION/GROUP rows always have is_header=true
+        // Migrate cached rows: fix is_header/row_type inconsistencies
         return rows.map((r: any) => {
+          // 1) Non-ITEM row_type must have is_header=true
           if (r.row_type && r.row_type !== 'ITEM' && !r.is_header) {
             return { ...r, is_header: true };
+          }
+          // 2) is_header=true but row_type missing or ITEM → force GROUP
+          if (r.is_header && (!r.row_type || r.row_type === 'ITEM')) {
+            return { ...r, row_type: 'GROUP' };
           }
           return r;
         });
@@ -454,17 +459,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const quantity = cols[6] || '';
         
         // Initial detection of row type
-        let row_type = 'ITEM';
         const is_header = !quantity;
+        let row_type = is_header ? 'GROUP' : 'ITEM'; // Default: no-quantity = GROUP
 
         if (is_header) {
           if (!pos && name === name.toUpperCase() && name.length > 3) {
             row_type = 'WORK_TYPE';
           } else if (pos === '§') {
             row_type = 'LOCATION';
-          } else if (pos || (name.match(/^(\d+)(\.\d+)*\./))) {
-            row_type = 'GROUP';
           }
+          // Everything else with is_header stays GROUP (the default)
         }
 
         return {
@@ -852,6 +856,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       case 'estimate': setEstimateRows([]); break;
       case 'request': setRequestRows([]); break;
     }
+    setActiveHeaderIds([]);
   }, []);
 
   const resetProjectData = useCallback(() => {
@@ -861,6 +866,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setRequestRows([]);
     setCompletedStages([]);
     setSelectedIds([]);
+    setActiveHeaderIds([]);
 
     setUploadStatuses((prev) => {
       const next = { ...prev };

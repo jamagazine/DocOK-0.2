@@ -48,31 +48,39 @@ const NavNode = ({
   onToggle: (id: string) => void; 
   level?: number 
 }) => {
-  const isSelected = activeIds.includes(node.id);
+  const isActive = activeIds.includes(node.id);
   const [isExpanded, setIsExpanded] = React.useState(true);
   const hasChildren = node.children && node.children.length > 0;
 
-  // Visual style per level
-  const labelStyle = level === 0
-    ? 'text-[13px] font-bold text-slate-800'
+  // Typography per hierarchy level
+  const labelCls = level === 0
+    ? 'text-[12px] font-bold tracking-tight'
     : level === 1
-    ? 'text-[12px] font-semibold text-slate-700'
-    : 'text-[11px] font-medium text-slate-600';
+    ? 'text-[11px] font-semibold'
+    : 'text-[11px] font-medium';
 
-  const leftBorderClass = level === 1 ? 'border-l border-slate-200 ml-4 pl-1' : level === 2 ? 'border-l border-slate-100 ml-8 pl-1' : '';
+  const colorCls = isActive
+    ? 'text-indigo-700'
+    : level === 0 ? 'text-slate-800' : level === 1 ? 'text-slate-700' : 'text-slate-500';
 
   return (
-    <div className={cn('flex flex-col', leftBorderClass, level === 0 && 'mt-0.5')}>
+    <div className="flex flex-col">
       <div
         className={cn(
-          'flex items-center gap-1.5 rounded-md transition-colors py-0.5 px-1 group',
-          isSelected ? 'bg-indigo-50' : 'hover:bg-slate-50'
+          'flex items-center gap-1.5 rounded-md transition-all py-[5px] px-2 group cursor-default',
+          isActive
+            ? 'bg-indigo-50 border-l-[3px] border-l-indigo-500 pl-[5px]'
+            : 'border-l-[3px] border-l-transparent hover:bg-slate-50/80'
         )}
+        style={{ marginLeft: `${level * 16}px` }}
       >
-        {/* Expand/collapse toggle */}
+        {/* Expand/collapse chevron */}
         <div
-          className={cn('w-3.5 h-3.5 flex shrink-0 items-center justify-center cursor-pointer text-slate-300 hover:text-slate-500 transition-colors', !hasChildren && 'opacity-0 pointer-events-none')}
-          onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+          className={cn(
+            'w-4 h-4 flex shrink-0 items-center justify-center rounded transition-colors',
+            hasChildren ? 'cursor-pointer text-slate-400 hover:text-indigo-500 hover:bg-indigo-50' : 'opacity-0 pointer-events-none'
+          )}
+          onClick={(e: React.MouseEvent) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
         >
           {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </div>
@@ -80,17 +88,19 @@ const NavNode = ({
         {/* Checkbox — multi-select */}
         <div
           className={cn(
-            'w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-all cursor-pointer',
-            isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-slate-300 bg-white group-hover:border-indigo-400'
+            'w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-all cursor-pointer',
+            isActive
+              ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm shadow-indigo-200'
+              : 'border-slate-300 bg-white group-hover:border-indigo-400'
           )}
-          onClick={(e) => { e.stopPropagation(); onToggle(node.id); }}
+          onClick={(e: React.MouseEvent) => { e.stopPropagation(); onToggle(node.id); }}
         >
-          {isSelected && <Check className="w-2 h-2 stroke-[3]" />}
+          {isActive && <Check className="w-2 h-2 stroke-[3]" />}
         </div>
 
         {/* Label — solo focus click */}
         <span
-          className={cn('flex-1 truncate select-none leading-tight cursor-pointer', labelStyle, isSelected && 'text-indigo-700')}
+          className={cn('flex-1 truncate select-none leading-snug cursor-pointer', labelCls, colorCls)}
           title={node.name}
           onClick={() => onSolo(node.id)}
         >
@@ -98,11 +108,14 @@ const NavNode = ({
         </span>
       </div>
 
+      {/* Children with visual tree line */}
       {isExpanded && hasChildren && (
-        <div className="flex flex-col">
-          {node.children.map((child: any) => (
-            <NavNode key={child.id} node={child} activeIds={activeIds} onSolo={onSolo} onToggle={onToggle} level={level + 1} />
-          ))}
+        <div className="flex flex-col" style={{ marginLeft: `${level * 16 + 10}px` }}>
+          <div className="border-l-2 border-slate-200/80 pl-0">
+            {node.children.map((child: any) => (
+              <NavNode key={child.id} node={child} activeIds={activeIds} onSolo={onSolo} onToggle={onToggle} level={level + 1} />
+            ))}
+          </div>
         </div>
       )}
     </div>
