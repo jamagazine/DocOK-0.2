@@ -1469,10 +1469,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       default: baseRows = [];
     }
 
+    // Step 1: Navigator filter (activeHeaderIds)
     let filteredBaseRows = baseRows;
 
     if (activeHeaderIds.length > 0 && viewMode !== 'supplier') {
-      const result = [];
+      const result: any[] = [];
       let isInsideActiveGroup = false;
       let activeLevel = -1;
 
@@ -1507,8 +1508,58 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     if (viewMode === 'merged') return getMergedRows(filteredBaseRows);
 
+    // Step 2: isOnlySelectedView filter – keep headers structurally but only show selected items
+    if (isOnlySelectedView && selectedIds.length > 0) {
+      const keepStatus = new Set<string>();
+      let activeL0: string | null = null;
+      let activeL1: string | null = null;
+      let activeL2: string | null = null;
+
+      for (const r of filteredBaseRows) {
+        const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+        if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
+        else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
+        else if (type === 'GROUP') { activeL2 = r.id; }
+        else if (selectedIds.includes(r.id)) {
+          keepStatus.add(r.id);
+          if (activeL0) keepStatus.add(activeL0);
+          if (activeL1) keepStatus.add(activeL1);
+          if (activeL2) keepStatus.add(activeL2);
+        }
+      }
+      filteredBaseRows = filteredBaseRows.filter(r => r.is_header ? keepStatus.has(r.id) : selectedIds.includes(r.id));
+    }
+
+    // Step 3: searchQuery filter
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const keepStatus = new Set<string>();
+      let activeL0: string | null = null;
+      let activeL1: string | null = null;
+      let activeL2: string | null = null;
+
+      for (const r of filteredBaseRows) {
+        const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+        if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
+        else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
+        else if (type === 'GROUP') { activeL2 = r.id; }
+        else {
+          const name = String(r.name || '').toLowerCase();
+          const code = String(r.code || '').toLowerCase();
+          const note = String(r.note || '').toLowerCase();
+          if (name.includes(q) || code.includes(q) || note.includes(q)) {
+            keepStatus.add(r.id);
+            if (activeL0) keepStatus.add(activeL0);
+            if (activeL1) keepStatus.add(activeL1);
+            if (activeL2) keepStatus.add(activeL2);
+          }
+        }
+      }
+      filteredBaseRows = filteredBaseRows.filter(r => r.is_header ? keepStatus.has(r.id) : keepStatus.has(r.id));
+    }
+
     return filteredBaseRows;
-  }, [currentStage, viewMode, sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows, activeHeaderIds, getSupplierRows, getMergedRows]);
+  }, [currentStage, viewMode, sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows, activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery, getSupplierRows, getMergedRows]);
 
   return (
     <DataContext.Provider

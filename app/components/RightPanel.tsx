@@ -38,60 +38,72 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const NavNode = ({ node, activeIds, onToggle, level = 0 }: { key?: string; node: any; activeIds: string[]; onToggle: (id: string) => void; level?: number }) => {
+const NavNode = ({ 
+  node, activeIds, onSolo, onToggle, level = 0 
+}: { 
+  key?: string; 
+  node: any; 
+  activeIds: string[]; 
+  onSolo: (id: string) => void;
+  onToggle: (id: string) => void; 
+  level?: number 
+}) => {
   const isSelected = activeIds.includes(node.id);
   const [isExpanded, setIsExpanded] = React.useState(true);
   const hasChildren = node.children && node.children.length > 0;
-  
+
+  // Visual style per level
+  const labelStyle = level === 0
+    ? 'text-[13px] font-bold text-slate-800'
+    : level === 1
+    ? 'text-[12px] font-semibold text-slate-700'
+    : 'text-[11px] font-medium text-slate-600';
+
+  const leftBorderClass = level === 1 ? 'border-l border-slate-200 ml-4 pl-1' : level === 2 ? 'border-l border-slate-100 ml-8 pl-1' : '';
+
   return (
-    <div className="flex flex-col gap-0.5">
-      <div 
+    <div className={cn('flex flex-col', leftBorderClass, level === 0 && 'mt-0.5')}>
+      <div
         className={cn(
-          "flex items-center gap-1 hover:bg-slate-100 p-1 rounded-md transition-colors cursor-pointer group",
-          isSelected ? "bg-indigo-50/50" : ""
+          'flex items-center gap-1.5 rounded-md transition-colors py-0.5 px-1 group',
+          isSelected ? 'bg-indigo-50' : 'hover:bg-slate-50'
         )}
-        style={{ paddingLeft: `${Math.max(0.25, level * 0.75)}rem` }}
-        onClick={() => onToggle(node.id)}
       >
-         <div 
-           className={cn(
-             "w-4 h-4 flex shrink-0 items-center justify-center cursor-pointer transition-colors",
-             hasChildren ? "text-slate-400 hover:text-indigo-600" : "opacity-0"
-           )}
-           onClick={(e) => { 
-             if (!hasChildren) return;
-             e.stopPropagation(); 
-             setIsExpanded(!isExpanded); 
-           }}
-         >
-           {hasChildren && (isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />)}
-         </div>
-         
-         <div 
-           className={cn(
-             "w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors cursor-pointer",
-             isSelected ? "bg-indigo-500 border-indigo-500 text-white" : "border-slate-300 bg-white group-hover:border-indigo-400"
-           )}
-         >
-           {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-         </div>
-         
-         <span className={cn(
-           "text-[11px] font-semibold truncate select-none leading-none pt-0.5",
-           node.row_type === 'WORK_TYPE' ? "text-slate-800" :
-           node.row_type === 'LOCATION' ? "text-indigo-900" : 
-           node.row_type === 'GROUP' ? "text-slate-600 font-medium" : "text-slate-700"
-         )} title={node.name}>
-           {node.name}
-         </span>
+        {/* Expand/collapse toggle */}
+        <div
+          className={cn('w-3.5 h-3.5 flex shrink-0 items-center justify-center cursor-pointer text-slate-300 hover:text-slate-500 transition-colors', !hasChildren && 'opacity-0 pointer-events-none')}
+          onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+        >
+          {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        </div>
+
+        {/* Checkbox — multi-select */}
+        <div
+          className={cn(
+            'w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-all cursor-pointer',
+            isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-slate-300 bg-white group-hover:border-indigo-400'
+          )}
+          onClick={(e) => { e.stopPropagation(); onToggle(node.id); }}
+        >
+          {isSelected && <Check className="w-2 h-2 stroke-[3]" />}
+        </div>
+
+        {/* Label — solo focus click */}
+        <span
+          className={cn('flex-1 truncate select-none leading-tight cursor-pointer', labelStyle, isSelected && 'text-indigo-700')}
+          title={node.name}
+          onClick={() => onSolo(node.id)}
+        >
+          {node.name}
+        </span>
       </div>
-      
+
       {isExpanded && hasChildren && (
-         <div className="flex flex-col gap-0.5 mt-0.5">
-            {node.children.map((child: any) => (
-              <NavNode key={child.id} node={child} activeIds={activeIds} onToggle={onToggle} level={level + 1} />
-            ))}
-         </div>
+        <div className="flex flex-col">
+          {node.children.map((child: any) => (
+            <NavNode key={child.id} node={child} activeIds={activeIds} onSolo={onSolo} onToggle={onToggle} level={level + 1} />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -259,87 +271,114 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   <button onClick={() => setIsResetConfirmOpen(true)} className="p-3 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]" title="Сброс проекта"><RotateCcw className="w-5 h-5" /><span className="text-[10px] font-bold uppercase tracking-tighter">Сброс</span></button>
                 </div>
 
-                {/* View Mode Switcher (Spec Only) */}
+                {/* View Mode Switcher + Navigator (unified block, Spec Only) */}
                 {currentStage === 'spec' && (
-                  <div className="space-y-2 shrink-0">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Вид</div>
-                    <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-lg border border-slate-200 h-10">
-                      <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}><FileText className="w-3.5 h-3.5" />Док</button>
-                      <button onClick={() => setViewMode('supplier')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}><Truck className="w-3.5 h-3.5" />Пост</button>
-                      <button onClick={() => setViewMode('merged')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}><Layers className="w-3.5 h-3.5" />Свод</button>
+                  <div className="flex-1 overflow-hidden flex flex-col gap-0 border border-slate-200 rounded-xl bg-white min-h-[120px]">
+                    {/* View switcher */}
+                    <div className="shrink-0 bg-slate-50 border-b border-slate-200 p-2">
+                      <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-lg h-9">
+                        <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Оригинальный вид (ГОСТ)"><FileText className="w-3.5 h-3.5" />Док</button>
+                        <button onClick={() => setViewMode('supplier')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Группировка по поставщикам"><Truck className="w-3.5 h-3.5" />Пост</button>
+                        <button onClick={() => setViewMode('merged')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Сводная таблица материалов"><Layers className="w-3.5 h-3.5" />Свод</button>
+                      </div>
                     </div>
+                    
+                    {/* Navigator tree (hidden in merged mode) */}
+                    {viewMode !== 'merged' && (
+                      <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 pb-3">
+                        <div className="flex flex-col">
+                          {getNavigatorTree().length === 0 ? (
+                            <div className="text-xs text-slate-400 py-4 text-center">Нет структуры</div>
+                          ) : (
+                            getNavigatorTree().map((node: any) => (
+                              <NavNode
+                                key={node.id}
+                                node={node}
+                                activeIds={activeHeaderIds}
+                                onSolo={(id: string) => setActiveHeaderIds([id])}
+                                onToggle={(id: string) => setActiveHeaderIds((prev: string[]) => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id])}
+                              />
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* Navigator */}
-                <div className="flex-1 overflow-hidden border border-slate-200 rounded-xl bg-slate-50/50 flex flex-col min-h-[100px]">
-                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-3 pt-3 pb-1 shrink-0 bg-slate-50/80 border-b border-slate-100 mb-1 backdrop-blur-sm z-10 sticky top-0">Оглавление</div>
-                   <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 pt-0 pb-4">
-                     <div className="flex flex-col gap-1">
-                       {getNavigatorTree().length === 0 ? (
-                         <div className="text-xs text-slate-400 p-2 text-center mt-4">Нет структуры</div>
-                       ) : (
-                         getNavigatorTree().map((node: any) => (
-                           <NavNode key={node.id} node={node} activeIds={activeHeaderIds} onToggle={(id: string) => setActiveHeaderIds((prev: string[]) => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id])} />
-                         ))
-                       )}
-                     </div>
-                   </div>
-                </div>
-
                 {/* Grid of actions at the bottom */}
-                <div className="shrink-0 grid grid-cols-2 gap-2 bg-slate-50 p-2 border border-slate-200 rounded-xl">
-                   <button onClick={selectAllRows} className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold transition-colors">
-                     <CheckSquare className="w-4 h-4" /> Выбрать все
-                   </button>
-                   <button onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); }} className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold transition-colors">
-                     <XSquare className="w-4 h-4" /> Сброс
-                   </button>
-                   <button onClick={keepSelectedRows} disabled={selectedIds.length === 0} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", selectedIds.length === 0 ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed" : "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100")}>
-                     <SaveAll className="w-4 h-4" /> Оставить кв.
-                   </button>
-                   <button onClick={deleteSelectedRows} disabled={selectedIds.length === 0} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", selectedIds.length === 0 ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100")}>
-                     <Trash2 className="w-4 h-4" /> Удалить
-                   </button>
-                   <button onClick={undo} disabled={!canUndo} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors w-full", !canUndo ? "bg-white border-slate-200 text-slate-200 cursor-not-allowed" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300")}>
-                     <Undo2 className="w-4 h-4" /> Шаг назад
-                   </button>
-                   <button onClick={redo} disabled={!canRedo} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors w-full", !canRedo ? "bg-white border-slate-200 text-slate-200 cursor-not-allowed" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300")}>
-                     <Redo2 className="w-4 h-4" /> Возврат
-                   </button>
+                <div className="shrink-0 flex flex-col gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={selectAllRows} className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold transition-colors" title="Выбрать все строки">
+                      <CheckSquare className="w-4 h-4" /> Выбрать все
+                    </button>
+                    <button onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); setIsOnlySelectedView(false); }} className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold transition-colors" title="Сбросить выделение и навигатор">
+                      <XSquare className="w-4 h-4" /> Сброс
+                    </button>
+                    <button
+                      onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
+                      disabled={selectedIds.length === 0 && !isOnlySelectedView}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors",
+                        isOnlySelectedView
+                          ? "bg-emerald-500 border-emerald-600 text-white hover:bg-emerald-600"
+                          : selectedIds.length === 0
+                          ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed"
+                          : "bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100"
+                      )}
+                      title={isOnlySelectedView ? "Показать все строки" : "Показать только выделенные"}
+                    >
+                      <Filter className="w-4 h-4" /> {isOnlySelectedView ? 'Показать все' : 'Оставить выбранные'}
+                    </button>
+                    <button onClick={deleteSelectedRows} disabled={selectedIds.length === 0} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", selectedIds.length === 0 ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100")} title="Удалить выделенные строки (с историей)">
+                      <Trash2 className="w-4 h-4" /> Удалить
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={undo} disabled={!canUndo} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", !canUndo ? "bg-white border-slate-200 text-slate-200 cursor-not-allowed" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100")} title="Отменить последнее действие">
+                      <Undo2 className="w-4 h-4" /> Шаг назад
+                    </button>
+                    <button onClick={redo} disabled={!canRedo} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", !canRedo ? "bg-white border-slate-200 text-slate-200 cursor-not-allowed" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100")} title="Повторить последнее действие">
+                      <Redo2 className="w-4 h-4" /> Возврат
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (
               <div className="flex flex-col items-center gap-4 h-full">
-                 {/* Top actions */}
-                 <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
-                   <UploadCloud className="w-5 h-5 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => fileInputRef.current?.click()} title="Импорт" />
-                   <Download className="w-5 h-5 text-slate-400 hover:text-emerald-600 cursor-pointer" onClick={handleExport} title="Экспорт" />
-                   <RotateCcw className="w-5 h-5 text-slate-400 hover:text-red-500 cursor-pointer" onClick={() => setIsResetConfirmOpen(true)} title="Сброс" />
-                 </div>
-                 
-                 {/* Views */}
-                 {currentStage === 'spec' && (
-                   <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
-                     <FileText className={cn("w-5 h-5 cursor-pointer", viewMode==='original'?"text-indigo-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('original')} title="Оригинал" />
-                     <Truck className={cn("w-5 h-5 cursor-pointer", viewMode==='supplier'?"text-blue-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('supplier')} title="Поставщики" />
-                     <Layers className={cn("w-5 h-5 cursor-pointer", viewMode==='merged'?"text-emerald-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('merged')} title="Сводная" />
-                   </div>
-                 )}
+                {/* Top file actions */}
+                <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
+                  <UploadCloud className="w-5 h-5 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => fileInputRef.current?.click()} title="Импорт" />
+                  <Download className="w-5 h-5 text-slate-400 hover:text-emerald-600 cursor-pointer" onClick={handleExport} title="Экспорт" />
+                  <RotateCcw className="w-5 h-5 text-slate-400 hover:text-red-500 cursor-pointer" onClick={() => setIsResetConfirmOpen(true)} title="Сброс" />
+                </div>
 
-                 <div className="flex-1" />
-                 
-                 {/* Action Stack */}
-                 <div className="flex flex-col items-center gap-3 bg-slate-50 rounded-full p-2.5 border border-slate-200 mb-2">
-                    <CheckSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={selectAllRows} title="Выбрать все" />
-                    <XSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); }} title="Сброс выбора и оглавления" />
-                    <div className="w-6 h-px bg-slate-200 my-0.5" />
-                    <SaveAll className={cn("w-4 h-4 cursor-pointer", selectedIds.length>0 ? "text-indigo-600" : "text-slate-300 pointer-events-none")} onClick={keepSelectedRows} title="Оставить выделенные" />
-                    <Trash2 className={cn("w-4 h-4 cursor-pointer", selectedIds.length>0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows} title="Удалить выделенные" />
-                    <div className="w-6 h-px bg-slate-200 my-0.5" />
-                    <Undo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canUndo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={undo} title="Отменить" />
-                    <Redo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canRedo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={redo} title="Повторить" />
-                 </div>
+                {/* View mode icons */}
+                {currentStage === 'spec' && (
+                  <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
+                    <FileText className={cn("w-5 h-5 cursor-pointer", viewMode==='original'?"text-indigo-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('original')} title="Оригинал" />
+                    <Truck className={cn("w-5 h-5 cursor-pointer", viewMode==='supplier'?"text-blue-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('supplier')} title="Поставщики" />
+                    <Layers className={cn("w-5 h-5 cursor-pointer", viewMode==='merged'?"text-emerald-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('merged')} title="Сводная" />
+                  </div>
+                )}
+
+                <div className="flex-1" />
+
+                {/* Bottom action stack */}
+                <div className="flex flex-col items-center gap-3 bg-slate-50 rounded-full p-2.5 border border-slate-200 mb-2">
+                  <CheckSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={selectAllRows} title="Выбрать все" />
+                  <XSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); setIsOnlySelectedView(false); }} title="Сброс выбора" />
+                  <div className="w-6 h-px bg-slate-200 my-0.5" />
+                  <Filter
+                    className={cn("w-4 h-4 cursor-pointer transition-colors", isOnlySelectedView ? "text-emerald-500" : selectedIds.length > 0 ? "text-sky-500" : "text-slate-300 pointer-events-none")}
+                    onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
+                    title={isOnlySelectedView ? "Показать все" : "Оставить выбранные"}
+                  />
+                  <Trash2 className={cn("w-4 h-4 cursor-pointer", selectedIds.length>0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows} title="Удалить выделенные" />
+                  <div className="w-6 h-px bg-slate-200 my-0.5" />
+                  <Undo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canUndo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={undo} title="Отменить" />
+                  <Redo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canRedo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={redo} title="Повторить" />
+                </div>
               </div>
             )}
           </div>
