@@ -20,7 +20,13 @@ import {
   Filter,
   Layers,
   Truck,
-  FileText
+  FileText,
+  ChevronDown,
+  ChevronRight,
+  Undo2,
+  Redo2,
+  SaveAll,
+  Check
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -31,6 +37,65 @@ import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const NavNode = ({ node, activeIds, onToggle, level = 0 }: { key?: string; node: any; activeIds: string[]; onToggle: (id: string) => void; level?: number }) => {
+  const isSelected = activeIds.includes(node.id);
+  const [isExpanded, setIsExpanded] = React.useState(true);
+  const hasChildren = node.children && node.children.length > 0;
+  
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div 
+        className={cn(
+          "flex items-center gap-1 hover:bg-slate-100 p-1 rounded-md transition-colors cursor-pointer group",
+          isSelected ? "bg-indigo-50/50" : ""
+        )}
+        style={{ paddingLeft: `${Math.max(0.25, level * 0.75)}rem` }}
+        onClick={() => onToggle(node.id)}
+      >
+         <div 
+           className={cn(
+             "w-4 h-4 flex shrink-0 items-center justify-center cursor-pointer transition-colors",
+             hasChildren ? "text-slate-400 hover:text-indigo-600" : "opacity-0"
+           )}
+           onClick={(e) => { 
+             if (!hasChildren) return;
+             e.stopPropagation(); 
+             setIsExpanded(!isExpanded); 
+           }}
+         >
+           {hasChildren && (isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />)}
+         </div>
+         
+         <div 
+           className={cn(
+             "w-3.5 h-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors cursor-pointer",
+             isSelected ? "bg-indigo-500 border-indigo-500 text-white" : "border-slate-300 bg-white group-hover:border-indigo-400"
+           )}
+         >
+           {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+         </div>
+         
+         <span className={cn(
+           "text-[11px] font-semibold truncate select-none leading-none pt-0.5",
+           node.row_type === 'WORK_TYPE' ? "text-slate-800" :
+           node.row_type === 'LOCATION' ? "text-indigo-900" : 
+           node.row_type === 'GROUP' ? "text-slate-600 font-medium" : "text-slate-700"
+         )} title={node.name}>
+           {node.name}
+         </span>
+      </div>
+      
+      {isExpanded && hasChildren && (
+         <div className="flex flex-col gap-0.5 mt-0.5">
+            {node.children.map((child: any) => (
+              <NavNode key={child.id} node={child} activeIds={activeIds} onToggle={onToggle} level={level + 1} />
+            ))}
+         </div>
+      )}
+    </div>
+  );
+};
 
 interface RightPanelProps {
   expanded: boolean;
@@ -50,7 +115,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     resetData, sortRows, groupRows, filesMap, completeStage,
     selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
     isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen,
-    matchInvoiceToSpec, getCurrentRows, projectName
+    matchInvoiceToSpec, getCurrentRows, projectName,
+    activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
+    keepSelectedRows, undo, redo, canUndo, canRedo
   } = useData();
 
   const handleExport = () => {
@@ -130,7 +197,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   return (
     <div 
       className={cn(
-        "flex flex-col bg-white border-l border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full shadow-lg z-20",
+        "flex flex-col bg-white border-l border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full overflow-hidden shadow-lg z-20",
         expanded ? "w-72" : "w-16"
       )}
     >
@@ -138,7 +205,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
       {/* Header - Attic */}
       <div className={cn(
-        "p-4 border-b border-slate-200 h-[72px]",
+        "p-4 border-b border-slate-200 shrink-0 h-[72px]",
         expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
       )}>
         {!expanded && (
@@ -178,182 +245,101 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
       </div>
 
       {/* Middle Content */}
-      <div className={cn("flex-1 overflow-y-auto px-4 py-6", !expanded && "flex justify-center items-start pt-4")}>
+      <div className={cn("flex-1 flex flex-col min-h-0 overflow-hidden", expanded ? "px-4 py-4 gap-4" : "items-center px-2 py-4 gap-4")}>
         {activeTab === 'tools' && (
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col h-full w-full gap-4 overflow-hidden">
             {expanded ? (
               <>
                 {/* 3-Icon Toolbar */}
-                <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-200">
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-3 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]"
-                    title="Импорт данных"
-                  >
-                    <UploadCloud className="w-5 h-5" />
-                    <span className="text-[10px] font-bold uppercase tracking-tighter">Импорт</span>
-                  </button>
+                <div className="flex items-center justify-between shrink-0 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                  <button onClick={() => fileInputRef.current?.click()} className="p-3 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]" title="Импорт данных"><UploadCloud className="w-5 h-5" /><span className="text-[10px] font-bold uppercase tracking-tighter">Импорт</span></button>
                   <div className="w-px h-8 bg-slate-200" />
-                  <button 
-                    onClick={handleExport}
-                    className="p-3 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]"
-                    title="Экспорт таблицы"
-                  >
-                    <Download className="w-5 h-5" />
-                    <span className="text-[10px] font-bold uppercase tracking-tighter">Экспорт</span>
-                  </button>
+                  <button onClick={handleExport} className="p-3 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]" title="Экспорт таблицы"><Download className="w-5 h-5" /><span className="text-[10px] font-bold uppercase tracking-tighter">Экспорт</span></button>
                   <div className="w-px h-8 bg-slate-200" />
-                  <button 
-                    onClick={() => setIsResetConfirmOpen(true)}
-                    className="p-3 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]"
-                    title="Сброс проекта"
-                  >
-                    <RotateCcw className="w-5 h-5" />
-                    <span className="text-[10px] font-bold uppercase tracking-tighter">Сброс</span>
-                  </button>
+                  <button onClick={() => setIsResetConfirmOpen(true)} className="p-3 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all flex flex-col items-center gap-1 min-w-[70px]" title="Сброс проекта"><RotateCcw className="w-5 h-5" /><span className="text-[10px] font-bold uppercase tracking-tighter">Сброс</span></button>
                 </div>
 
                 {/* View Mode Switcher (Spec Only) */}
                 {currentStage === 'spec' && (
-                  <div className="space-y-3">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Режим отображения</div>
-                    <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-lg border border-slate-200 h-11">
-                      <button
-                        onClick={() => setViewMode('original')}
-                        className={cn(
-                          "flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold",
-                          viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                        )}
-                        title="Оригинальный вид (ГОСТ)"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        Док.
-                      </button>
-                      <button
-                        onClick={() => setViewMode('supplier')}
-                        className={cn(
-                          "flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold",
-                          viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                        )}
-                        title="Группировка по поставщикам"
-                      >
-                        <Truck className="w-3.5 h-3.5" />
-                        Пост.
-                      </button>
-                      <button
-                        onClick={() => setViewMode('merged')}
-                        className={cn(
-                          "flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold",
-                          viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                        )}
-                        title="Сводная таблица материалов"
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                        Свод.
-                      </button>
+                  <div className="space-y-2 shrink-0">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Вид</div>
+                    <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-lg border border-slate-200 h-10">
+                      <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}><FileText className="w-3.5 h-3.5" />Док</button>
+                      <button onClick={() => setViewMode('supplier')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}><Truck className="w-3.5 h-3.5" />Пост</button>
+                      <button onClick={() => setViewMode('merged')} className={cn("flex items-center justify-center gap-1.5 rounded-md transition-all text-[11px] font-bold", viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}><Layers className="w-3.5 h-3.5" />Свод</button>
                     </div>
                   </div>
                 )}
 
-                {currentStage === 'invoice' && invoiceRows.length > 0 && (
-                   <button 
-                     onClick={matchInvoiceToSpec}
-                     className="flex items-center justify-center gap-3 w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all text-sm font-bold shadow-indigo-100 shadow-lg group">
-                     <Merge className="w-4 h-4 text-indigo-200 group-hover:scale-110 transition-transform" />
-                     Связать со спецификой
+                {/* Navigator */}
+                <div className="flex-1 overflow-hidden border border-slate-200 rounded-xl bg-slate-50/50 flex flex-col min-h-[100px]">
+                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-3 pt-3 pb-1 shrink-0 bg-slate-50/80 border-b border-slate-100 mb-1 backdrop-blur-sm z-10 sticky top-0">Оглавление</div>
+                   <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 pt-0 pb-4">
+                     <div className="flex flex-col gap-1">
+                       {getNavigatorTree().length === 0 ? (
+                         <div className="text-xs text-slate-400 p-2 text-center mt-4">Нет структуры</div>
+                       ) : (
+                         getNavigatorTree().map((node: any) => (
+                           <NavNode key={node.id} node={node} activeIds={activeHeaderIds} onToggle={(id: string) => setActiveHeaderIds((prev: string[]) => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id])} />
+                         ))
+                       )}
+                     </div>
+                   </div>
+                </div>
+
+                {/* Grid of actions at the bottom */}
+                <div className="shrink-0 grid grid-cols-2 gap-2 bg-slate-50 p-2 border border-slate-200 rounded-xl">
+                   <button onClick={selectAllRows} className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold transition-colors">
+                     <CheckSquare className="w-4 h-4" /> Выбрать все
                    </button>
-                )}
-
-                {currentStage === 'spec' && pdfGeometry && (
-                  <button 
-                    onClick={() => exportGeometryToXLSX(pdfGeometry, 'geometry_spec.xlsx')}
-                    className="flex items-center gap-3 px-4 py-2 border border-emerald-100 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-700 rounded-lg transition-colors text-xs font-semibold w-full"
-                  >
-                    <Download className="w-4 h-4 text-emerald-500" /> Экспорт геометрии
-                  </button>
-                )}
-
-                {currentStage === 'estimate' && (
-                  <button 
-                    onClick={handleExport}
-                    className="flex items-center justify-center gap-3 px-4 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all text-sm font-bold shadow-indigo-200 shadow-xl w-full group"
-                  >
-                    <Download className="w-5 h-5 text-indigo-200 group-hover:translate-y-0.5 transition-transform" />
-                    Экспорт финальной сметы
-                  </button>
-                )}
-
-                <div className="w-full h-px bg-slate-100 my-2" />
-
-                <div className="space-y-2">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Выделение и фильтры</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button 
-                      onClick={selectAllRows}
-                      className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg transition-colors text-[11px] font-bold border border-slate-200">
-                      <CheckSquare className="w-3.5 h-3.5 text-slate-500" /> Все
-                    </button>
-                    <button 
-                      onClick={() => setSelectedIds([])}
-                      disabled={selectedIds.length === 0}
-                      className="flex items-center justify-center gap-2 px-3 py-2 bg-slate-50 disabled:opacity-50 hover:bg-slate-100 text-slate-700 rounded-lg transition-colors text-[11px] font-bold border border-slate-200">
-                      <XSquare className="w-3.5 h-3.5 text-slate-500" /> Сброс
-                    </button>
-                  </div>
-                  
-                  <button 
-                    onClick={deleteSelectedRows}
-                    disabled={selectedIds.length === 0}
-                    className={cn(
-                      "flex items-center justify-center gap-3 px-4 py-2.5 rounded-lg transition-all text-xs font-bold w-full border",
-                      selectedIds.length === 0 
-                        ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed" 
-                        : "bg-red-50 border-red-100 text-red-600 hover:bg-red-100"
-                    )}>
-                    <Trash2 className="w-4 h-4" /> Удалить выбранные ({selectedIds.length})
-                  </button>
-
-                  <button 
-                    onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
-                    disabled={selectedIds.length === 0 && !isOnlySelectedView}
-                    className={cn(
-                      "flex items-center justify-center gap-3 px-4 py-2.5 rounded-lg transition-all text-xs font-bold w-full border",
-                      isOnlySelectedView 
-                        ? "bg-indigo-600 border-indigo-700 text-white shadow-md shadow-indigo-100" 
-                        : selectedIds.length === 0 
-                          ? "bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed" 
-                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                    )}>
-                    <Filter className={cn("w-4 h-4", isOnlySelectedView ? "text-indigo-200" : "text-slate-500")} />
-                    {isOnlySelectedView ? 'Показать все строки' : 'Только выделенные'}
-                  </button>
+                   <button onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); }} className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[10px] font-bold transition-colors">
+                     <XSquare className="w-4 h-4" /> Сброс
+                   </button>
+                   <button onClick={keepSelectedRows} disabled={selectedIds.length === 0} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", selectedIds.length === 0 ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed" : "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100")}>
+                     <SaveAll className="w-4 h-4" /> Оставить кв.
+                   </button>
+                   <button onClick={deleteSelectedRows} disabled={selectedIds.length === 0} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors", selectedIds.length === 0 ? "bg-white border-slate-200 text-slate-300 cursor-not-allowed" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100")}>
+                     <Trash2 className="w-4 h-4" /> Удалить
+                   </button>
+                   <button onClick={undo} disabled={!canUndo} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors w-full", !canUndo ? "bg-white border-slate-200 text-slate-200 cursor-not-allowed" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300")}>
+                     <Undo2 className="w-4 h-4" /> Шаг назад
+                   </button>
+                   <button onClick={redo} disabled={!canRedo} className={cn("flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-[10px] font-bold transition-colors w-full", !canRedo ? "bg-white border-slate-200 text-slate-200 cursor-not-allowed" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300")}>
+                     <Redo2 className="w-4 h-4" /> Возврат
+                   </button>
                 </div>
               </>
             ) : (
-              <div className="flex flex-col gap-6 items-center" title="Инструменты">
-                 <UploadCloud className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" onClick={() => fileInputRef.current?.click()} title="Импорт" />
-                 <Download className="w-6 h-6 text-slate-400 hover:text-emerald-600 cursor-pointer transition-colors" onClick={handleExport} title="Экспорт" />
-                 <RotateCcw className="w-6 h-6 text-slate-400 hover:text-red-500 cursor-pointer transition-colors" onClick={() => resetData(currentStage)} title="Сброс" />
+              <div className="flex flex-col items-center gap-4 h-full">
+                 {/* Top actions */}
+                 <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
+                   <UploadCloud className="w-5 h-5 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => fileInputRef.current?.click()} title="Импорт" />
+                   <Download className="w-5 h-5 text-slate-400 hover:text-emerald-600 cursor-pointer" onClick={handleExport} title="Экспорт" />
+                   <RotateCcw className="w-5 h-5 text-slate-400 hover:text-red-500 cursor-pointer" onClick={() => setIsResetConfirmOpen(true)} title="Сброс" />
+                 </div>
                  
-                 <div className="w-8 h-px bg-slate-200 my-2" />
-                 
-                 <Layers className={cn(
-                   "w-6 h-6 cursor-pointer transition-colors",
-                   viewMode === 'merged' ? "text-emerald-600" : "text-slate-400 hover:text-indigo-600"
-                 )} onClick={() => setViewMode('merged')} title="Сводная" />
-                 
-                 <Truck className={cn(
-                   "w-6 h-6 cursor-pointer transition-colors",
-                   viewMode === 'supplier' ? "text-blue-600" : "text-slate-400 hover:text-indigo-600"
-                 )} onClick={() => setViewMode('supplier')} title="Поставщики" />
+                 {/* Views */}
+                 {currentStage === 'spec' && (
+                   <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
+                     <FileText className={cn("w-5 h-5 cursor-pointer", viewMode==='original'?"text-indigo-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('original')} title="Оригинал" />
+                     <Truck className={cn("w-5 h-5 cursor-pointer", viewMode==='supplier'?"text-blue-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('supplier')} title="Поставщики" />
+                     <Layers className={cn("w-5 h-5 cursor-pointer", viewMode==='merged'?"text-emerald-600":"text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('merged')} title="Сводная" />
+                   </div>
+                 )}
 
-                 <div className="w-8 h-px bg-slate-200 my-2" />
+                 <div className="flex-1" />
                  
-                 {selectedIds.length > 0 && <Trash2 className="w-6 h-6 text-red-400 hover:text-red-600 cursor-pointer" onClick={deleteSelectedRows} />}
-                 <Filter className={cn(
-                   "w-6 h-6 cursor-pointer transition-colors",
-                   isOnlySelectedView ? "text-indigo-600" : "text-slate-400 hover:text-indigo-600"
-                 )} onClick={() => setIsOnlySelectedView(!isOnlySelectedView)} />
+                 {/* Action Stack */}
+                 <div className="flex flex-col items-center gap-3 bg-slate-50 rounded-full p-2.5 border border-slate-200 mb-2">
+                    <CheckSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={selectAllRows} title="Выбрать все" />
+                    <XSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); }} title="Сброс выбора и оглавления" />
+                    <div className="w-6 h-px bg-slate-200 my-0.5" />
+                    <SaveAll className={cn("w-4 h-4 cursor-pointer", selectedIds.length>0 ? "text-indigo-600" : "text-slate-300 pointer-events-none")} onClick={keepSelectedRows} title="Оставить выделенные" />
+                    <Trash2 className={cn("w-4 h-4 cursor-pointer", selectedIds.length>0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows} title="Удалить выделенные" />
+                    <div className="w-6 h-px bg-slate-200 my-0.5" />
+                    <Undo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canUndo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={undo} title="Отменить" />
+                    <Redo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canRedo?"text-slate-600 hover:text-indigo-600":"text-slate-200 pointer-events-none")} onClick={redo} title="Повторить" />
+                 </div>
               </div>
             )}
           </div>

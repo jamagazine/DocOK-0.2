@@ -233,6 +233,16 @@ interface DataContextType {
   setCurrentStage: (stage: Stage) => void;
   getCurrentRows: () => any[];
   matchInvoiceToSpec: () => Promise<void>;
+  
+  // Stage 6 additions
+  activeHeaderIds: string[];
+  setActiveHeaderIds: React.Dispatch<React.SetStateAction<string[]>>;
+  getNavigatorTree: () => any[];
+  keepSelectedRows: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -307,6 +317,48 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
   const [viewMode, setViewMode] = useState<'original' | 'supplier' | 'merged'>('original');
+
+  // History & Navigator states
+  const [history, setHistory] = useState<{ past: { stage: Stage, rows: any[] }[], future: { stage: Stage, rows: any[] }[] }>({ past: [], future: [] });
+  const [activeHeaderIds, setActiveHeaderIds] = useState<string[]>([]);
+
+  const pushHistory = useCallback((stage: Stage, rowsToSave: any[]) => {
+    setHistory(prev => {
+      const past = [...prev.past, { stage, rows: [...rowsToSave] }];
+      if (past.length > 50) past.shift();
+      return { past, future: [] };
+    });
+  }, []);
+
+  const undo = useCallback(() => {
+    setHistory(prev => {
+      if (prev.past.length === 0) return prev;
+      const newPast = [...prev.past];
+      const snap = newPast.pop()!;
+      let currentRows: any[] = [];
+      if (snap.stage === 'spec') { currentRows = specRows; setSpecRows(snap.rows); }
+      else if (snap.stage === 'request') { currentRows = requestRows; setRequestRows(snap.rows); }
+      else if (snap.stage === 'invoice') { currentRows = invoiceRows; setInvoiceRows(snap.rows); }
+      else if (snap.stage === 'estimate') { currentRows = estimateRows; setEstimateRows(snap.rows); }
+      const newFuture = [{ stage: snap.stage, rows: [...currentRows] }, ...prev.future];
+      return { past: newPast, future: newFuture };
+    });
+  }, [specRows, requestRows, invoiceRows, estimateRows]);
+
+  const redo = useCallback(() => {
+    setHistory(prev => {
+      if (prev.future.length === 0) return prev;
+      const newFuture = [...prev.future];
+      const snap = newFuture.shift()!;
+      let currentRows: any[] = [];
+      if (snap.stage === 'spec') { currentRows = specRows; setSpecRows(snap.rows); }
+      else if (snap.stage === 'request') { currentRows = requestRows; setRequestRows(snap.rows); }
+      else if (snap.stage === 'invoice') { currentRows = invoiceRows; setInvoiceRows(snap.rows); }
+      else if (snap.stage === 'estimate') { currentRows = estimateRows; setEstimateRows(snap.rows); }
+      const newPast = [...prev.past, { stage: snap.stage, rows: [...currentRows] }];
+      return { past: newPast, future: newFuture };
+    });
+  }, [specRows, requestRows, invoiceRows, estimateRows]);
 
   const handleUnmerge = useCallback((parentId: string, childId: string) => {
     // Current logic: unmerging in non-destructive view mode could mean 'ignoring' this sub-item?
@@ -1271,24 +1323,192 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const deleteSelectedRows = useCallback(() => {
     if (selectedIds.length === 0) return;
+    
+    let baseRows: any[] = [];
+    if (currentStage === 'spec') baseRows = specRows;
+    else if (currentStage === 'request') baseRows = requestRows;
+    else if (currentStage === 'invoice') baseRows = invoiceRows;
+    else if (currentStage === 'estimate') baseRows = estimateRows;
+    
+    pushHistory(currentStage, baseRows);
+    
     const idsToDelete = new Set(selectedIds);
-    switch (currentStage) {
-      case 'spec':
-        setSpecRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
-        break;
-      case 'request':
-        setRequestRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
-        break;
-      case 'invoice':
-        setInvoiceRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
-        break;
-      case 'estimate':
-        setEstimateRows(prev => prev.filter(r => !idsToDelete.has(r.id)));
-        break;
-    }
+    let deleteStateL0 = false;
+    let deleteStateL1 = false;
+    let deleteStateL2 = false;
+
+    const newRows = baseRows.filter(r => {
+      const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+      if (type === 'WORK_TYPE') {
+         deleteStateL0 = idsToDelete.has(r.id);
+         deleteStateL1 = false;
+         deleteStateL2 = false;
+         return !deleteStateL0;
+      }
+      if (type === 'LOCATION') {
+         deleteStateL1 = idsToDelete.has(r.id);
+         deleteStateL2 = false;
+         return !(deleteStateL0 || deleteStateL1);
+      }
+      if (type === 'GROUP') {
+         deleteStateL2 = idsToDelete.has(r.id);
+         return !(deleteStateL0 || deleteStateL1 || deleteStateL2);
+      }
+      return !(deleteStateL0 || deleteStateL1 || deleteStateL2 || idsToDelete.has(r.id));
+    });
+
+    if (currentStage === 'spec') setSpecRows(newRows);
+    else if (currentStage === 'request') setRequestRows(newRows);
+    else if (currentStage === 'invoice') setInvoiceRows(newRows);
+    else if (currentStage === 'estimate') setEstimateRows(newRows);
+
     setSelectedIds([]);
     setIsOnlySelectedView(false);
-  }, [selectedIds, currentStage]);
+  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, pushHistory]);
+
+  const keepSelectedRows = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    
+    let baseRows: any[] = [];
+    if (currentStage === 'spec') baseRows = specRows;
+    else if (currentStage === 'request') baseRows = requestRows;
+    else if (currentStage === 'invoice') baseRows = invoiceRows;
+    else if (currentStage === 'estimate') baseRows = estimateRows;
+
+    pushHistory(currentStage, baseRows);
+
+    const keepStatus = new Map<string, boolean>();
+    let activeL0: string | null = null;
+    let activeL1: string | null = null;
+    let activeL2: string | null = null;
+    let keepL0 = false;
+    let keepL1 = false;
+    let keepL2 = false;
+
+    for (const r of baseRows) {
+      const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+      if (type === 'WORK_TYPE') {
+         activeL0 = r.id; activeL1 = null; activeL2 = null;
+         keepL0 = selectedIds.includes(r.id);
+         keepL1 = false; keepL2 = false;
+      } else if (type === 'LOCATION') {
+         activeL1 = r.id; activeL2 = null;
+         keepL1 = selectedIds.includes(r.id);
+         keepL2 = false;
+      } else if (type === 'GROUP') {
+         activeL2 = r.id;
+         keepL2 = selectedIds.includes(r.id);
+      }
+      
+      const explicitlySelected = selectedIds.includes(r.id);
+      const implicitlySelected = keepL0 || keepL1 || keepL2;
+      
+      if (explicitlySelected || implicitlySelected) {
+         keepStatus.set(r.id, true);
+         if (activeL0) keepStatus.set(activeL0, true);
+         if (activeL1) keepStatus.set(activeL1, true);
+         if (activeL2) keepStatus.set(activeL2, true);
+      }
+    }
+
+    const newRows = baseRows.filter(r => keepStatus.has(r.id));
+
+    if (currentStage === 'spec') setSpecRows(newRows);
+    else if (currentStage === 'request') setRequestRows(newRows);
+    else if (currentStage === 'invoice') setInvoiceRows(newRows);
+    else if (currentStage === 'estimate') setEstimateRows(newRows);
+
+    setSelectedIds([]);
+    setIsOnlySelectedView(false);
+  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, pushHistory]);
+
+  const getNavigatorTree = useCallback(() => {
+    let baseRows: any[] = [];
+    if (currentStage === 'spec') baseRows = specRows;
+    else if (currentStage === 'request') baseRows = requestRows;
+    else if (currentStage === 'invoice') baseRows = invoiceRows;
+    else if (currentStage === 'estimate') baseRows = estimateRows;
+
+    if (viewMode === 'supplier') {
+      const grouped = getSupplierRows(baseRows);
+      return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] }));
+    }
+
+    const tree: any[] = [];
+    let currentL0: any = null;
+    let currentL1: any = null;
+
+    baseRows.forEach(r => {
+      if (!r.is_header) return;
+      const type = r.row_type || 'GROUP';
+      const node = { id: r.id, name: r.name, row_type: type, children: [] };
+      if (type === 'WORK_TYPE') {
+        currentL0 = node;
+        currentL1 = null;
+        tree.push(node);
+      } else if (type === 'LOCATION') {
+        currentL1 = node;
+        if (currentL0) currentL0.children.push(node);
+        else tree.push(node);
+      } else if (type === 'GROUP') {
+        if (currentL1) currentL1.children.push(node);
+        else if (currentL0) currentL0.children.push(node);
+        else tree.push(node);
+      }
+    });
+    return tree;
+  }, [currentStage, viewMode, specRows, requestRows, invoiceRows, estimateRows, getSupplierRows]);
+
+  const getCurrentRows = useCallback(() => {
+    let baseRows: any[] = [];
+    switch (currentStage) {
+      case 'spec': baseRows = sortedSpecRows; break;
+      case 'request': baseRows = sortedRequestRows; break;
+      case 'invoice': baseRows = sortedInvoiceRows; break;
+      case 'estimate': baseRows = sortedEstimateRows; break;
+      default: baseRows = [];
+    }
+
+    let filteredBaseRows = baseRows;
+
+    if (activeHeaderIds.length > 0 && viewMode !== 'supplier') {
+      const result = [];
+      let isInsideActiveGroup = false;
+      let activeLevel = -1;
+
+      for (const r of baseRows) {
+        if (r.is_header) {
+          const type = r.row_type || 'GROUP';
+          const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : 2;
+          if (activeHeaderIds.includes(r.id)) {
+            isInsideActiveGroup = true;
+            activeLevel = level;
+            result.push(r);
+          } else if (isInsideActiveGroup && level > activeLevel) {
+            result.push(r);
+          } else {
+            isInsideActiveGroup = false;
+            activeLevel = -1;
+          }
+        } else {
+          if (isInsideActiveGroup) result.push(r);
+        }
+      }
+      filteredBaseRows = result;
+    }
+
+    if (viewMode === 'supplier') {
+      const supplierGroups = getSupplierRows(baseRows);
+      if (activeHeaderIds.length > 0) {
+        return supplierGroups.filter((g: any) => activeHeaderIds.includes(g.id));
+      }
+      return supplierGroups;
+    }
+
+    if (viewMode === 'merged') return getMergedRows(filteredBaseRows);
+
+    return filteredBaseRows;
+  }, [currentStage, viewMode, sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows, activeHeaderIds, getSupplierRows, getMergedRows]);
 
   return (
     <DataContext.Provider
@@ -1349,23 +1569,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
         handleRowChange,
         currentStage,
         setCurrentStage,
-        getCurrentRows: () => {
-          let rows = [];
-          switch (currentStage) {
-            case 'spec': rows = sortedSpecRows; break;
-            case 'request': rows = sortedRequestRows; break;
-            case 'invoice': rows = sortedInvoiceRows; break;
-            case 'estimate': rows = sortedEstimateRows; break;
-            default: rows = [];
-          }
-
-          if (currentStage === 'spec') {
-            if (viewMode === 'merged') return getMergedRows(rows);
-            if (viewMode === 'supplier') return getSupplierRows(rows);
-          }
-          return rows;
-        },
+        getCurrentRows,
         reprocessAi,
+        matchInvoiceToSpec,
+        activeHeaderIds,
+        setActiveHeaderIds,
+        getNavigatorTree,
+        keepSelectedRows,
+        undo,
+        redo,
+        canUndo: history.past.length > 0,
+        canRedo: history.future.length > 0,
       }}
     >
       {children}
