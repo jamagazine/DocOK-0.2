@@ -261,7 +261,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [projectName]);
 
   const [specRows, setSpecRows] = useState<SpecRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_specRows'); if (saved) return JSON.parse(saved); } catch (e) { }
+    try {
+      const saved = localStorage.getItem('docok_specRows');
+      if (saved) {
+        const rows = JSON.parse(saved);
+        // Migrate: ensure WORK_TYPE/LOCATION/GROUP rows always have is_header=true
+        return rows.map((r: any) => {
+          if (r.row_type && r.row_type !== 'ITEM' && !r.is_header) {
+            return { ...r, is_header: true };
+          }
+          return r;
+        });
+      }
+    } catch (e) {}
     return [];
   });
   const [requestRows, setRequestRows] = useState<SpecRow[]>(() => {
@@ -674,7 +686,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
                         quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
                         mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
                         note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
-                        is_header: item.row_type === 'LOCATION' || item.row_type === 'GROUP' || Boolean(item.is_header),
+                        is_header: item.row_type === 'WORK_TYPE' || item.row_type === 'LOCATION' || item.row_type === 'GROUP' || Boolean(item.is_header),
                         row_type: item.row_type || 'ITEM',
                         originalRowsIds: [],
                         children: []
@@ -1429,9 +1441,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     else if (currentStage === 'invoice') baseRows = invoiceRows;
     else if (currentStage === 'estimate') baseRows = estimateRows;
 
+    // Merged view has no section hierarchy to navigate
+    if (viewMode === 'merged') return [];
+
     if (viewMode === 'supplier') {
       const grouped = getSupplierRows(baseRows);
-      return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] }));
+      return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] as any[] }));
     }
 
     const tree: any[] = [];
@@ -1439,9 +1454,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     let currentL1: any = null;
 
     baseRows.forEach(r => {
-      if (!r.is_header) return;
-      const type = r.row_type || 'GROUP';
-      const node = { id: r.id, name: r.name, row_type: type, children: [] };
+      // Use row_type as primary signal — robust regardless of is_header value in cached data
+      const type = r.row_type;
+      if (!type || type === 'ITEM') return;
+
+      const node = { id: r.id, name: r.name || '(без названия)', row_type: type, children: [] as any[] };
       if (type === 'WORK_TYPE') {
         currentL0 = node;
         currentL1 = null;
