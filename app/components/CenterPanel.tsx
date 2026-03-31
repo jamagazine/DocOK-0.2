@@ -365,11 +365,16 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
 function SpecTable() {
   const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
+  const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
   const { handleKeyDown } = useTableNavigation();
 
   const toggleExpand = React.useCallback((id: string) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const toggleCollapse = React.useCallback((id: string) => {
+    setCollapsedIds(prev => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
   const columns: Column[] = [
@@ -385,8 +390,25 @@ function SpecTable() {
   ];
 
   const displayRows = isOnlySelectedView ? specRows.filter(r => selectedIds.includes(r.id)) : specRows;
+
+  const visibleRows = React.useMemo(() => {
+    const res = [];
+    let hideUntilLevel = -1;
+    for (const row of displayRows) {
+        const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
+        const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
+        
+        if (hideUntilLevel !== -1 && level <= hideUntilLevel) hideUntilLevel = -1;
+        if (hideUntilLevel !== -1) continue;
+        
+        res.push(row);
+        if (collapsedIds[row.id]) hideUntilLevel = level;
+    }
+    return res;
+  }, [displayRows, collapsedIds]);
+
   const startIndex = (currentPage - 1) * rowsPerPage;
-  const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
+  const slicedRows = visibleRows.slice(startIndex, startIndex + rowsPerPage);
 
   return (
     <div className="flex flex-col">
@@ -407,6 +429,8 @@ function SpecTable() {
                 onUpdate={handleCellUpdate}
                 isExpanded={!!expandedRows[row.id]}
                 toggleExpand={toggleExpand}
+                isCollapsed={!!collapsedIds[row.id]}
+                toggleCollapse={toggleCollapse}
                 onKeyDown={handleKeyDown}
               />
             ))}

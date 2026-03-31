@@ -172,7 +172,11 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         name_val = raw["name"]
         
         r_type = "ITEM"
-        if pos_val == "§": 
+        is_upper_no_tech = not pos_val and name_val.isupper() and not raw.get("unit") and not raw.get("quantity")
+        
+        if is_upper_no_tech:
+            r_type = "WORK_TYPE"
+        elif pos_val == "§": 
             r_type = "LOCATION"
         elif re.match(r'^(\d+)(\.\d+)*\.$', pos_val) or re.match(r'^(\d+)(\.\d+)*\s', name_val) or (pos_val and not name_val and not re.search(r'[a-zA-Zа-яА-Я]', pos_val)): 
             r_type = "GROUP"
@@ -183,7 +187,9 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
                 r_type = "GROUP"
                 
         # Field Cleaning & Formatting logic
-        if r_type == "LOCATION":
+        if r_type == "WORK_TYPE":
+            raw["note"] = ""
+        elif r_type == "LOCATION":
             # Force § in pos, strip § from name, clear note
             raw["pos"] = "§"
             raw["name"] = re.sub(r'^[§\s]+|[§\s]+$', '', name_val).strip()
@@ -198,7 +204,7 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
             raw["note"] = ""
             
         raw["row_type"] = r_type
-        raw["is_header"] = r_type in ["LOCATION", "GROUP"]
+        raw["is_header"] = r_type in ["WORK_TYPE", "LOCATION", "GROUP"]
         items.append(raw)
         
     return items

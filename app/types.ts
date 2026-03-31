@@ -49,7 +49,7 @@ export interface SpecRow {
   unit: string;
   weight: number;
   notes: string;
-  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 export interface InvoiceRow {
@@ -65,7 +65,7 @@ export interface InvoiceRow {
   priceDiscounted: number;
   sumNoDiscount: number;
   sumWithVat: number;
-  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 export interface EstimateRow {
@@ -78,5 +78,5 @@ export interface EstimateRow {
   costPrice: number;
   markup: number;
   clientPrice: number;
-  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
 }

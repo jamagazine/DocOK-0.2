@@ -52,7 +52,7 @@ export interface SpecRow extends MaterialPosition {
   fileId?: string;
   originalRowsIds?: string[];
   children?: SpecRow[];
-  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 export const SPEC_COLUMNS = [
@@ -102,7 +102,7 @@ export interface InvoiceRow {
     score: number;
     status: 'perfect' | 'warning' | 'none';
   };
-  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 export function emptyInvoiceRow(): InvoiceRow {
@@ -167,7 +167,7 @@ export interface EstimateRow {
   costSum: string;
   clientSum: string;
   supplier: string;
-  row_type?: 'LOCATION' | 'GROUP' | 'ITEM';
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
 }
 
 interface DataContextType {
@@ -1075,17 +1075,44 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleRowSelection = useCallback((id: string, isCellClick: boolean) => {
+    let activeRows: { id: string, row_type?: string, is_header?: boolean, pos?: string }[] = [];
+    if (currentStage === 'spec') activeRows = specRows as any;
+    else if (currentStage === 'invoice') activeRows = invoiceRows;
+    else if (currentStage === 'estimate') activeRows = estimateRows;
+    else if (currentStage === 'request') activeRows = requestRows as any;
+
+    let targetIds = [id];
+    const idx = activeRows.findIndex(r => r.id === id);
+    if (idx !== -1) {
+      const row = activeRows[idx];
+      const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
+      if (type === 'WORK_TYPE' || type === 'LOCATION' || type === 'GROUP') {
+        for (let i = idx + 1; i < activeRows.length; i++) {
+          const nr = activeRows[i];
+          const nType = nr.row_type || (nr.is_header ? (nr.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
+          if (type === 'WORK_TYPE' && nType === 'WORK_TYPE') break;
+          if (type === 'LOCATION' && (nType === 'WORK_TYPE' || nType === 'LOCATION')) break;
+          if (type === 'GROUP' && (nType === 'WORK_TYPE' || nType === 'LOCATION' || nType === 'GROUP')) break;
+          targetIds.push(nr.id);
+        }
+      }
+    }
+
     setSelectedIds(prev => {
       const isSelected = prev.includes(id);
       if (isSelected) {
         if (!isCellClick && prev.length === 1) return prev;
-        return prev.filter(rowId => rowId !== id);
+        return prev.filter(rowId => !targetIds.includes(rowId));
       } else {
         if (prev.length === 0 && !isCellClick) return prev;
-        return [...prev, id];
+        const next = [...prev];
+        targetIds.forEach(tid => {
+          if (!next.includes(tid)) next.push(tid);
+        });
+        return next;
       }
     });
-  }, []);
+  }, [currentStage, specRows, invoiceRows, estimateRows, requestRows]);
 
   const toggleSelectAllPage = useCallback((pageIds: string[]) => {
     if (pageIds.length === 0) return;

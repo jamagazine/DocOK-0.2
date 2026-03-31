@@ -28,6 +28,8 @@ interface TableRowProps {
   // Spec specific
   isExpanded?: boolean;
   toggleExpand?: (id: string) => void;
+  isCollapsed?: boolean;
+  toggleCollapse?: (id: string) => void;
   // Invoice specific
   specRows?: any[]; // for the manual match dropdown
   // Optional navigation hooks
@@ -45,14 +47,17 @@ export const TableRow = React.memo(({
   onUpdate,
   isExpanded,
   toggleExpand,
+  isCollapsed,
+  toggleCollapse,
   specRows = [],
   onKeyDown
 }: TableRowProps) => {
 
   const hasChildren = row.children && row.children.length > 1;
+  const isWorkType = row.row_type === 'WORK_TYPE';
   const isLocation = row.row_type === 'LOCATION' || row.pos === '§';
-  const isGroup = row.row_type === 'GROUP' || (row.is_header && !isLocation);
-  const isHeader = isLocation || isGroup;
+  const isGroup = row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType);
+  const isHeader = isWorkType || isLocation || isGroup;
 
   const baseRowClasses = cn(
     "flex items-center text-sm border-b border-slate-100 transition-colors group cursor-pointer",
@@ -63,8 +68,9 @@ export const TableRow = React.memo(({
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
     stage === 'spec' && hasChildren && "bg-slate-50/30",
-    stage === 'spec' && isLocation && "bg-[#1e293b] text-white hover:bg-slate-800 font-bold border-b border-white/10",
-    stage === 'spec' && isGroup && "bg-blue-50/40 text-slate-900 shadow-[inset_4px_0_0_0_#4f46e5] hover:bg-blue-100/40",
+    stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
+    stage === 'spec' && isLocation && "bg-slate-800 text-white hover:bg-slate-700 font-bold border-b border-white/10",
+    stage === 'spec' && isGroup && "bg-blue-50/50 text-slate-900 shadow-[inset_4px_0_0_0_#4f46e5] hover:bg-blue-100/40",
     stage === 'spec' && !isHeader && "hover:bg-slate-50/80 cursor-pointer"
   );
 
@@ -80,25 +86,41 @@ export const TableRow = React.memo(({
         {stage === 'spec' && (isHeader) ? (
           // Special Header Rendering (Full Width) for SpecTable
           <div className="flex w-full items-center select-none">
-            {/* Position Placeholder (Exactly matches standard pos column index 0) */}
-            <div 
-              className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent"
-            >
-              <div className="relative w-full h-full flex items-center justify-center">
-                <span className={cn(
-                  "font-black tabular-nums whitespace-nowrap",
-                  isLocation ? "text-blue-300 text-xl" : "text-indigo-700 text-sm"
-                )}>
-                  {row.pos}
-                </span>
+            {!isWorkType && (
+              <div 
+                className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent"
+              >
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <span className={cn(
+                    "font-black tabular-nums whitespace-nowrap",
+                    isLocation ? "text-blue-300 text-xl" : "text-indigo-700 text-sm"
+                  )}>
+                    {row.pos}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
             {/* Content Area */}
             <div className={cn(
-              "flex-grow px-4 py-3 tracking-tight",
-              isLocation ? "text-base uppercase underline underline-offset-8 decoration-blue-500/30" : "text-sm font-bold"
+              "flex-grow px-4 py-3 tracking-tight flex items-center gap-2",
+              isWorkType ? "text-base uppercase font-black" : 
+              isLocation ? "text-base uppercase underline underline-offset-8 decoration-blue-500/30 font-bold" : "text-sm font-bold"
             )}>
-              {row.name}
+              {toggleCollapse && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleCollapse(row.id);
+                  }}
+                  className={cn(
+                    "p-0.5 rounded transition-colors mr-1 shrink-0 flex items-center justify-center",
+                    isWorkType || isLocation ? "text-white/70 hover:bg-white/20 hover:text-white" : "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
+                  )}
+                >
+                  {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+              )}
+              <span className="truncate">{row.name}</span>
             </div>
             {isGroup && row.pos?.includes('.') && (
               <div className="flex-none px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold mr-6 opacity-80 shrink-0">
