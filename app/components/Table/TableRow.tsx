@@ -54,7 +54,7 @@ export const TableRow = React.memo(({
 }: TableRowProps) => {
 
   const hasChildren = row.children && row.children.length > 1;
-  const isWorkType = row.row_type === 'WORK_TYPE';
+  const isWorkType = row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && row.name === row.name.toUpperCase() && row.name.length > 3);
   const isLocation = row.row_type === 'LOCATION' || row.pos === '§';
   const isGroup = row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType);
   const isHeader = isWorkType || isLocation || isGroup;
@@ -69,7 +69,7 @@ export const TableRow = React.memo(({
     // Spec specific classes:
     stage === 'spec' && hasChildren && "bg-slate-50/30",
     stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
-    stage === 'spec' && isLocation && "bg-slate-800 text-white hover:bg-slate-700 font-bold border-b border-white/10",
+    stage === 'spec' && isLocation && "bg-indigo-900/80 text-white hover:bg-indigo-800/80 font-bold border-b border-white/10",
     stage === 'spec' && isGroup && "bg-blue-50/50 text-slate-900 shadow-[inset_4px_0_0_0_#4f46e5] hover:bg-blue-100/40",
     stage === 'spec' && !isHeader && "hover:bg-slate-50/80 cursor-pointer"
   );

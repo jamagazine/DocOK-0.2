@@ -131,8 +131,11 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
                         other_cols_empty = False
                         break
             if other_cols_empty:
-                p = "§"
-                df.iloc[i, c_p] = p
+                # L0 (WORK_TYPE) check: UPPERCASE titles with no technical columns should stay empty (no §)
+                # L1 (LOCATION) check: Titles with lowercase (e.g. "Система П1") get §
+                if not n.isupper():
+                    p = "§"
+                    df.iloc[i, c_p] = p
 
         if p.endswith(".1") and last.endswith(".9") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + "0"
         if re.match(r'^\d+(\.\d+)+$', p): last = p
@@ -172,10 +175,13 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         name_val = raw["name"]
         
         r_type = "ITEM"
-        is_upper_no_tech = not pos_val and name_val.isupper() and not raw.get("unit") and not raw.get("quantity")
+        
+        # L0 (WORK_TYPE): Empty pos + UPPERCASE name + No technical columns
+        is_upper_no_tech = (not pos_val or pos_val == "nan") and name_val.isupper() and not raw.get("unit") and not raw.get("quantity")
         
         if is_upper_no_tech:
             r_type = "WORK_TYPE"
+            raw["pos"] = "" # Ensure it's clean
         elif pos_val == "§": 
             r_type = "LOCATION"
         elif re.match(r'^(\d+)(\.\d+)*\.$', pos_val) or re.match(r'^(\d+)(\.\d+)*\s', name_val) or (pos_val and not name_val and not re.search(r'[a-zA-Zа-яА-Я]', pos_val)): 

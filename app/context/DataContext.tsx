@@ -366,19 +366,39 @@ export function DataProvider({ children }: { children: ReactNode }) {
           return null;
         }
 
+        const name = cols[1] || '';
+        const pos = cols[0] || '';
+        const unit = cols[5] || '';
+        const quantity = cols[6] || '';
+        
+        // Initial detection of row type
+        let row_type = 'ITEM';
+        const is_header = !quantity;
+
+        if (is_header) {
+          if (!pos && name === name.toUpperCase() && name.length > 3) {
+            row_type = 'WORK_TYPE';
+          } else if (pos === '§') {
+            row_type = 'LOCATION';
+          } else if (pos || (name.match(/^(\d+)(\.\d+)*\./))) {
+            row_type = 'GROUP';
+          }
+        }
+
         return {
           id: genId(),
           fileId: fileName,
-          pos: cols[0] || '',
-          name: cols[1] || '',
+          pos,
+          name,
           brand: cols[2] || '',
           code: cols[3] || '',
           supplier: cols[4] || '',
-          unit: cols[5] || '',
-          quantity: cols[6] || '',
+          unit,
+          quantity,
           mass: cols[7] || '',
           note: cols[8] || '',
-          is_header: !cols[6],
+          row_type,
+          is_header,
           originalRowsIds: [],
           children: []
         };
