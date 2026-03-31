@@ -216,7 +216,7 @@ export const TableRow = React.memo(({
                       {stage === 'invoice' && row.isUncertain && <AlertTriangle className="absolute left-1 w-3 h-3 text-amber-500 shrink-0" />}
                       <span className="group-hover:hidden text-slate-400 tabular-nums">
                         {stage === 'spec' 
-                          ? (row.pos || (actualIndex + 1).toString().padStart(2, '0'))
+                          ? (row.pos || '')
                           : (actualIndex + 1).toString().padStart(2, '0')
                         }
                       </span>
@@ -235,7 +235,7 @@ export const TableRow = React.memo(({
                 </div>
               ) : col.key === 'name' && (stage === 'spec' && (isHeader || isSummaryRow)) ? (
                 <div 
-                  className="flex justify-between items-start gap-2 w-full px-4 py-2 overflow-hidden"
+                  className="flex justify-between items-start gap-2 w-full overflow-hidden"
                   onClick={(e) => {
                     if (isSummaryRow && row.children?.length > 1) {
                       e.stopPropagation();
@@ -253,13 +253,7 @@ export const TableRow = React.memo(({
                     )}>
                       {String(row.name || '')}
                     </span>
-                    {isSummaryRow && (
-                      <div className="flex gap-2">
-                        <span className="text-[10px] bg-white/60 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                          {row.children.length} поз.
-                        </span>
-                      </div>
-                    )}
+
                   </div>
 
                   {isSummaryRow && row.children?.length > 1 && (
@@ -352,54 +346,23 @@ export const TableRow = React.memo(({
       </div>
 
       {/* Children Rows Container with Inner Shadows */}
-      {stage === 'spec' && (parentIsExpanded || localExpanded) && (
-        <div className={cn(
-          "flex flex-col",
-          isSummaryRow && "shadow-[inset_0_4px_6px_-1px_rgba(0,0,0,0.05),_inset_0_-4px_6px_-1px_rgba(0,0,0,0.05)] bg-slate-50/30"
-        )}>
-          {row.children?.map((child: any, childIdx: number) => (
-            <div key={child.id} className={cn(
-              "flex items-center text-xs border-b border-slate-100 h-10 group/child transition-colors",
-              isSummaryRow ? "hover:bg-slate-100/40" : "bg-slate-50/20 italic"
-            )}>
-              {columns.map((col) => (
-                <div
-                  key={col.key}
-                  className={cn(
-                    "px-4 py-1 overflow-hidden border-r border-slate-100/50 last:border-0 h-full flex items-center",
-                    col.align === 'center' ? "justify-center" : col.align === 'right' ? "justify-end" : "justify-start"
-                  )}
-                  style={{
-                    flex: col.width ? `0 0 ${col.width}` : (col.key === 'name' ? '2' : '1'),
-                    minWidth: col.width || '100px'
-                  }}
-                >
-                  {col.key === 'pos' ? (
-                    <div className="flex items-center gap-2 pl-6">
-                      <span className="text-slate-400 tabular-nums font-mono text-[10px]">
-                        {isSummaryRow ? (child.pos || '—') : (childIdx + 1)}
-                      </span>
-                    </div>
-                  ) : col.key === 'name' && isSummaryRow ? (
-                    <div className="flex items-center gap-2 w-full overflow-hidden text-slate-600">
-                      <span className="truncate">{String(child[col.key] || '')}</span>
-                      {child.pos && (
-                        <span className="text-[9px] text-slate-400 font-bold border border-slate-200 px-1 rounded bg-white shrink-0">
-                          {child.pos}
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className={cn(
-                      "break-words whitespace-normal truncate",
-                      isSummaryRow ? "text-slate-600" : "text-slate-500"
-                    )}>
-                      {String(child[col.key] || '')}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
+      {stage === 'spec' && (parentIsExpanded || localExpanded) && hasChildren && (
+        <div className="flex flex-col shadow-[inset_0_2px_4px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.05)] bg-slate-50/60 border-y border-slate-200/60">
+          {row.children.map((child: any, childIdx: number) => (
+            <TableRow
+              key={child.id || childIdx}
+              row={child}
+              columns={columns}
+              stage={stage}
+              actualIndex={childIdx}
+              isSelected={selectedIds?.includes(child.id) || false}
+              selectedIds={selectedIds}
+              toggleRowSelection={toggleRowSelection}
+              onUpdate={onUpdate}
+              viewMode={viewMode}
+              specRows={specRows}
+              onKeyDown={onKeyDown}
+            />
           ))}
         </div>
       )}

@@ -904,37 +904,77 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const getMergedRows = useCallback((items: SpecRow[]) => {
     const onlyItems = items.filter(r => !r.is_header && r.row_type !== 'WORK_TYPE' && r.row_type !== 'LOCATION' && r.row_type !== 'GROUP');
-    const map = new Map<string, SpecRow & { children: SpecRow[] }>();
+    const map = new Map<string, SpecRow[]>();
 
+    // 1. Сначала просто группируем все строки по отпечатку
     onlyItems.forEach(item => {
       const fingerprint = `${item.name}|${item.brand}|${item.code}`.toLowerCase().trim();
-      if (map.has(fingerprint)) {
-        const existing = map.get(fingerprint)!;
-        
-        // Sum Qty
-        const q1 = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        const q2 = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        existing.quantity = String(q1 + q2);
-
-        // Sum Weight (if exists)
-        const w1 = parseFloat(String(existing.weight || 0).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        const w2 = parseFloat(String(item.weight || 0).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        if (w1 + w2 > 0) existing.weight = String((w1 + w2).toFixed(2));
-
-        // Merge Notes
-        const notes = new Set<string>();
-        if (existing.note) existing.note.split(';').forEach(n => notes.add(n.trim()));
-        if (item.note) item.note.split(';').forEach(n => notes.add(n.trim()));
-        existing.note = Array.from(notes).filter(Boolean).join('; ');
-
-        existing.children.push(item);
-      } else {
-        const safeId = generateStableId('merged', fingerprint);
-        map.set(fingerprint, { ...item, id: safeId, children: [item] });
-      }
+      if (!map.has(fingerprint)) map.set(fingerprint, []);
+      map.get(fingerprint)!.push(item);
     });
 
-    return Array.from(map.values());
+    const finalRows: SpecRow[] = [];
+
+    // 2. Затем формируем временный список для сортировки
+    const rawResult: SpecRow[] = [];
+    for (const [fingerprint, group] of map.entries()) {
+      if (group.length === 1) {
+        rawResult.push({ ...group[0] });
+      } else {
+        const base = { ...group[0] };
+        base.id = generateStableId('merged', fingerprint);
+        base.children = [];
+        
+        let sumQ = 0;
+        let sumW = 0;
+        const notes = new Set<string>();
+
+        group.forEach(item => {
+          const q = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          sumQ += q;
+          const itemWeight = item.weight || item.mass || 0;
+          const w = parseFloat(String(itemWeight).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          sumW += w;
+          if (item.note) {
+            item.note.split(';').forEach(n => {
+              const trimmed = n.trim();
+              if (trimmed) notes.add(trimmed);
+            });
+          }
+          base.children!.push({ ...item });
+        });
+
+        base.quantity = sumQ.toString();
+        if (Number(base.quantity) % 1 !== 0) {
+          base.quantity = Number(base.quantity).toFixed(2);
+        }
+        if (sumW > 0) base.mass = sumW.toFixed(2);
+        base.note = Array.from(notes).join('; ');
+        
+        // Очистка имени от возможных старых счетчиков
+        base.name = base.name.replace(/\s*\(\d+\s*шт\.\)\s*$/, '').replace(/\s*\[\d+\]\s*$/, '').trim();
+        
+        rawResult.push(base);
+      }
+    }
+
+    // 3. Сортировка по алфавиту (A-Z, А-Я)
+    rawResult.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+    // 4. Присвоение иерархических номеров (N и N.M)
+    rawResult.forEach((row, idx) => {
+      const mainNum = idx + 1;
+      row.pos = mainNum.toString();
+
+      if (row.children && row.children.length > 1) {
+        row.children.forEach((child, cIdx) => {
+          child.pos = `${mainNum}.${cIdx + 1}`;
+        });
+      }
+      finalRows.push(row);
+    });
+
+    return finalRows;
   }, []);
 
   const getSupplierRows = useCallback((items: SpecRow[]) => {
