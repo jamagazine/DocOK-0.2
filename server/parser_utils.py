@@ -161,56 +161,113 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         if v[c_p]=="1" and v[c_n]=="2" and sum(1 for i, x in enumerate(v[:5]) if x==str(i+1))>=3: continue
         
         row_id = v[c_id] if c_id != -1 else f"idx_{idx}"
+        name_val = v[c_n]
+        pos_val = v[c_p]
+        unit_val = v[c_u] if c_u != -1 else ""
+        qty_val = v[c_q] if c_q != -1 else ""
+        
+        # Step 1: Preliminary identification of potential headers
+        # Potential header = No unit, no quantity, no mass (columns after c_q)
+        is_potential = not unit_val and not qty_val
+        if is_potential:
+            # check mass and others
+            for k in range(max(c_u, c_q) + 1, len(v) - 1): # skip last ID col
+                if v[k]:
+                    is_potential = False
+                    break
+        
         raw_list.append({
             "id": row_id, 
-            "pos": v[c_p], 
-            "name": v[c_n], 
-            "unit": v[c_u] if c_u!=-1 else "", 
-            "quantity": v[c_q] if c_q!=-1 else ""
+            "pos": pos_val, 
+            "name": name_val, 
+            "unit": unit_val, 
+            "quantity": qty_val,
+            "is_potential_header": is_potential
         })
         
-    items = []
-    for i, raw in enumerate(raw_list):
-        pos_val = raw["pos"]
-        name_val = raw["name"]
+    # Step 2: Bottom-Up Level Calculation (HierarchyBuilder)
+    # 0 = WORK_TYPE, 1 = LOCATION, 2 = GROUP, None = ITEM
+    levels = [None] * len(raw_list)
+    
+    seen_l2 = False
+    seen_l1 = False
+    
+    for i in range(len(raw_list) - 1, -1, -1):
+        raw = raw_list[i]
+        if not raw["is_potential_header"]:
+            levels[i] = None
+            continue
+            
+        lvl = 2 # Default to GROUP if it's a header
         
-        r_type = "ITEM"
-        
-        # L0 (WORK_TYPE): Empty pos + UPPERCASE name + No technical columns
-        is_upper_no_tech = (not pos_val or pos_val == "nan") and name_val.isupper() and not raw.get("unit") and not raw.get("quantity")
-        
-        if is_upper_no_tech:
-            r_type = "WORK_TYPE"
-            raw["pos"] = "" # Ensure it's clean
-        elif pos_val == "§": 
-            r_type = "LOCATION"
-        elif re.match(r'^(\d+)(\.\d+)*\.$', pos_val) or re.match(r'^(\d+)(\.\d+)*\s', name_val) or (pos_val and not name_val and not re.search(r'[a-zA-Zа-яА-Я]', pos_val)): 
-            r_type = "GROUP"
+        # Signal Boosters (Priortize explicit markers)
+        if (not raw["pos"] or raw["pos"] == "nan") and raw["name"].isupper() and len(raw["name"]) > 3:
+            lvl = 0 # Forced WORK_TYPE
+        elif raw["pos"] == "§":
+            lvl = 1 # Forced LOCATION
+        elif re.match(r'^(\d+)(\.\d+)+\.?$', raw["pos"]) or re.match(r'^(\d+)(\.\d+)*\.(?:\s|$)', raw["name"]):
+            lvl = 2 # Forced GROUP
         else:
-            # Lookahead check for hierarchies
-            next_pos = raw_list[i+1]["pos"] if i + 1 < len(raw_list) else ""
-            if re.match(r'^\d+$', pos_val) and next_pos.startswith(f"{pos_val}."):
-                r_type = "GROUP"
-                
-        # Field Cleaning & Formatting logic
-        if r_type == "WORK_TYPE":
-            raw["note"] = ""
-        elif r_type == "LOCATION":
-            # Force § in pos, strip § from name, clear note
-            raw["pos"] = "§"
-            raw["name"] = re.sub(r'^[§\s]+|[§\s]+$', '', name_val).strip()
-            raw["note"] = ""
-        elif r_type == "GROUP":
-            # Extract leading number/dot from name if pos is not already better
-            # Matches "1. ", "1.1 ", "1.1. ", etc.
-            m = re.match(r'^(\d+(?:\.\d+)*\.?)\s+(.*)', name_val)
+            # Logical booster based on what's below
+            if seen_l1: lvl = 0
+            elif seen_l2: lvl = 1
+            else: lvl = 2
+            
+        levels[i] = lvl
+        
+        # Update trackers for rows ABOVE
+        if lvl == 0:
+            seen_l1 = False
+            seen_l2 = False
+        elif lvl == 1:
+            seen_l1 = True
+            seen_l2 = False
+        elif lvl == 2:
+            seen_l2 = True
+
+    # Step 3: Forward Pass for Metadata Assignment (parentId)
+    items = []
+    l0_id = None
+    l1_id = None
+    l2_id = None
+    
+    for i, raw in enumerate(raw_list):
+        lvl = levels[i]
+        
+        if lvl == 0:
+            r_type = "WORK_TYPE"
+            l0_id = raw["id"]
+            l1_id = None
+            l2_id = None
+            raw["pos"] = "" # Clean pos for L0
+            parent_id = None
+        elif lvl == 1:
+            r_type = "LOCATION"
+            l1_id = raw["id"]
+            l2_id = None
+            raw["pos"] = "§" # Ensure § for L1
+            raw["name"] = re.sub(r'^[§\s]+|[§\s]+$', '', raw["name"]).strip()
+            parent_id = l0_id
+        elif lvl == 2:
+            r_type = "GROUP"
+            l2_id = raw["id"]
+            m = re.match(r'^(\d+(?:\.\d+)*\.?)\s+(.*)', raw["name"])
             if m:
                 raw["pos"] = m.group(1)
                 raw["name"] = m.group(2).strip()
-            raw["note"] = ""
-            
+            parent_id = l1_id or l0_id
+        else:
+            r_type = "ITEM"
+            parent_id = l2_id or l1_id or l0_id
+
         raw["row_type"] = r_type
         raw["is_header"] = r_type in ["WORK_TYPE", "LOCATION", "GROUP"]
+        raw["hierarchy_level"] = lvl
+        raw["parentId"] = parent_id
+        raw["note"] = "" if raw["is_header"] else "" # Standard cleaning
+        
+        # Remove internal helper
+        del raw["is_potential_header"]
         items.append(raw)
         
     return items
