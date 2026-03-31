@@ -869,6 +869,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       let valA = a[config.key!];
       let valB = b[config.key!];
 
+      // Smart Sorting: Empty values always at the bottom
+      const isEmptyA = valA === undefined || valA === null || valA === '';
+      const isEmptyB = valB === undefined || valB === null || valB === '';
+      if (isEmptyA && !isEmptyB) return 1;
+      if (!isEmptyA && isEmptyB) return -1;
+      if (isEmptyA && isEmptyB) return 0;
+
       if (config.key === 'pos') {
         return naturalSort(valA, valB) * (config.direction === 'asc' ? 1 : -1);
       }

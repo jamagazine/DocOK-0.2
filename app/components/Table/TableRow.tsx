@@ -78,7 +78,10 @@ export const TableRow = React.memo(({
     <Fragment>
       <div
         onClick={() => {
-          if (stage === 'spec' && isHeader) return;
+          if (stage === 'spec' && isHeader) {
+            toggleCollapse?.(row.id);
+            return;
+          }
           toggleRowSelection(row.id, false);
         }}
         className={baseRowClasses}
@@ -121,10 +124,12 @@ export const TableRow = React.memo(({
             </div>
             {/* Content Area */}
             <div className={cn(
-              "flex-grow px-4 py-3 tracking-tight flex items-center gap-2",
+              "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
               isWorkType ? "text-base uppercase font-black" : 
               isLocation ? "text-base uppercase underline underline-offset-8 decoration-blue-500/30 font-bold" : "text-sm font-bold"
             )}>
+              <span className="truncate flex-grow mr-4">{row.name}</span>
+              
               {toggleCollapse && (
                 <button
                   onClick={(e) => {
@@ -132,14 +137,13 @@ export const TableRow = React.memo(({
                     toggleCollapse(row.id);
                   }}
                   className={cn(
-                    "p-0.5 rounded transition-colors mr-1 shrink-0 flex items-center justify-center",
+                    "p-1 rounded transition-colors flex-shrink-0 ml-auto flex items-center justify-center",
                     isWorkType || isLocation ? "text-white/70 hover:bg-white/20 hover:text-white" : "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
                   )}
                 >
-                  {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
               )}
-              <span className="truncate">{row.name}</span>
             </div>
             {isGroup && row.pos?.includes('.') && (
               <div className="flex-none px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold mr-6 opacity-80 shrink-0">
