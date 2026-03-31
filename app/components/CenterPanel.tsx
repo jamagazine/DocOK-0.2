@@ -363,7 +363,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
 }
 
 function SpecTable() {
-  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
+  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, getCurrentRows, viewMode } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
@@ -389,23 +389,40 @@ function SpecTable() {
     { key: 'note', label: 'Примечание', width: '150px' }
   ];
 
-  const displayRows = isOnlySelectedView ? specRows.filter(r => selectedIds.includes(r.id)) : specRows;
+  const allRows = getCurrentRows();
+  const displayRows = isOnlySelectedView ? allRows.filter((r: any) => selectedIds.includes(r.id)) : allRows;
 
   const visibleRows = React.useMemo(() => {
+    // If not original mode, we don't necessarily need the strict L0/L1 hierarchy
+    // BUT we do want collapsedIds to hide items inside supplier grouping if they are flattened.
+    // Wait, in my DataContext, the supplier mode returns only summaries containing children. 
+    // Is displayRows flat? Let's just flatten it here if needed, or if it's already flat, it will work.
+    
+    // To support accordion on both flat and nested hierarchies:
     const res = [];
     let hideUntilLevel = -1;
-    for (const row of displayRows) {
+    let isSupplierMode = viewMode === 'supplier';
+    
+    // Let's flatten the items if we're in supplier mode so they can be paginated properly 
+    // and collapsed using standard `collapsedIds` logic like regular groups.
+    const effectiveRows = viewMode === 'supplier' ? displayRows.flatMap((r: any) => [r, ...(r.children || [])]) : displayRows;
+
+    for (const row of effectiveRows) {
+        // Supplier rows are GROUP, their children are ITEM
         const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
         const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
         
         if (hideUntilLevel !== -1 && level <= hideUntilLevel) hideUntilLevel = -1;
         if (hideUntilLevel !== -1) continue;
         
-        res.push(row);
+        // Remove children from supplier header if flattened, so TableRow doesn't double-render them
+        const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;
+        
+        res.push(renderedRow);
         if (collapsedIds[row.id]) hideUntilLevel = level;
     }
     return res;
-  }, [displayRows, collapsedIds]);
+  }, [displayRows, collapsedIds, viewMode]);
 
   const startIndex = (currentPage - 1) * rowsPerPage;
   const slicedRows = visibleRows.slice(startIndex, startIndex + rowsPerPage);
@@ -427,6 +444,7 @@ function SpecTable() {
                 selectedIds={selectedIds}
                 toggleRowSelection={toggleRowSelection}
                 onUpdate={handleCellUpdate}
+                viewMode={viewMode}
                 isExpanded={!!expandedRows[row.id]}
                 toggleExpand={toggleExpand}
                 isCollapsed={!!collapsedIds[row.id]}

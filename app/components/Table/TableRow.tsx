@@ -26,6 +26,7 @@ interface TableRowProps {
   toggleRowSelection: (id: string, isCellClick: boolean) => void;
   onUpdate: (rowId: string, colKey: string, value: any) => void;
   // Spec specific
+  viewMode?: 'original' | 'supplier' | 'merged';
   isExpanded?: boolean;
   toggleExpand?: (id: string) => void;
   isCollapsed?: boolean;
@@ -50,7 +51,8 @@ export const TableRow = React.memo(({
   isCollapsed,
   toggleCollapse,
   specRows = [],
-  onKeyDown
+  onKeyDown,
+  viewMode = 'original'
 }: TableRowProps) => {
   const [localExpanded, setLocalExpanded] = React.useState(false);
 
@@ -182,7 +184,7 @@ export const TableRow = React.memo(({
             >
               {col.key === 'pos' ? (
                 <div className="relative w-full h-full flex items-center justify-center font-medium">
-                  {(stage === 'spec' && hasChildren && !isHeader && (parentToggleExpand || isSummaryRow)) && (
+                  {(stage === 'spec' && hasChildren && !isHeader && viewMode === 'merged') && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
