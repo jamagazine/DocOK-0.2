@@ -86,20 +86,39 @@ export const TableRow = React.memo(({
         {stage === 'spec' && (isHeader) ? (
           // Special Header Rendering (Full Width) for SpecTable
           <div className="flex w-full items-center select-none">
-            {!isWorkType && (
-              <div 
-                className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent"
-              >
-                <div className="relative w-full h-full flex items-center justify-center">
-                  <span className={cn(
-                    "font-black tabular-nums whitespace-nowrap",
-                    isLocation ? "text-blue-300 text-xl" : "text-indigo-700 text-sm"
-                  )}>
-                    {row.pos}
-                  </span>
-                </div>
+            <div 
+              className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent group/poscell"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleRowSelection(row.id, true);
+              }}
+            >
+              <div className="relative w-full h-full flex items-center justify-center">
+                {isSelected ? (
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    checked={true}
+                    readOnly
+                  />
+                ) : (
+                  <>
+                    <span className={cn(
+                      "font-black tabular-nums whitespace-nowrap group-hover/poscell:hidden",
+                      isLocation ? "text-blue-300 text-xl" : "text-indigo-700 text-sm"
+                    )}>
+                      {!isWorkType ? row.pos : ''}
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="hidden group-hover/poscell:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      checked={false}
+                      readOnly
+                    />
+                  </>
+                )}
               </div>
-            )}
+            </div>
             {/* Content Area */}
             <div className={cn(
               "flex-grow px-4 py-3 tracking-tight flex items-center gap-2",
