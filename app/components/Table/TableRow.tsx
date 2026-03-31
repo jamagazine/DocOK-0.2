@@ -194,13 +194,7 @@ export const TableRow = React.memo(({
                     </button>
                   )}
 
-                  {stage === 'spec' && isLocation ? (
-                    <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
-                  ) : stage === 'spec' && isGroup ? (
-                    <span className="text-indigo-700 font-bold text-xs">{row.pos}</span>
-                  ) : stage === 'spec' && (isHeader || isSummaryRow) ? (
-                    <span className="text-slate-500 font-bold text-xs italic">{isSummaryRow ? (row.pos || '') : (row.pos || '§')}</span>
-                  ) : isSelected ? (
+                  {isSelected ? (
                     <input
                       type="checkbox"
                       className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
@@ -211,6 +205,8 @@ export const TableRow = React.memo(({
                       }}
                       onChange={() => { }}
                     />
+                  ) : (stage === 'spec' && isHeader) ? (
+                    <span className="text-slate-500 font-bold text-xs italic">{row.pos || '§'}</span>
                   ) : (
                     <>
                       {stage === 'invoice' && row.isUncertain && <AlertTriangle className="absolute left-1 w-3 h-3 text-amber-500 shrink-0" />}

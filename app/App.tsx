@@ -12,17 +12,6 @@ function AppContent() {
   const [leftExpanded, setLeftExpanded] = useState(true);
   const [rightExpanded, setRightExpanded] = useState(true);
   const { currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging } = useData();
-  const [projectName, setProjectName] = useState(() => {
-    try {
-      const saved = localStorage.getItem('docok_projectName');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return 'Проект Торговый Центр "Галактика"';
-  });
-
-  useEffect(() => {
-    localStorage.setItem('docok_projectName', JSON.stringify(projectName));
-  }, [projectName]);
 
   const stageOrder: Stage[] = ['spec', 'request', 'invoice', 'estimate'];
   const currentStageIndex = stageOrder.indexOf(currentStage);
@@ -147,11 +136,7 @@ function AppContent() {
           onSetStage={setCurrentStage}
         />
         
-        <CenterPanel
-          currentStage={currentStage}
-          projectName={projectName}
-          setProjectName={setProjectName}
-        />
+        <CenterPanel currentStage={currentStage} />
         
         <RightPanel 
           expanded={rightExpanded} 

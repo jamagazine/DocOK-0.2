@@ -274,6 +274,120 @@ export async function exportToXLSX(headers: string[], rows: string[][], gridX?: 
   saveExcelFile(buffer, filename);
 }
 
+export async function exportSpecToExcel(rows: any[], filename: string, viewMode: string) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Specification');
+
+  // Excel Outline settings: keep '+' button at the top of the group
+  worksheet.properties.outlineProperties = {
+    summaryBelow: false,
+    summaryRight: false,
+  };
+
+  const headers = ['Поз.', 'Наименование', 'Марка/Тип', 'Код', 'Поставщик', 'Ед. изм.', 'Кол-во', 'Масса 1 ед, кг', 'Примечание'];
+  
+  worksheet.columns = [
+    { header: headers[0], key: 'pos', width: 8 },
+    { header: headers[1], key: 'name', width: 50 },
+    { header: headers[2], key: 'brand', width: 20 },
+    { header: headers[3], key: 'code', width: 15 },
+    { header: headers[4], key: 'supplier', width: 15 },
+    { header: headers[5], key: 'unit', width: 8 },
+    { header: headers[6], key: 'quantity', width: 10 },
+    { header: headers[7], key: 'mass', width: 10 },
+    { header: headers[8], key: 'note', width: 20 }
+  ];
+
+  // Restyle Header row
+  const headerRow = worksheet.getRow(1);
+  headerRow.font = { bold: true };
+  headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+
+  // Helper function to format cell borders
+  const applyBorders = (row: ExcelJS.Row) => {
+    row.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      };
+    });
+  };
+
+  // Process rows
+  for (const r of rows) {
+    const isMergedRow = String(r.id).startsWith('merged_');
+    const isSupplierRow = String(r.id).startsWith('supplier_');
+    const isSummaryRow = isMergedRow || isSupplierRow;
+    
+    const isWorkType = !isSummaryRow && (r.row_type === 'WORK_TYPE' || (!r.pos && r.is_header && String(r.name) === String(r.name).toUpperCase() && String(r.name).length > 3));
+    const isLocation = isSupplierRow || (!isSummaryRow && (r.row_type === 'LOCATION' || r.pos === '§'));
+    const isGroup = !isSummaryRow && (r.row_type === 'GROUP' || (r.is_header && !isLocation && !isWorkType));
+    const isHeader = isWorkType || isLocation || isGroup;
+
+    // Add main row
+    const mainSheetRow = worksheet.addRow({
+      pos: r.pos || '',
+      name: r.name || '',
+      brand: r.brand || '',
+      code: r.code || '',
+      supplier: r.supplier || '',
+      unit: r.unit || '',
+      quantity: r.quantity || '',
+      mass: r.mass || r.weight || '',
+      note: r.note || ''
+    });
+
+    applyBorders(mainSheetRow);
+
+    // Apply text wrapping for Name
+    const nameCell = mainSheetRow.getCell('name');
+    nameCell.alignment = { wrapText: true, vertical: 'middle' };
+
+    // Apply styling based on type
+    if (isWorkType || isLocation) {
+      mainSheetRow.font = { bold: true };
+    } else if (isGroup) {
+      mainSheetRow.font = { bold: true };
+    }
+
+    if (isSummaryRow && r.children && r.children.length > 0) {
+      // For supplier mode, we reset numbering for children (1, 2, 3...)
+      const useLocalNumbering = isSupplierRow;
+      
+      // It's a group, add children
+      for (let i = 0; i < r.children.length; i++) {
+        const child = r.children[i];
+        const childSheetRow = worksheet.addRow({
+          pos: useLocalNumbering ? (i + 1).toString() : (child.pos || ''),
+          name: child.name || '',
+          brand: child.brand || '',
+          code: child.code || '',
+          supplier: child.supplier || '',
+          unit: child.unit || '',
+          quantity: child.quantity || '',
+          mass: child.mass || child.weight || '',
+          note: child.note || ''
+        });
+
+        applyBorders(childSheetRow);
+        
+        // Wrap text for children too
+        childSheetRow.getCell('name').alignment = { wrapText: true, vertical: 'middle' };
+        
+        // Make it foldable under the parent
+        childSheetRow.outlineLevel = 1;
+        // hidden: true for merged view (to hide by default), false otherwise (supplier view)
+        childSheetRow.hidden = viewMode === 'merged';
+      }
+    }
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  saveExcelFile(buffer, filename);
+}
+
 export async function exportGeometryToXLSX(geometry: PdfGeometry, filename: string = 'geometry_twin_semantic.xlsx') {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Digital Twin');

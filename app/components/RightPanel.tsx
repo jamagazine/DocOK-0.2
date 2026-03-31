@@ -26,7 +26,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Stage, RightPanelTab } from '../types';
 import { useData, SpecRow, InvoiceRow, EstimateRow } from '../context/DataContext';
-import { exportGeometryToXLSX, exportToXLSX } from '../utils/fileUtils';
+import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/fileUtils';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -50,19 +50,28 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     resetData, sortRows, groupRows, filesMap, completeStage,
     selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
     isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen,
-    matchInvoiceToSpec
+    matchInvoiceToSpec, getCurrentRows, projectName
   } = useData();
 
   const handleExport = () => {
     let headers: string[] = [];
     let data: string[][] = [];
-    let filename = `DocOK_${currentStage}.xlsx`;
+    const now = new Date();
+    const dateStr = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
+    const modeLabel = viewMode === 'merged' ? 'Сводная' : viewMode === 'supplier' ? 'Поставщики' : 'Оригинал';
+    let filename = `${projectName || 'Новый проект'}_${modeLabel}_${dateStr}_${timeStr}.xlsx`;
 
     if (currentStage === 'spec') {
-      headers = ['Поз.', 'Наименование', 'Марка/Тип', 'Код', 'Поставщик', 'Ед. изм.', 'Кол-во', 'Масса 1 ед, кг', 'Примечание'];
-      data = specRows.map((r: SpecRow, i: number) => [
-        r.pos || String(i + 1), r.name || '', r.brand || '', r.code || '', r.supplier || '', r.unit || '', String(r.quantity || ''), r.mass || '', r.note || ''
-      ]);
+      const currentRows = getCurrentRows();
+      let rowsToExport = currentRows;
+      
+      if (selectedIds.length > 0) {
+        rowsToExport = currentRows.filter(r => selectedIds.includes(r.id));
+      }
+
+      exportSpecToExcel(rowsToExport, filename, viewMode || 'original');
+      return; // Early return for spec
     } else if (currentStage === 'invoice') {
       headers = ['№', 'Наименование', 'Артикул', 'Кол-во', 'Цена', 'Сумма', 'Поставщик'];
       data = invoiceRows.map((r: InvoiceRow, i: number) => [

@@ -28,18 +28,18 @@ function cn(...inputs: ClassValue[]) {
 
 interface CenterPanelProps {
   currentStage: Stage;
-  projectName: string;
-  setProjectName: (name: string) => void;
 }
 
-export function CenterPanel({ currentStage, projectName, setProjectName }: CenterPanelProps) {
+export function CenterPanel({ currentStage }: CenterPanelProps) {
   const {
     uploadStatuses,
     searchQuery,
     setSearchQuery,
     setCurrentPage,
     setSelectedIds,
-    setIsOnlySelectedView
+    setIsOnlySelectedView,
+    projectName,
+    setProjectName
   } = useData();
 
   const [isEditingName, setIsEditingName] = React.useState(false);
@@ -77,16 +77,16 @@ export function CenterPanel({ currentStage, projectName, setProjectName }: Cente
                 onChange={(e) => setProjectName(e.target.value)}
                 onBlur={() => setIsEditingName(false)}
                 onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)}
-                className="text-xl font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
+                className="text-sm font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
               />
             ) : (
               <div
-                className="group flex items-center gap-2 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
+                className="group flex items-center gap-1.5 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
                 onClick={() => setIsEditingName(true)}
                 title="Редактировать название"
               >
-                <h1 className="text-xl font-bold text-slate-800 truncate">{projectName}</h1>
-                <Edit2 className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                <h1 className="text-sm font-bold text-slate-800 truncate">{projectName}</h1>
+                <Edit2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
             )}
           </div>
