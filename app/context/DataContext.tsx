@@ -198,6 +198,8 @@ interface DataContextType {
   removeFile: (fileName: string, nuclear?: boolean) => void;
   retryFile: (fileName: string, stage: Stage) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
+  viewMode: 'original' | 'supplier' | 'merged';
+  setViewMode: (mode: 'original' | 'supplier' | 'merged') => void;
   isMerged: boolean;
   toggleMerge: () => void;
   handleUnmerge: (parentId: string, childId: string) => void;
@@ -286,15 +288,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
   const [pdfGeometry, setPdfGeometry] = useState<PdfGeometry | null>(null);
-  const [isMerged, setIsMerged] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [backupSpecRows, setBackupSpecRows] = useState<SpecRow[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [isOnlySelectedView, setIsOnlySelectedView] = useState(false);
 
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
+  const [viewMode, setViewMode] = useState<'original' | 'supplier' | 'merged'>('original');
+
+  const handleUnmerge = useCallback((parentId: string, childId: string) => {
+    // Current logic: unmerging in non-destructive view mode could mean 'ignoring' this sub-item?
+    // For now, it's a stub or we just don't offer it in merged view if it complicates things.
+    console.log(`Unmerge ${childId} from ${parentId}`);
+  }, []);
 
   // Helper to sync status (and optionally other fields) with server
   const updateFileStatusOnServer = async (fileName: string, status: 'ok' | 'reset') => {
@@ -611,16 +618,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       };
                     });
 
-                    setSpecRows((prev) => {
-                      const filtered = prev.filter(r => r.fileId !== file.name);
-                      return [...filtered, ...aiRows];
-                    });
-                    setBackupSpecRows((prev) => {
-                      const filtered = prev.filter(r => r.fileId !== file.name);
-                      return [...filtered, ...aiRows];
-                    });
-                    setIsMerged(false);
-                  } else {
+                      setSpecRows((prev) => {
+                        const filtered = prev.filter(r => r.fileId !== file.name);
+                        return [...filtered, ...aiRows];
+                      });
+                    } else {
                     const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
                       if (item.pos === 'ERROR') {
                         toast.error(`Ошибка в файле ${file.name}: ${item.name} (${item.note || 'Без описания'})`, { duration: 5000 });
@@ -684,60 +686,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     await handleFile([file], currentStage, true);
   }, [filesMap, currentStage, handleFile]);
 
-  const toggleMerge = useCallback(() => {
-    setIsMerged((prev: boolean) => {
-      if (prev) {
-        if (backupSpecRows.length > 0) {
-          setSpecRows(backupSpecRows);
-        }
-        return false;
-      } else {
-        setBackupSpecRows(specRows);
-        const merged = mergeDuplicateMaterials(specRows).map(item => ({
-          ...item,
-          id: (item as any).id || genId()
-        })) as unknown as SpecRow[];
-        setSpecRows(merged);
-        return true;
-      }
-    });
-  }, [specRows, backupSpecRows]);
 
-  const handleUnmerge = useCallback((parentId: string, childId: string) => {
-    setSpecRows((prev: SpecRow[]) => {
-      const newRows = [...prev];
-      const parentIndex = newRows.findIndex(r => r.id === parentId);
-      if (parentIndex === -1) return prev;
-
-      const parentRow = { ...newRows[parentIndex] };
-      if (!parentRow.children || parentRow.children.length === 0) return prev;
-
-      const childIndex = parentRow.children.findIndex((c: SpecRow) => c.id === childId);
-      if (childIndex === -1) return prev;
-
-      const extractedChild = parentRow.children[childIndex];
-
-      parentRow.children = parentRow.children.filter((c: SpecRow) => c.id !== childId);
-      parentRow.originalRowsIds = parentRow.originalRowsIds?.filter(id => id !== childId);
-
-      const parseQty = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-      const pQty = parseQty(parentRow.quantity);
-      const cQty = parseQty(extractedChild.quantity);
-      const newQty = Math.max(0, pQty - cQty);
-      parentRow.quantity = newQty === 0 ? '' : String(newQty);
-
-      newRows[parentIndex] = parentRow;
-
-      const unmergedSpecRow: SpecRow = {
-        ...extractedChild,
-        originalRowsIds: [extractedChild.id],
-        children: [{ ...extractedChild } as SpecRow]
-      };
-
-      newRows.splice(parentIndex + 1, 0, unmergedSpecRow);
-      return newRows;
-    });
-  }, []);
 
   const generateEstimate = useCallback(() => {
     const newEstimate = specRows.map((spec: SpecRow) => {
@@ -940,6 +889,53 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const groupRows = useCallback((stage: Stage, field: string) => {
     // Базовая заглушка: просто логируем, так как сложная группировка требует UI-состояния
     console.log(`Grouping ${stage} by ${field}`);
+  }, []);
+
+  const getMergedRows = useCallback((items: SpecRow[]) => {
+    const onlyItems = items.filter(r => !r.is_header && r.row_type !== 'WORK_TYPE' && r.row_type !== 'LOCATION' && r.row_type !== 'GROUP');
+    const map = new Map<string, SpecRow & { children: SpecRow[] }>();
+
+    onlyItems.forEach(item => {
+      const fingerprint = `${item.name}|${item.brand}|${item.code}`.toLowerCase().trim();
+      if (map.has(fingerprint)) {
+        const existing = map.get(fingerprint)!;
+        const q1 = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const q2 = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        existing.quantity = String(q1 + q2);
+        existing.children.push(item);
+      } else {
+        map.set(fingerprint, { ...item, id: `merged_${item.id}`, children: [item] });
+      }
+    });
+
+    return Array.from(map.values());
+  }, []);
+
+  const getSupplierRows = useCallback((items: SpecRow[]) => {
+    const onlyItems = items.filter(r => !r.is_header);
+    const map = new Map<string, any>();
+
+    onlyItems.forEach(item => {
+      const s = (item.supplier || 'Не указан').trim();
+      if (map.has(s)) {
+        const existing = map.get(s)!;
+        const q1 = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const q2 = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        existing.quantity = String(q1 + q2);
+        existing.children.push(item);
+      } else {
+        map.set(s, { 
+          id: `supplier_${s}`, 
+          name: s, 
+          is_header: true, 
+          row_type: 'GROUP', 
+          quantity: item.quantity,
+          children: [item] 
+        });
+      }
+    });
+
+    return Array.from(map.values());
   }, []);
 
   const estimateTotal = React.useMemo(() => {
@@ -1228,8 +1224,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         removeFile,
         retryFile,
         pdfGeometry,
-        isMerged,
-        toggleMerge,
+        viewMode,
+        setViewMode,
         handleUnmerge,
         generateEstimate,
         estimateTotal,
@@ -1259,13 +1255,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
         currentStage,
         setCurrentStage,
         getCurrentRows: () => {
+          let rows = [];
           switch (currentStage) {
-            case 'spec': return sortedSpecRows;
-            case 'request': return sortedRequestRows;
-            case 'invoice': return sortedInvoiceRows;
-            case 'estimate': return sortedEstimateRows;
-            default: return [];
+            case 'spec': rows = sortedSpecRows; break;
+            case 'request': rows = sortedRequestRows; break;
+            case 'invoice': rows = sortedInvoiceRows; break;
+            case 'estimate': rows = sortedEstimateRows; break;
+            default: rows = [];
           }
+
+          if (currentStage === 'spec') {
+            if (viewMode === 'merged') return getMergedRows(rows);
+            if (viewMode === 'supplier') return getSupplierRows(rows);
+          }
+          return rows;
         },
         reprocessAi,
       }}

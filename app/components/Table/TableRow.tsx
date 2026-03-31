@@ -45,18 +45,23 @@ export const TableRow = React.memo(({
   selectedIds,
   toggleRowSelection,
   onUpdate,
-  isExpanded,
-  toggleExpand,
+  isExpanded: parentIsExpanded,
+  toggleExpand: parentToggleExpand,
   isCollapsed,
   toggleCollapse,
   specRows = [],
   onKeyDown
 }: TableRowProps) => {
+  const [localExpanded, setLocalExpanded] = React.useState(false);
 
-  const hasChildren = row.children && row.children.length > 1;
-  const isWorkType = row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && row.name === row.name.toUpperCase() && row.name.length > 3);
-  const isLocation = row.row_type === 'LOCATION' || row.pos === '§';
-  const isGroup = row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType);
+  const isMergedRow = String(row.id).startsWith('merged_');
+  const isSupplierRow = String(row.id).startsWith('supplier_');
+  const isSummaryRow = isMergedRow || isSupplierRow;
+
+  const hasChildren = row.children && row.children.length > 0;
+  const isWorkType = !isSummaryRow && (row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && row.name === String(row.name).toUpperCase() && String(row.name).length > 3));
+  const isLocation = !isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§');
+  const isGroup = !isSummaryRow && (row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType));
   const isHeader = isWorkType || isLocation || isGroup;
 
   const baseRowClasses = cn(
@@ -67,11 +72,13 @@ export const TableRow = React.memo(({
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
-    stage === 'spec' && hasChildren && "bg-slate-50/30",
+    stage === 'spec' && isMergedRow && "bg-emerald-50/40 hover:bg-emerald-100/40 border-l-4 border-l-emerald-400",
+    stage === 'spec' && isSupplierRow && "bg-blue-50/40 hover:bg-blue-100/40 border-l-4 border-l-blue-400",
+    stage === 'spec' && !isSummaryRow && hasChildren && "bg-slate-50/30",
     stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
     stage === 'spec' && isLocation && "bg-indigo-900/80 text-white hover:bg-indigo-800/80 font-bold border-b border-white/10",
     stage === 'spec' && isGroup && "bg-blue-50/50 text-slate-900 shadow-[inset_4px_0_0_0_#4f46e5] hover:bg-blue-100/40",
-    stage === 'spec' && !isHeader && "hover:bg-slate-50/80 cursor-pointer"
+    stage === 'spec' && !isHeader && !isSummaryRow && "hover:bg-slate-50/80 cursor-pointer"
   );
 
   return (
@@ -80,6 +87,10 @@ export const TableRow = React.memo(({
         onClick={() => {
           if (stage === 'spec' && isHeader) {
             toggleCollapse?.(row.id);
+            return;
+          }
+          if (isSummaryRow) {
+            setLocalExpanded(!localExpanded);
             return;
           }
           toggleRowSelection(row.id, false);
@@ -171,15 +182,19 @@ export const TableRow = React.memo(({
             >
               {col.key === 'pos' ? (
                 <div className="relative w-full h-full flex items-center justify-center font-medium">
-                  {stage === 'spec' && hasChildren && !isHeader && toggleExpand && (
+                  {(stage === 'spec' && hasChildren && !isHeader && (parentToggleExpand || isSummaryRow)) && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        toggleExpand(row.id);
+                        if (isSummaryRow) setLocalExpanded(!localExpanded);
+                        else parentToggleExpand?.(row.id);
                       }}
-                      className="absolute left-0 p-0.5 hover:bg-slate-200 rounded transition-colors"
+                      className={cn(
+                        "absolute left-0 p-1 hover:bg-slate-200 rounded transition-colors z-10",
+                        isSummaryRow && "bg-white/50 shadow-sm"
+                      )}
                     >
-                      {isExpanded ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronRight className="w-3 h-3 text-slate-500" />}
+                      {(isSummaryRow ? localExpanded : parentIsExpanded) ? <ChevronDown className="w-4 h-4 text-slate-600" /> : <ChevronRight className="w-4 h-4 text-slate-600" />}
                     </button>
                   )}
 
@@ -187,8 +202,8 @@ export const TableRow = React.memo(({
                     <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
                   ) : stage === 'spec' && isGroup ? (
                     <span className="text-indigo-700 font-bold text-xs">{row.pos}</span>
-                  ) : stage === 'spec' && isHeader ? (
-                    <span className="text-amber-700 font-bold text-xs">{row.pos || '§'}</span>
+                  ) : stage === 'spec' && (isHeader || isSummaryRow) ? (
+                    <span className="text-slate-500 font-bold text-xs italic">{isSummaryRow ? 'Σ' : (row.pos || '§')}</span>
                   ) : isSelected ? (
                     <input
                       type="checkbox"
@@ -222,8 +237,20 @@ export const TableRow = React.memo(({
                     </>
                   )}
                 </div>
-              ) : stage === 'spec' && isHeader && col.key === 'name' ? (
-                <span className="text-amber-800 font-bold text-sm">{String(row[col.key] || '')}</span>
+              ) : stage === 'spec' && (isHeader || isSummaryRow) && col.key === 'name' ? (
+                <div className="flex items-center gap-2 w-full overflow-hidden">
+                  <span className={cn(
+                    "truncate",
+                    isSummaryRow ? "text-slate-900 font-semibold" : "text-amber-800 font-bold text-sm"
+                  )}>
+                    {String(row[col.key] || '')}
+                  </span>
+                  {isSummaryRow && (
+                    <span className="text-[10px] bg-white/60 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                      {row.children.length} поз.
+                    </span>
+                  )}
+                </div>
               ) : stage === 'invoice' && col.key === 'match_data' ? (
                 <div className="relative w-full h-full flex items-center gap-2 group/match overflow-visible">
                   {row.match_data?.status === 'perfect' && <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] shrink-0" title="Идеальное совпадение" />}
@@ -292,17 +319,12 @@ export const TableRow = React.memo(({
                   value={String(row[col.key] || '')}
                   colKey={col.key}
                   rowId={row.id}
-                  isReadOnly={selectedIds.length > 0 || (stage === 'spec' && isHeader) || (stage === 'request' || stage === 'invoice')} // invoice and request row cells are mostly readonly or logic handles it? Wait! In InvoiceTable, they're NOT readonly!
-                  // Let's refine the readOnly condition to match original files:
-                  // RequestTable: readOnly={true}
-                  // InvoiceTable: readOnly={selectedIds.length > 0}
-                  // SpecTable: readOnly={selectedIds.length > 0 || isHeader}
-                  // EstimateTable: readOnly={selectedIds.length > 0}
+                  isReadOnly={selectedIds.length > 0 || (stage === 'spec' && isHeader) || (stage === 'request' || stage === 'invoice') || isSummaryRow}
                   isHeader={stage === 'spec' && isHeader}
                   align={col.align}
                   onChange={(val) => onUpdate(row.id, col.key, val)}
                   onClick={(e) => {
-                    if (selectedIds.length === 0 && !(stage === 'spec' && isHeader)) e.stopPropagation();
+                    if (selectedIds.length === 0 && !(stage === 'spec' && (isHeader || isSummaryRow))) e.stopPropagation();
                   }}
                   onKeyDown={onKeyDown}
                 />
@@ -312,8 +334,11 @@ export const TableRow = React.memo(({
         )}
       </div>
 
-      {stage === 'spec' && isExpanded && row.children?.map((child: any, childIdx: number) => (
-        <div key={child.id} className="flex items-center text-xs bg-slate-50/20 border-b border-slate-100 h-10 italic group/child">
+      {stage === 'spec' && (parentIsExpanded || localExpanded) && row.children?.map((child: any, childIdx: number) => (
+        <div key={child.id} className={cn(
+          "flex items-center text-xs border-b border-slate-100 h-10 group/child transition-colors",
+          isSummaryRow ? "bg-slate-50/60 hover:bg-slate-100/60" : "bg-slate-50/20 italic"
+        )}>
           {columns.map((col) => (
             <div
               key={col.key}
@@ -328,10 +353,26 @@ export const TableRow = React.memo(({
             >
               {col.key === 'pos' ? (
                 <div className="flex items-center gap-2 pl-6">
-                  <span className="text-slate-300 tabular-nums">{(childIdx + 1)}</span>
+                  <span className="text-slate-400 tabular-nums font-mono text-[10px]">
+                    {isSummaryRow ? (child.pos || '—') : (childIdx + 1)}
+                  </span>
+                </div>
+              ) : col.key === 'name' && isSummaryRow ? (
+                <div className="flex items-center gap-2 w-full overflow-hidden text-slate-600">
+                  <span className="truncate">{String(child[col.key] || '')}</span>
+                  {child.pos && (
+                    <span className="text-[9px] text-slate-400 font-bold border border-slate-200 px-1 rounded bg-white shrink-0">
+                      {child.pos}
+                    </span>
+                  )}
                 </div>
               ) : (
-                <span className="text-slate-500 break-words whitespace-normal">{String(child[col.key] || '')}</span>
+                <span className={cn(
+                  "break-words whitespace-normal truncate",
+                  isSummaryRow ? "text-slate-600" : "text-slate-500"
+                )}>
+                  {String(child[col.key] || '')}
+                </span>
               )}
             </div>
           ))}
