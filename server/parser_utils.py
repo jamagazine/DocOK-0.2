@@ -160,12 +160,10 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         qty_val  = v[c_q] if c_q != -1 else ""
 
         name_clean = str(name_val).strip()
-        qty_clean  = str(qty_val).strip()
-
-        if not name_clean:
-            continue  # skip fully empty rows
-
-        has_qty = not is_empty_val(qty_clean) and bool(qty_clean)
+        # Step 1: Preliminary identification of potential headers
+        # Potential header = No unit, no quantity, no mass (columns after c_q) + HAS NAME WITH LETTERS
+        has_letters = any(c.isalpha() for c in str(name_val))
+        is_potential = is_empty_val(unit_val) and is_empty_val(qty_val) and bool(str(name_val).strip()) and has_letters
 
         raw_list.append({
             "id":       row_id,
@@ -205,12 +203,13 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
     emitted_ids:   set  = set()
 
     def is_global_section(name: str) -> bool:
-        """Single ALL-CAPS word with no lowercase letters (e.g. ВЕНТИЛЯЦИЯ, OTOPLENIE)."""
+        """Single ALL-CAPS word with letters (e.g. ВЕНТИЛЯЦИЯ, OTOPLENIE)."""
         parts = name.split()
         return (
             len(parts) == 1
             and len(name) > 2
             and all(ch.isupper() or not ch.isalpha() for ch in name)
+            and any(ch.isalpha() for ch in name)
         )
 
     for chunk in chunks:

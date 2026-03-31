@@ -924,30 +924,48 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const getSupplierRows = useCallback((items: SpecRow[]) => {
     const onlyItems = items.filter(r => !r.is_header);
-    const map = new Map<string, any>();
+    const map = new Map<string, { id: string; name: string; is_header: boolean; row_type: string; quantity: string; children: any[]; names: string[] }>();
 
     onlyItems.forEach(item => {
-      const s = (item.supplier || 'Не указан').trim();
-      if (map.has(s)) {
-        const existing = map.get(s)!;
+      const rawSupplier = (item.supplier || '').trim();
+      const sKey = rawSupplier.toLowerCase() || 'без поставщика';
+      
+      if (map.has(sKey)) {
+        const existing = map.get(sKey)!;
         const q1 = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         const q2 = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         existing.quantity = String(q1 + q2);
         existing.children.push(item);
+        if (rawSupplier) existing.names.push(rawSupplier);
       } else {
-        const safeId = generateStableId('supp', s);
-        map.set(s, { 
+        const safeId = generateStableId('supplier', sKey);
+        map.set(sKey, { 
           id: safeId, 
-          name: s, 
+          name: rawSupplier || 'БЕЗ ПОСТАВЩИКА', 
           is_header: true, 
-          row_type: 'GROUP', 
+          row_type: 'LOCATION', // Elevated to LOCATION for full-width rendering
           quantity: item.quantity,
-          children: [item] 
+          children: [item],
+          names: rawSupplier ? [rawSupplier] : []
         });
       }
     });
 
-    return Array.from(map.values());
+    const result = Array.from(map.values()).map(group => {
+      // Pick the "nicest" name (e.g. one starting with uppercase)
+      if (group.names.length > 0) {
+        const niceName = group.names.find(n => /^[A-ZА-ЯЁ]/.test(n)) || group.names[0];
+        group.name = niceName;
+      }
+      return group;
+    });
+
+    // Sort: "БЕЗ ПОСТАВЩИКА" always last
+    return result.sort((a, b) => {
+      if (a.name === 'БЕЗ ПОСТАВЩИКА') return 1;
+      if (b.name === 'БЕЗ ПОСТАВЩИКА') return -1;
+      return a.name.localeCompare(b.name, 'ru');
+    });
   }, []);
 
   const estimateTotal = React.useMemo(() => {

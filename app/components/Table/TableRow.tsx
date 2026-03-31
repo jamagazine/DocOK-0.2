@@ -62,7 +62,7 @@ export const TableRow = React.memo(({
 
   const hasChildren = row.children && row.children.length > 0;
   const isWorkType = !isSummaryRow && (row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && row.name === String(row.name).toUpperCase() && String(row.name).length > 3));
-  const isLocation = !isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§');
+  const isLocation = isSupplierRow || (!isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§'));
   const isGroup = !isSummaryRow && (row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType));
   const isHeader = isWorkType || isLocation || isGroup;
 
@@ -235,18 +235,22 @@ export const TableRow = React.memo(({
                   )}
                 </div>
               ) : stage === 'spec' && (isHeader || isSummaryRow) && col.key === 'name' ? (
-                <div className="flex items-center gap-2 w-full overflow-hidden">
-                  <span className={cn(
-                    "truncate",
-                    isSummaryRow ? "text-slate-900 font-semibold" : "text-amber-800 font-bold text-sm"
-                  )}>
-                    {String(row[col.key] || '')}
-                  </span>
-                  {isSummaryRow && (
-                    <span className="text-[10px] bg-white/60 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                      {row.children.length} поз.
+                <div className="flex items-center w-full px-6 py-2 overflow-hidden">
+                  <div className="flex items-center gap-3 w-full">
+                    <span className={cn(
+                      "font-bold truncate",
+                      isWorkType ? "text-base uppercase tracking-wider" : "text-sm",
+                      isLocation && !isSupplierRow && "text-slate-100 underline underline-offset-8 decoration-white/20",
+                      isSupplierRow && "text-indigo-900 border-b-2 border-indigo-200"
+                    )}>
+                      {String(row.name || '')}
                     </span>
-                  )}
+                    {isSummaryRow && (
+                      <span className="text-[10px] bg-white/60 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                        {row.children.length} поз.
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : stage === 'invoice' && col.key === 'match_data' ? (
                 <div className="relative w-full h-full flex items-center gap-2 group/match overflow-visible">
