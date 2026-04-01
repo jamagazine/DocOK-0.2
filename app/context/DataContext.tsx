@@ -305,6 +305,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setCurrentPage(1);
   }, []);
 
+
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: null });
 
   const [completedStages, setCompletedStages] = useState<string[]>(() => {
@@ -343,23 +344,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [isOnlySelectedView, setIsOnlySelectedView] = useState(false);
   const [frozenSelectedIds, setFrozenSelectedIds] = useState<string[]>([]);
 
-  // Wrapper: when activating "Keep Selected", freeze current selection and clear checkmarks
+  // Простой переключатель фильтра «Выбранные»
   const toggleOnlySelectedView = useCallback((nextVal: boolean) => {
-    if (nextVal && selectedIds.length > 0) {
-      setFrozenSelectedIds([...selectedIds]);
-      setSelectedIds([]);
-    } else if (!nextVal) {
-      setFrozenSelectedIds([]);
-    }
     setIsOnlySelectedView(nextVal);
-  }, [selectedIds]);
+  }, []);
+
 
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
   const [viewMode, setViewModeRaw] = useState<'original' | 'supplier' | 'merged'>('original');
   const setViewMode = useCallback((mode: 'original' | 'supplier' | 'merged') => {
     setViewModeRaw(mode);
-    setCurrentPage(1);
+    setCurrentPage(1); // Лечит прыжок пагинации
+    setSelectedIds([]); // Сбрасываем выборку для чистоты ID
+    setIsOnlySelectedView(false); // Отключаем фильтр фокуса
   }, []);
+
 
 
   // History & Navigator states
@@ -1602,62 +1601,60 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return rows.filter(r => r.is_header ? keepStatus.has(r.id) : frozenIds.includes(r.id));
   };
 
-  // ─── Мемоизированный конвейер данных ────────────────────────────────────────
+  // ─── Мемоизированный конвейер данных (Stage 10) ──────────────────────────
   const dataPipeline = React.useMemo(() => {
-    // ── Шаг 0: Исходник ──
+    // 1. БАЗА + ТЕКСТОВЫЙ ПОИСК
     let rawRows: any[] = [];
     if (currentStage === 'spec') rawRows = sortedSpecRows;
     else if (currentStage === 'request') rawRows = sortedRequestRows;
     else if (currentStage === 'invoice') rawRows = sortedInvoiceRows;
     else if (currentStage === 'estimate') rawRows = sortedEstimateRows;
 
-    // ── Шаг 1: Предварительная фильтрация (на уровне оригинальных строк) ──
-    let filtered = rawRows;
-
-    // A. Navigator
-    if (activeHeaderIds.length > 0 && currentStage === 'spec') {
-      filtered = applyNavigatorFilter(filtered, activeHeaderIds);
-    }
-
-    // B. Поиск
+    let result = rawRows;
     if (searchQuery && searchQuery.trim()) {
-      filtered = applyHierarchySearchFilter(filtered, searchQuery);
+      result = applyHierarchySearchFilter(result, searchQuery);
     }
 
-    // C. Фокус («Только выбранные»)
-    if (isOnlySelectedView && frozenSelectedIds.length > 0) {
-      filtered = applySelectedFilter(filtered, frozenSelectedIds);
+    // 2. ФИЛЬТР НАВИГАТОРА (Только для режимов original и supplier!)
+    if (currentStage === 'spec' && viewMode !== 'merged' && activeHeaderIds.length > 0) {
+      result = applyNavigatorFilter(result, activeHeaderIds);
     }
 
-    // ── Шаг 2: Трансформация (Группировка / Сводка) ──
-    let transformed = filtered;
+    // 3. ТРАНСФОРМАЦИЯ (Группировка)
+    // Делаем это ДО фильтра по чекбоксам, чтобы работать с финальными ID!
     if (currentStage === 'spec') {
       if (viewMode === 'merged') {
-        transformed = getMergedRows(filtered as SpecRow[]);
+        result = getMergedRows(result as SpecRow[]);
       } else if (viewMode === 'supplier') {
-        transformed = getSupplierRows(filtered as SpecRow[]);
+        result = getSupplierRows(result as SpecRow[]);
       }
     }
 
-    // ── Шаг 3: Подсчёт (до пагинации) ──
-    const totalProcessedCount = transformed.length;
-
-    // ── Шаг 4: Пагинация ──
-    const isPaginationActive = currentStage === 'spec' && viewMode === 'merged';
-    let displayRows = transformed;
-    if (isPaginationActive) {
-      const startIndex = (currentPage - 1) * rowsPerPage;
-      displayRows = transformed.slice(startIndex, startIndex + rowsPerPage);
+    // 4. ФИЛЬТР ЧЕКБОКСОВ
+    // Теперь selectedIds гарантированно содержит ID из текущего режима (original/merged/supplier)
+    if (isOnlySelectedView && selectedIds.length > 0) {
+      result = result.filter(r => selectedIds.includes(r.id) || r.is_header || r.row_type !== 'ITEM');
     }
 
+    // 5. ИТОГ И ПАГИНАЦИЯ
+    const totalProcessedCount = result.length;
+    let displayRows = result;
+
+    if (currentStage === 'spec' && viewMode === 'merged') {
+      const startIndex = (currentPage - 1) * rowsPerPage;
+      displayRows = result.slice(startIndex, startIndex + rowsPerPage);
+    }
+
+    const isPaginationActive = currentStage === 'spec' && viewMode === 'merged';
     return { displayRows, totalProcessedCount, isPaginationActive };
   }, [
     currentStage, viewMode,
     sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows,
-    activeHeaderIds, isOnlySelectedView, frozenSelectedIds, searchQuery,
+    activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery,
     currentPage, rowsPerPage,
     getMergedRows, getSupplierRows,
   ]);
+
 
 
   // Обратная совместимость: getCurrentRows возвращает displayRows из pipeline

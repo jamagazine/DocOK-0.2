@@ -406,6 +406,9 @@ function SpecTable() {
   // UI-слой: аккордеон поверх pipeline-данных.
   // Для supplier-режима: разворачиваем дочерние элементы из children[] в плоский список.
   const visibleRows = React.useMemo(() => {
+    // ШАГ 2: Режим merged — это плоский список. Отдаем как есть!
+    if (viewMode === 'merged') return displayRows;
+
     const res: any[] = [];
     let hideUntilLevel = -1;
     const isSupplierMode = viewMode === 'supplier';
@@ -432,6 +435,7 @@ function SpecTable() {
     }
     return res;
   }, [displayRows, collapsedIds, viewMode]);
+
 
 
   return (
