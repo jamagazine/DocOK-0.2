@@ -416,17 +416,13 @@ function SpecTable() {
     for (const row of effectiveRows) {
       const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
       const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
-      const name = String(row.name || '').trim();
 
       // Выход из свёрнутой группы при встрече заголовка того же или выше уровня
-      if (hideUntilLevel !== -1 && level <= hideUntilLevel && row.is_header && name) {
+      if (hideUntilLevel !== -1 && level <= hideUntilLevel && row.is_header) {
         hideUntilLevel = -1;
       }
+      
       if (hideUntilLevel !== -1) continue;
-
-      // Отсеиваем «призрачные» строки без имени
-      if (!name && !row.is_header) continue;
-      if (row.is_header && !name) continue;
 
       // У supplier-заголовка убираем children перед рендером (они уже развёрнуты)
       const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;
@@ -436,6 +432,7 @@ function SpecTable() {
     }
     return res;
   }, [displayRows, collapsedIds, viewMode]);
+
 
   return (
     <div className="flex flex-col">
@@ -483,7 +480,7 @@ function SpecTable() {
 }
 
 function RequestTable() {
-  const { requestRows, handleFile, selectedIds, toggleRowSelection } = useData();
+  const { requestRows, handleFile, selectedIds, toggleRowSelection, displayRows } = useData();
   const { handleCellUpdate } = useTableEditor('request');
   const { handleKeyDown } = useTableNavigation();
 
@@ -501,9 +498,9 @@ function RequestTable() {
     <div className="flex flex-col">
       {requestRows.length > 0 ? (
         <>
-          <TableHeader columns={columns} pageIds={requestRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={displayRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {requestRows.map((row, i) => (
+            {displayRows.map((row, i) => (
               <TableRow
                 key={row.id}
                 row={row}
@@ -528,8 +525,9 @@ function RequestTable() {
   );
 }
 
+
 function InvoiceTable() {
-  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows } = useData();
+  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows, displayRows } = useData();
   const { handleCellUpdate } = useTableEditor('invoice');
   const { handleKeyDown } = useTableNavigation();
 
@@ -549,9 +547,9 @@ function InvoiceTable() {
     <div className="flex flex-col">
       {invoiceRows.length > 0 ? (
         <div className="bg-white">
-          <TableHeader columns={columns} pageIds={invoiceRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={displayRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {invoiceRows.map((row, i) => (
+            {displayRows.map((row, i) => (
               <TableRow
                 key={row.id}
                 row={row}
@@ -573,6 +571,7 @@ function InvoiceTable() {
           <EmptyStateBlock handleFile={handleFile} currentStage="invoice" />
         </div>
       )}
+
       {invoiceRows.length > 0 && (
         <button
           onClick={() => setInvoiceRows([...invoiceRows, emptyInvoiceRow()])}
@@ -587,7 +586,7 @@ function InvoiceTable() {
 }
 
 function EstimateTable() {
-  const { estimateRows, handleFile, selectedIds, toggleRowSelection } = useData();
+  const { estimateRows, handleFile, selectedIds, toggleRowSelection, displayRows } = useData();
   const { handleCellUpdate } = useTableEditor('estimate');
   const { handleKeyDown } = useTableNavigation();
 
@@ -605,9 +604,9 @@ function EstimateTable() {
     <div className="flex flex-col">
       {estimateRows.length > 0 ? (
         <div className="bg-white min-w-full shadow-sm rounded-xl overflow-hidden border border-slate-200/60">
-          <TableHeader columns={columns} pageIds={estimateRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={displayRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {estimateRows.map((row, i) => (
+            {displayRows.map((row, i) => (
               <TableRow
                 key={row.id}
                 row={row}
@@ -631,3 +630,4 @@ function EstimateTable() {
     </div>
   );
 }
+

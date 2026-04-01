@@ -299,7 +299,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return [];
   });
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQueryRaw] = useState('');
+  const setSearchQuery = useCallback((q: string) => {
+    setSearchQueryRaw(q);
+    setCurrentPage(1);
+  }, []);
+
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: null });
 
   const [completedStages, setCompletedStages] = useState<string[]>(() => {
@@ -350,7 +355,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [selectedIds]);
 
   const [currentStage, setCurrentStage] = useState<Stage>('spec');
-  const [viewMode, setViewMode] = useState<'original' | 'supplier' | 'merged'>('original');
+  const [viewMode, setViewModeRaw] = useState<'original' | 'supplier' | 'merged'>('original');
+  const setViewMode = useCallback((mode: 'original' | 'supplier' | 'merged') => {
+    setViewModeRaw(mode);
+    setCurrentPage(1);
+  }, []);
+
 
   // History & Navigator states
   const [history, setHistory] = useState<{ past: { stage: Stage, rows: any[] }[], future: { stage: Stage, rows: any[] }[] }>({ past: [], future: [] });
@@ -1016,9 +1026,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const rawResult: SpecRow[] = [];
     for (const [fingerprint, group] of map.entries()) {
       // Детерминированный ID: на основе данных, без хеширования
-      // Шаблон: merged_<name>_<brand>_<code> (спец-символы убраны)
-      const safeKey = fingerprint.replace(/[^a-zа-яё0-9_\-\.]/gi, '_').replace(/_+/g, '_').slice(0, 120);
-      const stableId = `merged_${safeKey}`;
+      const namePart = String(group[0].name || '').trim();
+      const brandPart = String(group[0].brand || '').trim();
+      const codePart = String(group[0].code || '').trim();
+      const stableId = `merged_${namePart}_${brandPart}_${codePart}`.trim();
+
 
       if (group.length === 1) {
         rawResult.push({ ...group[0], id: stableId });
@@ -1592,69 +1604,61 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // ─── Мемоизированный конвейер данных ────────────────────────────────────────
   const dataPipeline = React.useMemo(() => {
-    // ── Шаг 1: База ──
-    let baseRows: any[] = [];
-    if (currentStage === 'spec') {
-      if (viewMode === 'merged') baseRows = getMergedRows(specRows);
-      else if (viewMode === 'supplier') baseRows = getSupplierRows(specRows);
-      else baseRows = sortedSpecRows;
-    } else if (currentStage === 'request') {
-      baseRows = sortedRequestRows;
-    } else if (currentStage === 'invoice') {
-      baseRows = sortedInvoiceRows;
-    } else if (currentStage === 'estimate') {
-      baseRows = sortedEstimateRows;
+    // ── Шаг 0: Исходник ──
+    let rawRows: any[] = [];
+    if (currentStage === 'spec') rawRows = sortedSpecRows;
+    else if (currentStage === 'request') rawRows = sortedRequestRows;
+    else if (currentStage === 'invoice') rawRows = sortedInvoiceRows;
+    else if (currentStage === 'estimate') rawRows = sortedEstimateRows;
+
+    // ── Шаг 1: Предварительная фильтрация (на уровне оригинальных строк) ──
+    let filtered = rawRows;
+
+    // A. Navigator
+    if (activeHeaderIds.length > 0 && currentStage === 'spec') {
+      filtered = applyNavigatorFilter(filtered, activeHeaderIds);
     }
 
-    // ── Шаг 2: Фильтры (Navigator + поиск) ──
-    let result = baseRows;
-
-    if (activeHeaderIds.length > 0) {
-      if (viewMode === 'supplier') {
-        // Supplier: фильтруем группы по ID напрямую
-        result = result.filter((g: any) => activeHeaderIds.includes(g.id));
-      } else if (viewMode !== 'merged') {
-        // Original: иерархический обход
-        result = applyNavigatorFilter(result, activeHeaderIds);
-      }
-      // Merged: навигатор не применяется
-    }
-
+    // B. Поиск
     if (searchQuery && searchQuery.trim()) {
-      if (viewMode === 'supplier') {
-        // Supplier: ищем по имени группы
-        const q = searchQuery.trim().toLowerCase();
-        result = result.filter((g: any) => String(g.name || '').toLowerCase().includes(q));
-      } else {
-        result = applyHierarchySearchFilter(result, searchQuery);
+      filtered = applyHierarchySearchFilter(filtered, searchQuery);
+    }
+
+    // C. Фокус («Только выбранные»)
+    if (isOnlySelectedView && frozenSelectedIds.length > 0) {
+      filtered = applySelectedFilter(filtered, frozenSelectedIds);
+    }
+
+    // ── Шаг 2: Трансформация (Группировка / Сводка) ──
+    let transformed = filtered;
+    if (currentStage === 'spec') {
+      if (viewMode === 'merged') {
+        transformed = getMergedRows(filtered as SpecRow[]);
+      } else if (viewMode === 'supplier') {
+        transformed = getSupplierRows(filtered as SpecRow[]);
       }
     }
 
-    // ── Шаг 3: Фокус («Только выбранные») ──
-    if (isOnlySelectedView && frozenSelectedIds.length > 0) {
-      result = applySelectedFilter(result, frozenSelectedIds);
-    }
+    // ── Шаг 3: Подсчёт (до пагинации) ──
+    const totalProcessedCount = transformed.length;
 
-    // ── Шаг 4: Подсчёт (до пагинации) ──
-    const totalProcessedCount = result.length;
-
-    // ── Шаг 5: Пагинация ──
-    const isPaginationActive = viewMode === 'merged';
-    let displayRows = result;
+    // ── Шаг 4: Пагинация ──
+    const isPaginationActive = currentStage === 'spec' && viewMode === 'merged';
+    let displayRows = transformed;
     if (isPaginationActive) {
       const startIndex = (currentPage - 1) * rowsPerPage;
-      displayRows = result.slice(startIndex, startIndex + rowsPerPage);
+      displayRows = transformed.slice(startIndex, startIndex + rowsPerPage);
     }
 
     return { displayRows, totalProcessedCount, isPaginationActive };
   }, [
     currentStage, viewMode,
-    specRows,
     sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows,
     activeHeaderIds, isOnlySelectedView, frozenSelectedIds, searchQuery,
     currentPage, rowsPerPage,
     getMergedRows, getSupplierRows,
   ]);
+
 
   // Обратная совместимость: getCurrentRows возвращает displayRows из pipeline
   const getCurrentRows = useCallback(() => dataPipeline.displayRows, [dataPipeline]);
