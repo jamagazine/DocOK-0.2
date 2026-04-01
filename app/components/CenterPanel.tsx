@@ -391,7 +391,9 @@ function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: nu
   ];
 
   const allRows = getCurrentRows();
-  const displayRows = isOnlySelectedView ? allRows.filter((r: any) => selectedIds.includes(r.id)) : allRows;
+  // getCurrentRows() already applies isOnlySelectedView + frozenSelectedIds filtering;
+  // do NOT re-filter by selectedIds here (selectedIds is cleared when filter activates)
+  const displayRows = allRows;
 
   const visibleRows = React.useMemo(() => {
     // If not original mode, we don't necessarily need the strict L0/L1 hierarchy

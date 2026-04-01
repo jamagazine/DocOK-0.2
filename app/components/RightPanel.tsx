@@ -151,7 +151,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     const now = new Date();
     const dateStr = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`;
     const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}`;
-    const modeLabel = viewMode === 'merged' ? 'Сводная' : viewMode === 'supplier' ? 'Поставщики' : 'Оригинал';
+    const modeLabel = viewMode === 'merged' ? 'Сводная' : viewMode === 'supplier' ? 'Поставщик' : 'Оригинал';
     let filename = `${projectName || 'Новый проект'}_${modeLabel}_${dateStr}_${timeStr}.xlsx`;
 
     if (currentStage === 'spec') {
@@ -287,10 +287,10 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                 {/* View Mode Switcher + Navigator (unified block, Spec Only) */}
                 {currentStage === 'spec' && (
                   <div className="flex-1 overflow-hidden flex flex-col gap-0 border border-slate-200 rounded-xl bg-white min-h-[120px]">
-                    {/* View switcher */}
+                    {/* View switcher — expanded: text only, no icons */}
                     <div className="shrink-0 bg-slate-50 border-b border-slate-200 p-2">
                       <div className="grid grid-cols-3 bg-slate-100 p-1 rounded-lg h-9">
-                        <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Оригинальный вид (ГОСТ)">Оригинал</button>
+                        <button onClick={() => setViewMode('original')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'original' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Оригинальный вид документа">Оригинал</button>
                         <button onClick={() => setViewMode('supplier')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'supplier' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Группировка по поставщикам">Поставщик</button>
                         <button onClick={() => setViewMode('merged')} className={cn("flex items-center justify-center rounded-md transition-all text-[11px] font-bold", viewMode === 'merged' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700")} title="Сводная таблица материалов">Сводная</button>
                       </div>
@@ -366,12 +366,27 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   <RotateCcw className="w-5 h-5 text-slate-400 hover:text-red-500 cursor-pointer" onClick={() => setIsResetConfirmOpen(true)} title="Сброс" />
                 </div>
 
-                {/* View mode icons */}
+                {/* View mode icons — collapsed: icons with blue highlight for active */}
                 {currentStage === 'spec' && (
                   <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
-                    <FileText className={cn("w-5 h-5 cursor-pointer", viewMode === 'original' ? "text-indigo-600" : "text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('original')} title="Оригинал" />
-                    <Truck className={cn("w-5 h-5 cursor-pointer", viewMode === 'supplier' ? "text-blue-600" : "text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('supplier')} title="Поставщики" />
-                    <Layers className={cn("w-5 h-5 cursor-pointer", viewMode === 'merged' ? "text-emerald-600" : "text-slate-400 hover:text-indigo-600")} onClick={() => setViewMode('merged')} title="Сводная" />
+                    <div
+                      className={cn("w-8 h-8 flex items-center justify-center rounded-full cursor-pointer transition-colors", viewMode === 'original' ? "bg-indigo-100 text-indigo-600" : "text-slate-400 hover:text-indigo-600")}
+                      onClick={() => setViewMode('original')} title="Оригинал"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div
+                      className={cn("w-8 h-8 flex items-center justify-center rounded-full cursor-pointer transition-colors", viewMode === 'supplier' ? "bg-blue-100 text-blue-600" : "text-slate-400 hover:text-blue-500")}
+                      onClick={() => setViewMode('supplier')} title="Поставщик"
+                    >
+                      <Truck className="w-4 h-4" />
+                    </div>
+                    <div
+                      className={cn("w-8 h-8 flex items-center justify-center rounded-full cursor-pointer transition-colors", viewMode === 'merged' ? "bg-emerald-100 text-emerald-600" : "text-slate-400 hover:text-emerald-500")}
+                      onClick={() => setViewMode('merged')} title="Сводная"
+                    >
+                      <Layers className="w-4 h-4" />
+                    </div>
                   </div>
                 )}
 
