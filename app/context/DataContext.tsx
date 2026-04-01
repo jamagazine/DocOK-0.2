@@ -352,7 +352,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 
 
-  const [currentStage, setCurrentStage] = useState<Stage>('spec');
+  const [currentStage, setCurrentStageRaw] = useState<Stage>('spec');
+  const setCurrentStage = useCallback((stage: Stage) => {
+    setCurrentStageRaw(stage);
+    setSelectedIds([]); // Сбрасываем выборку при смене вкладок
+    setIsOnlySelectedView(false); // Отключаем фильтр фокуса
+  }, []);
+
   const [viewMode, setViewModeRaw] = useState<'original' | 'supplier' | 'merged'>('original');
   const setViewMode = useCallback((mode: 'original' | 'supplier' | 'merged') => {
     setViewModeRaw(mode);
@@ -360,6 +366,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setSelectedIds([]); // Сбрасываем выборку для чистоты ID
     setIsOnlySelectedView(false); // Отключаем фильтр фокуса
   }, []);
+
 
 
 
@@ -1154,6 +1161,141 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [estimateRows]);
 
+  // ─── Pure pipeline helpers ──────────────────────────────────────────────────
+
+  /** Шаг 2a: Иерархический фильтр навигатора для original/merged режимов */
+  const applyNavigatorFilter = (rows: any[], ids: string[]): any[] => {
+    const result: any[] = [];
+    let isInsideActiveGroup = false;
+    let activeLevel = -1;
+    for (const r of rows) {
+      if (r.is_header) {
+        const type = r.row_type || 'GROUP';
+        const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : 2;
+        if (ids.includes(r.id)) {
+          isInsideActiveGroup = true;
+          activeLevel = level;
+          result.push(r);
+        } else if (isInsideActiveGroup && level > activeLevel) {
+          result.push(r);
+        } else {
+          isInsideActiveGroup = false;
+          activeLevel = -1;
+        }
+      } else {
+        if (isInsideActiveGroup) result.push(r);
+      }
+    }
+    return result;
+  };
+
+  /** Шаг 2б: Поиск по тексту с сохранением родительских заголовков */
+  const applyHierarchySearchFilter = (rows: any[], query: string): any[] => {
+    const q = query.trim().toLowerCase();
+    const keepStatus = new Set<string>();
+    let activeL0: string | null = null;
+    let activeL1: string | null = null;
+    let activeL2: string | null = null;
+    for (const r of rows) {
+      const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+      if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
+      else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
+      else if (type === 'GROUP') { activeL2 = r.id; }
+      else {
+        const name = String(r.name || '').toLowerCase();
+        const code = String(r.code || '').toLowerCase();
+        const note = String(r.note || '').toLowerCase();
+        const supplier = String(r.supplier || '').toLowerCase();
+        if (name.includes(q) || code.includes(q) || note.includes(q) || supplier.includes(q)) {
+          keepStatus.add(r.id);
+          if (activeL0) keepStatus.add(activeL0);
+          if (activeL1) keepStatus.add(activeL1);
+          if (activeL2) keepStatus.add(activeL2);
+        }
+      }
+    }
+    return rows.filter(r => keepStatus.has(r.id));
+  };
+
+  /** Шаг 3: Фильтр «Только выбранные» — сохраняет структурные заголовки */
+  const applySelectedFilter = (rows: any[], frozenIds: string[]): any[] => {
+    const keepStatus = new Set<string>();
+    let activeL0: string | null = null;
+    let activeL1: string | null = null;
+    let activeL2: string | null = null;
+    for (const r of rows) {
+      const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+      if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
+      else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
+      else if (type === 'GROUP') { activeL2 = r.id; }
+      else if (frozenIds.includes(r.id)) {
+        keepStatus.add(r.id);
+        if (activeL0) keepStatus.add(activeL0);
+        if (activeL1) keepStatus.add(activeL1);
+        if (activeL2) keepStatus.add(activeL2);
+      }
+    }
+    return rows.filter(r => r.is_header ? keepStatus.has(r.id) : frozenIds.includes(r.id));
+  };
+
+  // ─── Мемоизированный конвейер данных (Stage 10) ──────────────────────────
+  const dataPipeline = React.useMemo(() => {
+    // 1. БАЗА + ТЕКСТОВЫЙ ПОИСК
+    let rawRows: any[] = [];
+    if (currentStage === 'spec') rawRows = sortedSpecRows;
+    else if (currentStage === 'request') rawRows = sortedRequestRows;
+    else if (currentStage === 'invoice') rawRows = sortedInvoiceRows;
+    else if (currentStage === 'estimate') rawRows = sortedEstimateRows;
+
+    let result = rawRows;
+    if (searchQuery && searchQuery.trim()) {
+      result = applyHierarchySearchFilter(result, searchQuery);
+    }
+
+    // 2. ФИЛЬТР НАВИГАТОРА (Только для режимов original и supplier!)
+    if (currentStage === 'spec' && viewMode !== 'merged' && activeHeaderIds.length > 0) {
+      result = applyNavigatorFilter(result, activeHeaderIds);
+    }
+
+    // 3. ТРАНСФОРМАЦИЯ (Группировка)
+    // Делаем это ДО фильтра по чекбоксам, чтобы работать с финальными ID!
+    if (currentStage === 'spec') {
+      if (viewMode === 'merged') {
+        result = getMergedRows(result as SpecRow[]);
+      } else if (viewMode === 'supplier') {
+        result = getSupplierRows(result as SpecRow[]);
+      }
+    }
+
+    // 4. ФИЛЬТР ЧЕКБОКСОВ
+    // Теперь selectedIds гарантированно содержит ID из текущего режима (original/merged/supplier)
+    if (isOnlySelectedView && selectedIds.length > 0) {
+      result = result.filter(r => selectedIds.includes(r.id) || r.is_header || r.row_type !== 'ITEM');
+    }
+
+    // 5. ИТОГ И ПАГИНАЦИЯ
+    const totalProcessedCount = result.length;
+    let displayRows = result;
+
+    if (currentStage === 'spec' && viewMode === 'merged') {
+      const startIndex = (currentPage - 1) * rowsPerPage;
+      displayRows = result.slice(startIndex, startIndex + rowsPerPage);
+    }
+
+    const isPaginationActive = currentStage === 'spec' && viewMode === 'merged';
+    return { displayRows, totalProcessedCount, isPaginationActive };
+  }, [
+    currentStage, viewMode,
+    sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows,
+    activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery,
+    currentPage, rowsPerPage,
+    getMergedRows, getSupplierRows,
+  ]);
+
+  const { displayRows, totalProcessedCount, isPaginationActive } = dataPipeline;
+
+
+
   const completeStage = useCallback((stageId: string) => {
     setCompletedStages((prev: string[]) => {
       if (!prev.includes(stageId)) {
@@ -1392,7 +1534,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     
     pushHistory(currentStage, baseRows);
     
-    const idsToDelete = new Set(selectedIds);
+    // ШАГ 4: Разрешение реальных ID из сводных строк
+    const idsToDelete = new Set<string>();
+    selectedIds.forEach(id => {
+      if (id.startsWith('merged_') || id.startsWith('supplier_')) {
+        const summaryRow = displayRows.find(r => r.id === id);
+        if (summaryRow && summaryRow.children) {
+          summaryRow.children.forEach((c: any) => idsToDelete.add(c.id));
+        }
+      } else {
+        idsToDelete.add(id);
+      }
+    });
+
     let deleteStateL0 = false;
     let deleteStateL1 = false;
     let deleteStateL2 = false;
@@ -1424,7 +1578,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     setSelectedIds([]);
     setIsOnlySelectedView(false);
-  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, pushHistory]);
+  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, displayRows, pushHistory]);
+
 
   const keepSelectedRows = useCallback(() => {
     if (selectedIds.length === 0) return;
@@ -1436,6 +1591,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     else if (currentStage === 'estimate') baseRows = estimateRows;
 
     pushHistory(currentStage, baseRows);
+
+    // ШАГ 4: Разрешение реальных ID из сводных строк
+    const idsToKeep = new Set<string>();
+    selectedIds.forEach(id => {
+      if (id.startsWith('merged_') || id.startsWith('supplier_')) {
+        const summaryRow = displayRows.find(r => r.id === id);
+        if (summaryRow && summaryRow.children) {
+          summaryRow.children.forEach((c: any) => idsToKeep.add(c.id));
+        }
+      } else {
+        idsToKeep.add(id);
+      }
+    });
 
     const keepStatus = new Map<string, boolean>();
     let activeL0: string | null = null;
@@ -1449,18 +1617,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
       if (type === 'WORK_TYPE') {
          activeL0 = r.id; activeL1 = null; activeL2 = null;
-         keepL0 = selectedIds.includes(r.id);
+         keepL0 = idsToKeep.has(r.id);
          keepL1 = false; keepL2 = false;
       } else if (type === 'LOCATION') {
          activeL1 = r.id; activeL2 = null;
-         keepL1 = selectedIds.includes(r.id);
+         keepL1 = idsToKeep.has(r.id);
          keepL2 = false;
       } else if (type === 'GROUP') {
          activeL2 = r.id;
-         keepL2 = selectedIds.includes(r.id);
+         keepL2 = idsToKeep.has(r.id);
       }
       
-      const explicitlySelected = selectedIds.includes(r.id);
+      const explicitlySelected = idsToKeep.has(r.id);
       const implicitlySelected = keepL0 || keepL1 || keepL2;
       
       if (explicitlySelected || implicitlySelected) {
@@ -1480,7 +1648,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     setSelectedIds([]);
     setIsOnlySelectedView(false);
-  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, pushHistory]);
+  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, displayRows, pushHistory]);
+
 
   const getNavigatorTree = useCallback(() => {
     let baseRows: any[] = [];
@@ -1526,143 +1695,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return tree;
   }, [currentStage, viewMode, specRows, requestRows, invoiceRows, estimateRows, getSupplierRows]);
 
-  // ─── Pure pipeline helpers ──────────────────────────────────────────────────
-
-  /** Шаг 2a: Иерархический фильтр навигатора для original/merged режимов */
-  const applyNavigatorFilter = (rows: any[], ids: string[]): any[] => {
-    const result: any[] = [];
-    let isInsideActiveGroup = false;
-    let activeLevel = -1;
-    for (const r of rows) {
-      if (r.is_header) {
-        const type = r.row_type || 'GROUP';
-        const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : 2;
-        if (ids.includes(r.id)) {
-          isInsideActiveGroup = true;
-          activeLevel = level;
-          result.push(r);
-        } else if (isInsideActiveGroup && level > activeLevel) {
-          result.push(r);
-        } else {
-          isInsideActiveGroup = false;
-          activeLevel = -1;
-        }
-      } else {
-        if (isInsideActiveGroup) result.push(r);
-      }
-    }
-    return result;
-  };
-
-  /** Шаг 2б: Поиск по тексту с сохранением родительских заголовков */
-  const applyHierarchySearchFilter = (rows: any[], query: string): any[] => {
-    const q = query.trim().toLowerCase();
-    const keepStatus = new Set<string>();
-    let activeL0: string | null = null;
-    let activeL1: string | null = null;
-    let activeL2: string | null = null;
-    for (const r of rows) {
-      const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
-      if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
-      else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
-      else if (type === 'GROUP') { activeL2 = r.id; }
-      else {
-        const name = String(r.name || '').toLowerCase();
-        const code = String(r.code || '').toLowerCase();
-        const note = String(r.note || '').toLowerCase();
-        const supplier = String(r.supplier || '').toLowerCase();
-        if (name.includes(q) || code.includes(q) || note.includes(q) || supplier.includes(q)) {
-          keepStatus.add(r.id);
-          if (activeL0) keepStatus.add(activeL0);
-          if (activeL1) keepStatus.add(activeL1);
-          if (activeL2) keepStatus.add(activeL2);
-        }
-      }
-    }
-    return rows.filter(r => keepStatus.has(r.id));
-  };
-
-  /** Шаг 3: Фильтр «Только выбранные» — сохраняет структурные заголовки */
-  const applySelectedFilter = (rows: any[], frozenIds: string[]): any[] => {
-    const keepStatus = new Set<string>();
-    let activeL0: string | null = null;
-    let activeL1: string | null = null;
-    let activeL2: string | null = null;
-    for (const r of rows) {
-      const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
-      if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
-      else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
-      else if (type === 'GROUP') { activeL2 = r.id; }
-      else if (frozenIds.includes(r.id)) {
-        keepStatus.add(r.id);
-        if (activeL0) keepStatus.add(activeL0);
-        if (activeL1) keepStatus.add(activeL1);
-        if (activeL2) keepStatus.add(activeL2);
-      }
-    }
-    return rows.filter(r => r.is_header ? keepStatus.has(r.id) : frozenIds.includes(r.id));
-  };
-
-  // ─── Мемоизированный конвейер данных (Stage 10) ──────────────────────────
-  const dataPipeline = React.useMemo(() => {
-    // 1. БАЗА + ТЕКСТОВЫЙ ПОИСК
-    let rawRows: any[] = [];
-    if (currentStage === 'spec') rawRows = sortedSpecRows;
-    else if (currentStage === 'request') rawRows = sortedRequestRows;
-    else if (currentStage === 'invoice') rawRows = sortedInvoiceRows;
-    else if (currentStage === 'estimate') rawRows = sortedEstimateRows;
-
-    let result = rawRows;
-    if (searchQuery && searchQuery.trim()) {
-      result = applyHierarchySearchFilter(result, searchQuery);
-    }
-
-    // 2. ФИЛЬТР НАВИГАТОРА (Только для режимов original и supplier!)
-    if (currentStage === 'spec' && viewMode !== 'merged' && activeHeaderIds.length > 0) {
-      result = applyNavigatorFilter(result, activeHeaderIds);
-    }
-
-    // 3. ТРАНСФОРМАЦИЯ (Группировка)
-    // Делаем это ДО фильтра по чекбоксам, чтобы работать с финальными ID!
-    if (currentStage === 'spec') {
-      if (viewMode === 'merged') {
-        result = getMergedRows(result as SpecRow[]);
-      } else if (viewMode === 'supplier') {
-        result = getSupplierRows(result as SpecRow[]);
-      }
-    }
-
-    // 4. ФИЛЬТР ЧЕКБОКСОВ
-    // Теперь selectedIds гарантированно содержит ID из текущего режима (original/merged/supplier)
-    if (isOnlySelectedView && selectedIds.length > 0) {
-      result = result.filter(r => selectedIds.includes(r.id) || r.is_header || r.row_type !== 'ITEM');
-    }
-
-    // 5. ИТОГ И ПАГИНАЦИЯ
-    const totalProcessedCount = result.length;
-    let displayRows = result;
-
-    if (currentStage === 'spec' && viewMode === 'merged') {
-      const startIndex = (currentPage - 1) * rowsPerPage;
-      displayRows = result.slice(startIndex, startIndex + rowsPerPage);
-    }
-
-    const isPaginationActive = currentStage === 'spec' && viewMode === 'merged';
-    return { displayRows, totalProcessedCount, isPaginationActive };
-  }, [
-    currentStage, viewMode,
-    sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows,
-    activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery,
-    currentPage, rowsPerPage,
-    getMergedRows, getSupplierRows,
-  ]);
-
-
 
   // Обратная совместимость: getCurrentRows возвращает displayRows из pipeline
   const getCurrentRows = useCallback(() => dataPipeline.displayRows, [dataPipeline]);
-
-  const { displayRows, totalProcessedCount, isPaginationActive } = dataPipeline;
 
   return (
     <DataContext.Provider

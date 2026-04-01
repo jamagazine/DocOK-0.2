@@ -430,9 +430,13 @@ function SpecTable() {
       // У supplier-заголовка убираем children перед рендером (они уже развёрнуты)
       const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;
       res.push(renderedRow);
-
-      if (collapsedIds[row.id]) hideUntilLevel = level;
+      
+      // ШАГ 3: Если включен фильтр «Только выделенные», игнорируем схлопывание
+      if (collapsedIds[row.id] && !isOnlySelectedView) {
+        hideUntilLevel = level;
+      }
     }
+
     return res;
   }, [displayRows, collapsedIds, viewMode]);
 
