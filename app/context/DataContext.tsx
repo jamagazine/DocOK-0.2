@@ -347,7 +347,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Простой переключатель фильтра «Выбранные»
   const toggleOnlySelectedView = useCallback((nextVal: boolean) => {
     setIsOnlySelectedView(nextVal);
+    setCurrentPage(1); // Лечит баг с исчезновением таблицы
   }, []);
+
 
 
   const [currentStage, setCurrentStage] = useState<Stage>('spec');

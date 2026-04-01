@@ -60,6 +60,10 @@ export const TableRow = React.memo(({
   const isSupplierRow = String(row.id).startsWith('supplier_');
   const isSummaryRow = isMergedRow || isSupplierRow;
 
+  // ШАГ 2: Реально сгруппированная строка (больше 1 элемента)
+  const isActuallyMerged = isMergedRow && row.children && row.children.length > 1;
+
+
   const hasChildren = row.children && row.children.length > 0;
   const isWorkType = !isSummaryRow && (row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && row.name === String(row.name).toUpperCase() && String(row.name).length > 3));
   const isLocation = isSupplierRow || (!isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§'));
@@ -74,10 +78,11 @@ export const TableRow = React.memo(({
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
-    stage === 'spec' && isMergedRow && cn(
+    stage === 'spec' && isActuallyMerged && cn(
       "bg-emerald-50/20 hover:bg-emerald-100/30 border-l-4 border-l-emerald-500",
       (parentIsExpanded || localExpanded) && "bg-emerald-50/60 shadow-sm"
     ),
+
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 hover:bg-blue-100/40 border-l-4 border-l-blue-400",
     stage === 'spec' && !isSummaryRow && hasChildren && "bg-slate-50/30",
     stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
@@ -229,7 +234,8 @@ export const TableRow = React.memo(({
                     </>
                   )}
                 </div>
-              ) : col.key === 'name' && (stage === 'spec' && (isHeader || isSummaryRow)) ? (
+              ) : col.key === 'name' && (stage === 'spec' && (isHeader || isActuallyMerged)) ? (
+
                 <div 
                   className="flex justify-between items-start gap-2 w-full overflow-hidden"
                   onClick={(e) => {
@@ -245,10 +251,11 @@ export const TableRow = React.memo(({
                       isWorkType ? "text-base uppercase tracking-wider" : "text-sm",
                       isLocation && !isSupplierRow && "text-slate-100 underline underline-offset-8 decoration-white/20",
                       isSupplierRow && "text-indigo-900 border-b-2 border-indigo-200",
-                      isMergedRow && "text-emerald-900"
+                      isActuallyMerged && "text-emerald-900"
                     )}>
                       {String(row.name || '')}
                     </span>
+
 
                   </div>
 
@@ -326,7 +333,8 @@ export const TableRow = React.memo(({
                   value={String(row[col.key] || '')}
                   colKey={col.key}
                   rowId={row.id}
-                  isReadOnly={selectedIds.length > 0 || (stage === 'spec' && isHeader) || (stage === 'request' || stage === 'invoice') || isSummaryRow}
+                  isReadOnly={selectedIds.length > 0 || (stage === 'spec' && isHeader) || (stage === 'request' || stage === 'invoice') || isActuallyMerged}
+
                   isHeader={stage === 'spec' && isHeader}
                   align={col.align}
                   onChange={(val) => onUpdate(row.id, col.key, val)}
