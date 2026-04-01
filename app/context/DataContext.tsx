@@ -104,6 +104,7 @@ export interface InvoiceRow {
     status: 'perfect' | 'warning' | 'none';
   };
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  is_header?: boolean;
 }
 
 export function emptyInvoiceRow(): InvoiceRow {
@@ -169,6 +170,7 @@ export interface EstimateRow {
   clientSum: string;
   supplier: string;
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  is_header?: boolean;
 }
 
 interface DataContextType {
@@ -217,6 +219,7 @@ interface DataContextType {
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;
   selectedIds: string[];
+  selectedItemsCount: number;
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
   toggleRowSelection: (id: string, isCellClick: boolean) => void;
   toggleSelectAllPage: (ids: string[]) => void;
@@ -366,6 +369,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setSelectedIds([]); // Сбрасываем выборку для чистоты ID
     setIsOnlySelectedView(false); // Отключаем фильтр фокуса
   }, []);
+  
+  const isMerged = viewMode === 'merged';
+  const toggleMerge = useCallback(() => {
+    setViewMode(viewMode === 'merged' ? 'original' : 'merged');
+  }, [viewMode, setViewMode]);
 
 
 
@@ -419,7 +427,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Helper to sync status (and optionally other fields) with server
-  const updateFileStatusOnServer = async (fileName: string, status: 'ok' | 'reset') => {
+  const updateFileStatusOnServer = async (fileName: string, status: FileStatus) => {
     try {
       await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}`, {
         method: 'PATCH',
@@ -493,6 +501,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const unit = cols[5] || '';
         const quantity = cols[6] || '';
         
+        // ТЗ №2: Очистка технических «призраков» и мусора
+        if (!name.trim() || name.includes('---') || name.includes('===')) {
+          return null;
+        }
+
         // Initial detection of row type
         const is_header = !quantity;
         let row_type = is_header ? 'GROUP' : 'ITEM'; // Default: no-quantity = GROUP
@@ -538,7 +551,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         r.documentName = fileName;
         // Basic mapping for Invoice from MD: 
         r.article = cols[0] || '';
-        r.name = cols[1] || '';
+        const name = cols[1] || '';
+        
+        // ТЗ №2: Очистка технических «призраков»
+        if (!name.trim() || name.includes('---') || name.includes('===')) {
+          return null;
+        }
+
+        r.name = name;
         r.quantity = cols[2] || '1';
         r.unit = cols[3] || 'шт';
         r.price = cols[4] || '0';
@@ -776,8 +796,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     }
                   }));
                   setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-                  // Sync status 'ok' to server
-                  updateFileStatusOnServer(file.name, 'ok');
+                  // Sync status 'Готово (ИИ)' to server
+                  updateFileStatusOnServer(file.name, 'Готово (ИИ)');
                 }
               }
             }
@@ -1245,7 +1265,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     ];
     
     // Значения, которые не считаются «контентом», если в строке нет ничего другого
-    const weakValues = new Set(['1', 'шт', '0', '0.00', '0,00', 'шт.', 'ед.', '0.0', '0,0']);
+    const weakValues = new Set([
+      '1', 'шт', '0', '0.00', '0,00', 'шт.', 'ед.', '0.0', '0,0',
+      '-', '—', '.', ',', 'null', 'undefined', '(пусто)', 'null'
+    ]);
 
     return !fieldsToCheck.some(f => {
       const val = r[f];
@@ -1254,6 +1277,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (str.length === 0) return false;
       // Если значение «слабое» — оно само по себе не делает строку непустой
       if (weakValues.has(str.toLowerCase())) return false;
+      // ТЗ №2: Игнорируем технические разделители в именах
+      if (f === 'name' && (str.includes('---') || str.includes('==='))) return false;
       return true;
     });
   };
@@ -1321,31 +1346,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
           return null;
         }).filter(Boolean);
       } else {
-        // Умный фильтр для original/merged (убирает пустые заголовки)
-        const keepHeaderIds = new Set<string>();
-        let activeL0: string | null = null;
-        let activeL1: string | null = null;
-        let activeL2: string | null = null;
+        // Умный фильтр для original/merged (сохраняет иерархию папок)
+        const keepIds = new Set<string>();
+        let activeL0Id: string | null = null;
+        let activeL1Id: string | null = null;
+        let activeL2Id: string | null = null;
 
-        // Пасс 1: Ищем заголовки, у которых есть выбранные дети
         for (const r of result) {
           const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
-          if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
-          else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
-          else if (type === 'GROUP') { activeL2 = r.id; }
           
+          // Отслеживаем текущие "родительские" заголовки по мере обхода
+          if (type === 'WORK_TYPE') { activeL0Id = r.id; activeL1Id = null; activeL2Id = null; }
+          else if (type === 'LOCATION') { activeL1Id = r.id; activeL2Id = null; }
+          else if (type === 'GROUP') { activeL2Id = r.id; }
+          
+          // Если строка выбрана ОШИБОЧНО или ПРЯМО
           if (selectedIds.includes(r.id)) {
-            if (activeL0) keepHeaderIds.add(activeL0);
-            if (activeL1) keepHeaderIds.add(activeL1);
-            if (activeL2) keepHeaderIds.add(activeL2);
+            keepIds.add(r.id);
+            // Если выбран "ребенок", сохраняем всю цепочку родителей
+            if (type === 'ITEM' || String(r.id).startsWith('merged_')) {
+              if (activeL0Id) keepIds.add(activeL0Id);
+              if (activeL1Id) keepIds.add(activeL1Id);
+              if (activeL2Id) keepIds.add(activeL2Id);
+            }
           }
         }
-
-        // Пасс 2: Фильтруем
-        result = result.filter(r => 
-          selectedIds.includes(r.id) || 
-          (r.is_header && keepHeaderIds.has(r.id))
-        );
+        
+        result = result.filter(r => keepIds.has(r.id));
       }
     }
 
@@ -1356,7 +1383,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // Убираем из счета заголовки видов работ, мест, групп и названия поставщиков.
     const totalProcessedCount = viewMode === 'supplier'
       ? result.reduce((acc, group) => acc + (group.children?.length || 0), 0)
-      : result.filter(r => !r.is_header).length;
+      : result.filter(r => !r.is_header && !String(r.id).startsWith('supplier_')).length;
 
     let displayRows = result;
 
@@ -1381,16 +1408,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const selectedItemsCount = React.useMemo(() => {
     if (selectedIds.length === 0) return 0;
     
-    // Собираем все текущие ряды (оригинальные) для быстрой проверки типа
+    // Собираем все текущие ряды (оригинальные) для быстрой проверки типа через ID
     const allBaseRows = [...specRows, ...invoiceRows, ...estimateRows, ...requestRows];
     const headerIds = new Set(allBaseRows.filter(r => r.is_header).map(r => r.id));
 
     return selectedIds.filter(id => {
-      // 1. Заголовки поставщиков — не считаем за позиции
-      if (id.startsWith('supplier_')) return false;
-      // 2. Оригинальные заголовки (Виды работ, места и т.д.) — не считаем
+      // 1. Заголовки (Виды работ, места и т.д.) — не считаем
       if (headerIds.has(id)) return false;
-      // 3. Все остальное (ITEM, merged_...) — это позиции
+      // 2. Заголовки поставщиков (префикс supplier_) — не считаем
+      if (String(id).startsWith('supplier_')) return false;
+      // 3. Все остальное (ITEM, merged_...) — это значимые позиции (товары)
       return true;
     }).length;
   }, [selectedIds, specRows, invoiceRows, estimateRows, requestRows]);
@@ -1534,10 +1561,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (row.id !== rowId) return row;
         const updatedRow = { ...row, [field]: value };
 
-        if (field === 'price' || field === 'quantity' || field === 'clientPrice') {
+        if (field === 'costPrice' || field === 'quantity' || field === 'clientPrice') {
           const q = parseFloat(String(updatedRow.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-          const p = parseFloat(String(field === 'costPrice' ? value : updatedRow.costPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-          const cp = parseFloat(String(field === 'clientPrice' ? value : updatedRow.clientPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const p = parseFloat(String(updatedRow.costPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+          const cp = parseFloat(String(updatedRow.clientPrice).replace(/\s/g, '').replace(/,/g, '.')) || 0;
 
           updatedRow.costSum = (q * p).toFixed(2);
           updatedRow.clientSum = (q * cp).toFixed(2);
@@ -1829,6 +1856,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         pdfGeometry,
         viewMode,
         setViewMode,
+        isMerged,
+        toggleMerge,
         handleUnmerge,
         generateEstimate,
         estimateTotal,
@@ -1843,6 +1872,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         isDragging,
         setIsDragging,
         selectedIds,
+        selectedItemsCount,
         setSelectedIds,
         toggleRowSelection,
         toggleSelectAllPage,
@@ -1860,7 +1890,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         getCurrentRows,
         displayRows,
         totalProcessedCount,
-        selectedItemsCount,
         isPaginationActive,
         reprocessAi,
         matchInvoiceToSpec,

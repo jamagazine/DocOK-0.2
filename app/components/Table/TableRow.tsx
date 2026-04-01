@@ -81,7 +81,7 @@ export const TableRow = React.memo(({
   const isGroup = !isSummaryRow && (row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType));
   
   // Ribbon Row — это любая строка, которая рендерится «на всю ширину» (заголовок или группа)
-  const isRibbonRow = isWorkType || isLocation || isGroup || isSupplierRow || isActuallyMerged;
+  const isRibbonRow = isWorkType || isLocation || isGroup || isSupplierRow;
   const isHeader = isWorkType || isLocation || isGroup;
 
   const baseRowClasses = cn(
@@ -102,8 +102,8 @@ export const TableRow = React.memo(({
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 text-blue-900 border-l-4 border-l-blue-400 hover:bg-blue-100/50 transition-all",
     // 5. Сводные - Изумрудный Индиго с бортом
     stage === 'spec' && isActuallyMerged && cn(
-      "bg-emerald-50/30 text-emerald-950 border-l-4 border-l-emerald-500 transition-all",
-      (parentIsExpanded || localExpanded) ? "bg-emerald-100/50" : "hover:bg-emerald-100/40"
+      "bg-emerald-50/50 text-emerald-950 border-l-4 border-l-emerald-500 transition-all font-semibold",
+      (parentIsExpanded || localExpanded) ? "bg-emerald-100/60" : "hover:bg-emerald-100/40"
     ),
 
     stage === 'spec' && !isSummaryRow && hasChildren && !isHeader && "bg-slate-50/30",
@@ -254,13 +254,16 @@ export const TableRow = React.memo(({
                     <span className="text-slate-500 font-bold text-xs italic">{row.pos || '§'}</span>
                   ) : (
                     <>
-                      {stage === 'invoice' && row.isUncertain && <AlertTriangle className="absolute left-1 w-3 h-3 text-amber-500 shrink-0" />}
-                      <span className="group-hover:hidden text-slate-400 tabular-nums">
-                        {stage === 'spec' 
-                          ? (row.pos || '')
-                          : (actualIndex + 1).toString().padStart(2, '0')
-                        }
-                      </span>
+                      {isActuallyMerged ? (
+                        <Layers className="w-3.5 h-3.5 text-emerald-600/70" />
+                      ) : (
+                        <span className="group-hover:hidden text-slate-400 tabular-nums">
+                          {stage === 'spec' 
+                            ? (row.pos || '')
+                            : (actualIndex + 1).toString().padStart(2, '0')
+                          }
+                        </span>
+                      )}
                       <input
                         type="checkbox"
                         className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
@@ -277,15 +280,16 @@ export const TableRow = React.memo(({
               ) : col.key === 'name' && (stage === 'spec' && (isHeader || isActuallyMerged)) ? (
 
                 <div 
-                  className="flex justify-between items-start gap-2 w-full overflow-hidden"
+                  className="flex justify-between items-center gap-2 w-full overflow-hidden"
                   onClick={(e) => {
-                    if (isSummaryRow && row.children?.length > 1) {
+                    if (isActuallyMerged && row.children?.length > 1) {
                       e.stopPropagation();
-                      setLocalExpanded(!localExpanded);
+                      if (toggleCollapse) toggleCollapse(row.id);
+                      else setLocalExpanded(!localExpanded);
                     }
                   }}
                 >
-                  <div className="flex flex-col gap-1 min-w-0">
+                  <div className="flex flex-col gap-0.5 min-w-0">
                     <span className={cn(
                       "font-bold whitespace-normal break-words leading-tight",
                       isWorkType ? "text-base uppercase tracking-wider" : "text-sm",
@@ -295,13 +299,11 @@ export const TableRow = React.memo(({
                     )}>
                       {String(row.name || '')}
                     </span>
-
-
                   </div>
 
-                  {isSummaryRow && row.children?.length > 1 && (
-                    <div className="p-1 rounded bg-slate-100/50 text-slate-500 hover:bg-slate-200/80 transition-colors shrink-0 mt-1">
-                      {localExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  {(isActuallyMerged && row.children?.length > 1) && (
+                    <div className="p-1 rounded bg-emerald-100/80 text-emerald-600 hover:bg-emerald-200 transition-colors shrink-0">
+                      {((isSummaryRow && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </div>
                   )}
                 </div>

@@ -10,7 +10,7 @@ export interface StageInfo {
 
 export type RightPanelTab = 'tools' | 'info' | 'calc';
 
-export type FileStatus = 'ok' | 'loading' | 'error' | 'reset' | 'Старт...' | 'Локальный парсинг...' | 'Конвертация и Анализ ИИ...' | string;
+export type FileStatus = 'ok' | 'loading' | 'error' | 'reset' | 'READY_MD' | 'Готово (ИИ)' | 'Готово (Хранилище)' | 'Старт...' | 'Локальный парсинг...' | 'Конвертация и Анализ ИИ...' | string;
 
 export interface UploadStatus {
   status: FileStatus;
@@ -66,6 +66,8 @@ export interface InvoiceRow {
   sumNoDiscount: number;
   sumWithVat: number;
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  is_header?: boolean;
+  isUncertain?: boolean;
 }
 
 export interface EstimateRow {
@@ -79,4 +81,5 @@ export interface EstimateRow {
   markup: number;
   clientPrice: number;
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  is_header?: boolean;
 }
