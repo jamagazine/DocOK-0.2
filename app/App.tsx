@@ -4,6 +4,9 @@ import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { CenterPanel } from './components/CenterPanel';
 import { ResetConfirmation } from './components/ResetConfirmation';
+import { DashboardLeftPanel } from './components/DashboardLeftPanel';
+import { DashboardCenterPanel } from './components/DashboardCenterPanel';
+import { DashboardRightPanel } from './components/DashboardRightPanel';
 import type { Stage, UploadedFile } from './types';
 import { DataProvider, useData } from './context/DataContext';
 import { Upload } from 'lucide-react';
@@ -11,7 +14,7 @@ import { Upload } from 'lucide-react';
 function AppContent() {
   const [leftExpanded, setLeftExpanded] = useState(true);
   const [rightExpanded, setRightExpanded] = useState(true);
-  const { currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging } = useData();
+  const { currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging, viewContext, setViewContext } = useData();
 
   const stageOrder: Stage[] = ['spec', 'request', 'invoice', 'estimate'];
   const currentStageIndex = stageOrder.indexOf(currentStage);
@@ -129,23 +132,40 @@ function AppContent() {
       </div>
       <ResetConfirmation />
       <div className="flex h-screen w-screen overflow-hidden bg-slate-50 font-sans text-slate-900">
-        <LeftPanel 
-          expanded={leftExpanded} 
-          onToggle={() => setLeftExpanded(!leftExpanded)} 
-          currentStage={currentStage}
-          onSetStage={setCurrentStage}
-        />
-        
-        <CenterPanel currentStage={currentStage} />
-        
-        <RightPanel 
-          expanded={rightExpanded} 
-          onToggle={() => setRightExpanded(!rightExpanded)} 
-          currentStage={currentStage}
-          onNextStage={handleNextStage}
-          hasNextStage={hasNextStage}
-          canProceed={canProceed}
-        />
+        {viewContext === 'workspace' ? (
+          // ─── Project Workspace ───────────────────────────────────────────────
+          <div key="workspace" className="flex w-full h-full animate-in fade-in duration-300">
+            <LeftPanel 
+              expanded={leftExpanded} 
+              onToggle={() => setLeftExpanded(!leftExpanded)} 
+              currentStage={currentStage}
+              onSetStage={setCurrentStage}
+              onOpenDashboard={() => setViewContext('dashboard')}
+            />
+            <CenterPanel currentStage={currentStage} />
+            <RightPanel 
+              expanded={rightExpanded} 
+              onToggle={() => setRightExpanded(!rightExpanded)} 
+              currentStage={currentStage}
+              onNextStage={handleNextStage}
+              hasNextStage={hasNextStage}
+              canProceed={canProceed}
+            />
+          </div>
+        ) : (
+          // ─── Dashboard ───────────────────────────────────────────────────────
+          <div key="dashboard" className="flex w-full h-full animate-in fade-in duration-300">
+            <DashboardLeftPanel
+              expanded={leftExpanded}
+              onToggle={() => setLeftExpanded(!leftExpanded)}
+            />
+            <DashboardCenterPanel />
+            <DashboardRightPanel
+              expanded={rightExpanded}
+              onToggle={() => setRightExpanded(!rightExpanded)}
+            />
+          </div>
+        )}
       </div>
     </>
   );

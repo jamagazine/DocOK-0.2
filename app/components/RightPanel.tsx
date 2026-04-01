@@ -528,9 +528,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
       </div>
 
       {/* Footer - Basement (Next Button) */}
-      <div className={cn(
-        "border-t border-slate-200 p-4 flex justify-center items-center h-20 bg-slate-50"
-      )}>
+      <div className="border-t border-slate-200 px-4 py-2 flex justify-center items-center h-16 bg-slate-50">
         {hasNextStage ? (
           <button
             onClick={() => {
@@ -539,24 +537,24 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
             }}
             disabled={!canProceed}
             className={cn(
-              "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold transition-all",
-              expanded ? "px-6 py-4" : "w-12 h-12 p-0",
+              "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12",
+              expanded ? "w-full px-6" : "w-12 p-0",
               canProceed
                 ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
                 : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
             )}
             title={canProceed ? "Перейти к следующему этапу" : "Загрузите данные для продолжения"}
           >
-            {expanded && <span className="uppercase tracking-widest text-xs">Продолжить</span>}
-            <ArrowRight className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
+            {expanded && <span className="uppercase tracking-widest text-[#9fffcb] text-[10px] font-black">Продолжить</span>}
+            <ArrowRight className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
           </button>
         ) : (
           <div className={cn(
-            "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold bg-indigo-600 text-white shadow-sm",
-            expanded ? "px-6 py-4" : "w-12 h-12 p-0"
+            "flex items-center justify-center gap-2 rounded-xl font-extrabold bg-indigo-600 text-white shadow-sm h-12",
+            expanded ? "w-full px-6" : "w-12 p-0"
           )}>
-            {expanded && <span className="uppercase tracking-widest text-xs">Завершить</span>}
-            <CheckCircle2 className={cn(expanded ? "w-5 h-5" : "w-6 h-6")} />
+            {expanded && <span className="uppercase tracking-widest text-[10px] font-black">Завершить</span>}
+            <CheckCircle2 className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
           </div>
         )}
       </div>

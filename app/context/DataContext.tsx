@@ -329,6 +329,9 @@ interface DataContextType {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  // Navigation context
+  viewContext: 'dashboard' | 'workspace';
+  setViewContext: (ctx: 'dashboard' | 'workspace') => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -341,6 +344,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } catch (e) {}
     return 'Проект Торговый Центр "Галактика"';
   });
+  const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('workspace');
 
   useEffect(() => {
     localStorage.setItem('docok_projectName', JSON.stringify(projectName));
@@ -2070,6 +2074,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         redo,
         canUndo: history.past.length > 0,
         canRedo: history.future.length > 0,
+        viewContext,
+        setViewContext,
       }}
     >
       {children}

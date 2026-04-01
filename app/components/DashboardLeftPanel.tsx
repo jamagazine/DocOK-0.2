@@ -1,22 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Menu, 
-  Home, 
-  FolderOpen, 
-  CheckCircle2, 
-  CircleAlert, 
-  Circle,
-  Briefcase,
+import {
+  Menu,
+  LayoutGrid,
+  Zap,
+  Archive,
+  Award,
+  Cloud,
   DollarSign,
   UserCheck,
-  Cloud,
+  Briefcase,
+  FolderOpen,
+  CheckCircle2,
+  Circle,
   XCircle,
   AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import type { Stage, StageInfo } from '../types';
 import { useData } from '../context/DataContext';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -25,34 +26,26 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-interface LeftPanelProps {
+interface DashboardLeftPanelProps {
   expanded: boolean;
   onToggle: () => void;
-  currentStage: Stage;
-  onSetStage: (stage: Stage) => void;
-  onOpenDashboard: () => void;
 }
 
-const STAGES: StageInfo[] = [
-  { id: 'spec', label: 'Спецификация', status: 'done' },
-  { id: 'request', label: 'Запрос поставщику', status: 'partial' },
-  { id: 'invoice', label: 'Счет поставщика', status: 'not_started' },
-  { id: 'estimate', label: 'Смета', status: 'not_started' },
+const CATEGORIES = [
+  { id: 'all',     label: 'Все проекты',  icon: LayoutGrid, count: 4 },
+  { id: 'active',  label: 'Активные',     icon: Zap,        count: 2 },
+  { id: 'archive', label: 'В архиве',     icon: Archive,    count: 1 },
+  { id: 'tender',  label: 'Тендеры',      icon: Award,      count: 1 },
 ];
 
-export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpenDashboard }: LeftPanelProps) {
+export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelProps) {
+  const [activeCategory, setActiveCategory] = useState('all');
   const { 
+    estimateTotal, 
     yandexConfig, 
-    saveYandexConfig, 
-    specRows, 
-    invoiceRows, 
-    estimateRows, 
-    requestRows,
-    completedStages,
-    uploadStatuses,
-    estimateTotal,
-    viewContext,
-    setViewContext
+    saveYandexConfig,
+    viewContext, 
+    setViewContext 
   } = useData();
   const [showSettings, setShowSettings] = useState(false);
   const [isServerAvailable, setIsServerAvailable] = useState(true);
@@ -62,7 +55,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
   useEffect(() => {
     const checkServer = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/health'); // Use GET instead of HEAD
+        const res = await fetch('http://localhost:8000/api/health');
         setIsServerAvailable(res.ok);
       } catch (e) {
         setIsServerAvailable(false);
@@ -70,7 +63,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
     };
     
     checkServer();
-    const interval = setInterval(checkServer, 30000); // Check every 30s
+    const interval = setInterval(checkServer, 30000); 
     return () => clearInterval(interval);
   }, []);
 
@@ -80,56 +73,24 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
       [key]: value
     });
   };
-  const getStageStatus = (stageId: Stage) => {
-    // 1. Check for errors
-    const hasError = Object.values(uploadStatuses || {}).some((s: any) => 
-      s.status.toLowerCase().includes('ошибк')
-    );
-    if (hasError && currentStage === stageId) return 'error';
-
-    // 2. Check for data presence
-    let hasData = false;
-    if (stageId === 'spec') hasData = specRows.length > 0;
-    if (stageId === 'request') hasData = requestRows.length > 0;
-    if (stageId === 'invoice') hasData = invoiceRows.length > 0;
-    if (stageId === 'estimate') hasData = estimateRows.length > 0;
-
-    if (!hasData) return 'empty';
-
-    // 3. Check for completion
-    if (completedStages.includes(stageId)) return 'done';
-
-    // 4. If has data but not completed
-    return 'pending';
-  };
-
-  const renderStatusIcon = (stageId: Stage) => {
-    const status = getStageStatus(stageId);
-    switch (status) {
-      case 'done': return <CheckCircle2 className="size-5 text-emerald-500" />;
-      case 'pending': return <AlertCircle className="size-5 text-amber-500" />;
-      case 'error': return <XCircle className="size-5 text-rose-500" />;
-      default: return <Circle className="size-5 text-slate-300" />;
-    }
-  };
 
   return (
-    <div 
+    <div
       className={cn(
-        "flex flex-col bg-white border-r border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full relative",
-        expanded ? "w-72" : "w-16"
+        'flex flex-col bg-white border-r border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full relative',
+        expanded ? 'w-72' : 'w-16'
       )}
     >
-      {/* Header - Attic */}
+      {/* ── Attic (Header) — mirrors LeftPanel header exactly ── */}
       <div className={cn(
-        "p-4 border-b border-slate-200 border-r-0 h-[72px]",
-        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
+        'p-4 border-b border-slate-200 h-[72px]',
+        expanded ? 'grid grid-cols-4 items-center justify-items-center gap-0' : 'flex flex-col items-center gap-4 py-4 h-auto'
       )}>
-        <button 
+        <button
           onClick={onToggle}
           className={cn(
-            "rounded-lg text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center",
-            expanded ? "w-9 h-9" : "w-12 h-12"
+            'rounded-lg text-slate-600 hover:bg-slate-100 transition-colors flex items-center justify-center',
+            expanded ? 'w-9 h-9' : 'w-12 h-12'
           )}
           title="Свернуть/Развернуть"
         >
@@ -163,85 +124,52 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
         >
           <FolderOpen className="size-5" />
         </button>
-        
+
         {/* Phantom 4th slot */}
         {!expanded && <div className="w-12 h-12" aria-hidden="true" />}
         {expanded && <div />}
       </div>
 
-      {/* Middle Top - Workflow Stages */}
+      {/* ── Content — categories ── */}
       <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-1">
-        <div className={cn("px-4 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider", !expanded && "sr-only")}>
-          Этапы работы
+        <div className={cn('px-4 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider', !expanded && 'sr-only')}>
+          Категории
         </div>
-        {STAGES.map((stage) => (
-          <button
-            key={stage.id}
-            onClick={() => onSetStage(stage.id as Stage)}
-            className={cn(
-              "w-full flex items-center px-4 py-3 transition-colors group",
-              currentStage === stage.id ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-700",
-              !expanded && "justify-center px-0 py-4"
-            )}
-            title={!expanded ? stage.label : undefined}
-          >
-            <div className="shrink-0 flex items-center justify-center relative">
-              {renderStatusIcon(stage.id as Stage)}
-              {currentStage === stage.id && (
-                <span className="absolute -left-4 w-1 h-6 bg-indigo-600 rounded-r-full" />
+        {CATEGORIES.map(({ id, label, icon: Icon, count }) => {
+          const isActive = activeCategory === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setActiveCategory(id)}
+              className={cn(
+                'w-full flex items-center px-4 py-3 transition-colors group',
+                isActive ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-700',
+                !expanded && 'justify-center px-0 py-4'
               )}
-            </div>
-            {expanded && (
-              <span className="ml-3 text-sm font-medium whitespace-nowrap overflow-hidden text-ellipsis">
-                {stage.label}
-              </span>
-            )}
-          </button>
-        ))}
+              title={!expanded ? label : undefined}
+            >
+              <div className="shrink-0 flex items-center justify-center relative">
+                <Icon className={cn('size-5', isActive ? 'text-indigo-600' : 'text-slate-400')} />
+                {isActive && (
+                  <span className="absolute -left-4 w-1 h-6 bg-indigo-600 rounded-r-full" />
+                )}
+              </div>
+              {expanded && (
+                <>
+                  <span className="ml-3 text-sm font-medium whitespace-nowrap flex-1 text-left">{label}</span>
+                  <span className={cn(
+                    'text-xs font-semibold rounded-full px-2 py-0.5 min-w-[22px] text-center',
+                    isActive ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'
+                  )}>{count}</span>
+                </>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Middle Bottom - Estimate Info */}
-      <div className="border-t border-slate-200 py-4 flex flex-col gap-2">
-         <div className={cn("px-4 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider", !expanded && "sr-only")}>
-          Общая информация
-        </div>
-        <div 
-          className={cn(
-            "px-4 py-2 flex items-center gap-3 text-slate-600 group cursor-help",
-            !expanded && "justify-center"
-          )}
-          title={`Себестоимость проекта: ${estimateTotal.cost} ₽`}
-        >
-          <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0 group-hover:bg-slate-200 transition-colors">
-            <DollarSign className="w-4 h-4 text-slate-500" />
-          </div>
-          {expanded && (
-            <div className="flex flex-col text-sm overflow-hidden">
-              <span className="text-slate-500 text-xs">Себестоимость</span>
-              <span className="font-semibold text-slate-900 truncate">{estimateTotal.cost} ₽</span>
-            </div>
-          )}
-        </div>
-        <div 
-          className={cn(
-            "px-4 py-2 flex items-center gap-3 text-slate-600 group cursor-help",
-            !expanded && "justify-center"
-          )}
-          title={`Стоимость клиента: ${estimateTotal.client} ₽`}
-        >
-          <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0 group-hover:bg-slate-200 transition-colors">
-            <UserCheck className="w-4 h-4 text-slate-500" />
-          </div>
-          {expanded && (
-             <div className="flex flex-col text-sm overflow-hidden">
-               <span className="text-slate-500 text-xs">Стоимость клиента</span>
-               <span className="font-semibold text-slate-900 truncate">{estimateTotal.client} ₽</span>
-             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Settings Panel */}
+      {/* Settings Panel (Unified with LeftPanel) */}
       <AnimatePresence>
         {(showSettings && expanded) && (
           <motion.div
@@ -280,7 +208,6 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
         )}
       </AnimatePresence>
 
-      {/* Footer - Basement */}
       <div className={cn(
         "border-t border-slate-200 flex shrink-0 relative z-50 bg-white h-16 items-center",
         expanded ? "flex-row px-4" : "justify-center"
