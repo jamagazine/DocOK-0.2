@@ -148,7 +148,12 @@ function Footer({ visibleRowsCount }: { visibleRowsCount?: number }) {
     setCurrentPage,
     rowsPerPage,
     setRowsPerPage,
+    viewMode,
+    currentStage,
   } = useData();
+
+  // Pagination is only active for the merged view; in other spec modes, show all rows
+  const isPaginationActive = !(currentStage === 'spec' && viewMode !== 'merged');
 
   const totalRows = visibleRowsCount !== undefined ? visibleRowsCount : getCurrentRows().length;
   const totalPages = Math.ceil(totalRows / rowsPerPage) || 1;
@@ -173,93 +178,104 @@ function Footer({ visibleRowsCount }: { visibleRowsCount?: number }) {
         </div>
       </div>
 
-      <div className="flex items-center justify-center gap-1">
-        <button
-          onClick={() => setCurrentPage(1)}
-          disabled={currentPage === 1 || totalPages === 1}
-          className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
-        >
-          <ChevronsLeft size={16} />
-        </button>
-        <button
-          onClick={() => handlePageChange(currentPage - 1)}
-          disabled={currentPage === 1 || totalPages === 1}
-          className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors mr-2"
-        >
-          <ChevronLeft size={16} />
-        </button>
+      {/* Pagination controls: only shown in merged mode for spec, always shown for other stages */}
+      {isPaginationActive ? (
+        <div className="flex items-center justify-center gap-1">
+          <button
+            onClick={() => setCurrentPage(1)}
+            disabled={currentPage === 1 || totalPages === 1}
+            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
+          >
+            <ChevronsLeft size={16} />
+          </button>
+          <button
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1 || totalPages === 1}
+            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors mr-2"
+          >
+            <ChevronLeft size={16} />
+          </button>
 
-        <div className="flex items-center gap-1">
-          {(() => {
-            const pages: (number | string)[] = [];
-            const maxVisible = 7;
-            if (totalPages <= maxVisible) {
-              for (let i = 1; i <= totalPages; i++) pages.push(i);
-            } else {
-              pages.push(1);
-              if (currentPage > 3) pages.push('...');
-              const start = Math.max(2, currentPage - 1);
-              const end = Math.min(totalPages - 1, currentPage + 1);
-              for (let i = start; i <= end; i++) {
-                if (!pages.includes(i)) pages.push(i);
+          <div className="flex items-center gap-1">
+            {(() => {
+              const pages: (number | string)[] = [];
+              const maxVisible = 7;
+              if (totalPages <= maxVisible) {
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+              } else {
+                pages.push(1);
+                if (currentPage > 3) pages.push('...');
+                const start = Math.max(2, currentPage - 1);
+                const end = Math.min(totalPages - 1, currentPage + 1);
+                for (let i = start; i <= end; i++) {
+                  if (!pages.includes(i)) pages.push(i);
+                }
+                if (currentPage < totalPages - 2) pages.push('...');
+                pages.push(totalPages);
               }
-              if (currentPage < totalPages - 2) pages.push('...');
-              pages.push(totalPages);
-            }
 
-            return pages.map((p, idx) => (
-              p === '...' ? (
-                <span key={`dots-${idx}`} className="px-2 text-slate-400">...</span>
-              ) : (
-                <button
-                  key={p}
-                  onClick={() => handlePageChange(p as number)}
-                  className={cn(
-                    "w-8 h-8 rounded-md text-sm font-medium transition-all",
-                    currentPage === p
-                      ? "bg-indigo-600 text-white shadow-sm"
-                      : "text-slate-600 hover:bg-indigo-50 hover:text-indigo-600"
-                  )}
-                >
-                  {p}
-                </button>
-              )
-            ));
-          })()}
+              return pages.map((p, idx) => (
+                p === '...' ? (
+                  <span key={`dots-${idx}`} className="px-2 text-slate-400">...</span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => handlePageChange(p as number)}
+                    className={cn(
+                      "w-8 h-8 rounded-md text-sm font-medium transition-all",
+                      currentPage === p
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-indigo-50 hover:text-indigo-600"
+                    )}
+                  >
+                    {p}
+                  </button>
+                )
+              ));
+            })()}
+          </div>
+
+          <button
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages || totalPages === 1}
+            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors ml-2"
+          >
+            <ChevronRight size={16} />
+          </button>
+          <button
+            onClick={() => setCurrentPage(totalPages)}
+            disabled={currentPage === totalPages || totalPages === 1}
+            className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
+          >
+            <ChevronsRight size={16} />
+          </button>
         </div>
+      ) : (
+        <div className="flex items-center justify-center">
+          <span className="text-xs text-slate-400 italic">Пагинация недоступна в этом режиме</span>
+        </div>
+      )}
 
-        <button
-          onClick={() => handlePageChange(currentPage + 1)}
-          disabled={currentPage === totalPages || totalPages === 1}
-          className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors ml-2"
-        >
-          <ChevronRight size={16} />
-        </button>
-        <button
-          onClick={() => setCurrentPage(totalPages)}
-          disabled={currentPage === totalPages || totalPages === 1}
-          className="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 disabled:opacity-20 disabled:hover:bg-transparent transition-colors"
-        >
-          <ChevronsRight size={16} />
-        </button>
-      </div>
-
-      <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
-        <span className="hidden sm:inline">Строк на странице:</span>
-        <select
-          className="bg-transparent border-none focus:ring-0 text-slate-700 font-semibold cursor-pointer py-0"
-          value={rowsPerPage}
-          onChange={(e) => {
-            setRowsPerPage(Number(e.target.value));
-            setCurrentPage(1);
-          }}
-        >
-          <option value={10}>10</option>
-          <option value={20}>20</option>
-          <option value={50}>50</option>
-          <option value={100}>100</option>
-        </select>
-      </div>
+      {isPaginationActive ? (
+        <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
+          <span className="hidden sm:inline">Строк на странице:</span>
+          <select
+            className="bg-transparent border-none focus:ring-0 text-slate-700 font-semibold cursor-pointer py-0"
+            value={rowsPerPage}
+            onChange={(e) => {
+              setRowsPerPage(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+          >
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+      ) : (
+        <div />
+      )}
     </div>
   );
 }
@@ -364,11 +380,16 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
 }
 
 function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
-  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, getCurrentRows, viewMode } = useData();
+  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, getCurrentRows, viewMode, setCurrentPage } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
   const { handleKeyDown } = useTableNavigation();
+
+  // Reset to page 1 whenever the view mode changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [viewMode, setCurrentPage]);
 
   const toggleExpand = React.useCallback((id: string) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
@@ -441,8 +462,9 @@ function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: nu
     onVisibleCountChange?.(visibleRows.length);
   }, [visibleRows.length, onVisibleCountChange]);
 
-  const startIndex = (currentPage - 1) * rowsPerPage;
-  const slicedRows = visibleRows.slice(startIndex, startIndex + rowsPerPage);
+  // Pagination only applies in merged mode; other modes show all rows
+  const startIndex = viewMode === 'merged' ? (currentPage - 1) * rowsPerPage : 0;
+  const slicedRows = viewMode === 'merged' ? visibleRows.slice(startIndex, startIndex + rowsPerPage) : visibleRows;
 
   return (
     <div className="flex flex-col">

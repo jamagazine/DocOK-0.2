@@ -1011,7 +1011,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const rawResult: SpecRow[] = [];
     for (const [fingerprint, group] of map.entries()) {
       if (group.length === 1) {
-        rawResult.push({ ...group[0] });
+        // Single-item group: assign stable ID based on fingerprint so React always identifies the same row
+        const stableId = generateStableId('merged', fingerprint);
+        rawResult.push({ ...group[0], id: stableId });
       } else {
         const base = { ...group[0] };
         base.id = generateStableId('merged', fingerprint);
@@ -1085,7 +1087,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         existing.children.push(item);
         if (rawSupplier) existing.names.push(rawSupplier);
       } else {
-        const safeId = generateStableId('supplier', sKey);
+        // Use 'supplier_header_[name]' pattern for stable, predictable supplier header IDs
+        const safeId = `supplier_header_${sKey}`;
         map.set(sKey, { 
           id: safeId, 
           name: rawSupplier || 'БЕЗ ПОСТАВЩИКА', 
