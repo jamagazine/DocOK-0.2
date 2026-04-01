@@ -44,7 +44,6 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
 
   const [isEditingName, setIsEditingName] = React.useState(false);
   const [filesOpen, setFilesOpen] = React.useState(false);
-  const [visibleRowsCount, setVisibleRowsCount] = React.useState<number | undefined>(undefined);
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, { status: string; time: string }>);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -54,15 +53,12 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
     }
   }, [isEditingName]);
 
+  // Сброс пагинации и выборки при смене вкладки
   React.useEffect(() => {
     setCurrentPage(1);
     setSelectedIds([]);
     setIsOnlySelectedView(false);
   }, [currentStage, setCurrentPage, setSelectedIds, setIsOnlySelectedView]);
-
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, setCurrentPage]);
 
   return (
     <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
@@ -126,37 +122,33 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
 
         <div className="flex-1 overflow-auto relative bg-white">
           <div className="min-w-max h-full">
-            {currentStage === 'spec' && <SpecTable onVisibleCountChange={setVisibleRowsCount} />}
-            {currentStage === 'request' && <RequestTable onVisibleCountChange={setVisibleRowsCount} />}
-            {currentStage === 'invoice' && <InvoiceTable onVisibleCountChange={setVisibleRowsCount} />}
-            {currentStage === 'estimate' && <EstimateTable onVisibleCountChange={setVisibleRowsCount} />}
+            {currentStage === 'spec' && <SpecTable />}
+            {currentStage === 'request' && <RequestTable />}
+            {currentStage === 'invoice' && <InvoiceTable />}
+            {currentStage === 'estimate' && <EstimateTable />}
           </div>
         </div>
       </div>
 
-      <Footer visibleRowsCount={visibleRowsCount} />
+      <Footer />
       <FilesPanel isOpen={filesOpen} onClose={() => setFilesOpen(false)} />
     </div>
   );
 }
 
-function Footer({ visibleRowsCount }: { visibleRowsCount?: number }) {
+function Footer() {
   const {
-    getCurrentRows,
     selectedIds,
     currentPage,
     setCurrentPage,
     rowsPerPage,
     setRowsPerPage,
-    viewMode,
-    currentStage,
+    totalProcessedCount,
+    isPaginationActive,
   } = useData();
 
-  // Pagination is only active for the merged view; in other spec modes, show all rows
-  const isPaginationActive = !(currentStage === 'spec' && viewMode !== 'merged');
-
-  const totalRows = visibleRowsCount !== undefined ? visibleRowsCount : getCurrentRows().length;
-  const totalPages = Math.ceil(totalRows / rowsPerPage) || 1;
+  // Единственная вычисляемая величина — кол-во страниц
+  const totalPages = Math.ceil(totalProcessedCount / rowsPerPage) || 1;
 
   const handlePageChange = (page: number) => {
     if (page < 1 || page > totalPages) return;
@@ -164,21 +156,22 @@ function Footer({ visibleRowsCount }: { visibleRowsCount?: number }) {
   };
 
   return (
-    <div className="h-16 border-t border-slate-200 bg-white px-6 grid grid-cols-3 items-center">
+    <div className="h-16 border-t border-slate-200 bg-white px-6 grid grid-cols-3 items-center shrink-0">
+      {/* Левая колонка: счётчик строк */}
       <div className="flex items-center gap-4 text-sm min-w-[200px]">
         <div className="flex items-center gap-1 text-slate-400 whitespace-nowrap">
           <span>Всего строк:</span>
-          <span className="font-semibold text-slate-700">{totalRows}</span>
+          <span className="font-semibold text-slate-700">{totalProcessedCount}</span>
           {selectedIds.length > 0 && (
             <>
-              <span>/</span>
-              <span className="font-semibold text-slate-700">{selectedIds.length}</span>
+              <span className="mx-0.5 text-slate-300">|</span>
+              <span className="font-semibold text-indigo-600">{selectedIds.length} выбрано</span>
             </>
           )}
         </div>
       </div>
 
-      {/* Pagination controls: only shown in merged mode for spec, always shown for other stages */}
+      {/* Центральная колонка: пагинатор или заглушка */}
       {isPaginationActive ? (
         <div className="flex items-center justify-center gap-1">
           <button
@@ -252,10 +245,11 @@ function Footer({ visibleRowsCount }: { visibleRowsCount?: number }) {
         </div>
       ) : (
         <div className="flex items-center justify-center">
-          <span className="text-xs text-slate-400 italic">Пагинация недоступна в этом режиме</span>
+          <span className="text-xs text-slate-400">Отображаются все записи</span>
         </div>
       )}
 
+      {/* Правая колонка: выбор кол-ва строк (только при активной пагинации) */}
       {isPaginationActive ? (
         <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
           <span className="hidden sm:inline">Строк на странице:</span>
@@ -379,17 +373,15 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
   );
 }
 
-function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
-  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, getCurrentRows, viewMode, setCurrentPage } = useData();
+function SpecTable() {
+  // SpecTable — «тупой» компонент: только рисует.
+  // displayRows из pipeline уже содержит всё: фильтры, поиск, isOnlySelectedView, пагинацию.
+  // Единственная UI-логика, которая остаётся здесь — аккордеон (collapsedIds).
+  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, displayRows, viewMode } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
   const { handleKeyDown } = useTableNavigation();
-
-  // Reset to page 1 whenever the view mode changes
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [viewMode, setCurrentPage]);
 
   const toggleExpand = React.useCallback((id: string) => {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
@@ -411,74 +403,53 @@ function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: nu
     { key: 'note', label: 'Примечание', width: '150px' }
   ];
 
-  const allRows = getCurrentRows();
-  // getCurrentRows() already applies isOnlySelectedView + frozenSelectedIds filtering;
-  // do NOT re-filter by selectedIds here (selectedIds is cleared when filter activates)
-  const displayRows = allRows;
-
+  // UI-слой: аккордеон поверх pipeline-данных.
+  // Для supplier-режима: разворачиваем дочерние элементы из children[] в плоский список.
   const visibleRows = React.useMemo(() => {
-    // If not original mode, we don't necessarily need the strict L0/L1 hierarchy
-    // BUT we do want collapsedIds to hide items inside supplier grouping if they are flattened.
-    // Wait, in my DataContext, the supplier mode returns only summaries containing children. 
-    // Is displayRows flat? Let's just flatten it here if needed, or if it's already flat, it will work.
-    
-    // To support accordion on both flat and nested hierarchies:
-    const res = [];
+    const res: any[] = [];
     let hideUntilLevel = -1;
-    let isSupplierMode = viewMode === 'supplier';
-    
-    // Let's flatten the items if we're in supplier mode so they can be paginated properly 
-    // and collapsed using standard `collapsedIds` logic like regular groups.
-    const effectiveRows = viewMode === 'supplier' ? displayRows.flatMap((r: any) => [r, ...(r.children || [])]) : displayRows;
+    const isSupplierMode = viewMode === 'supplier';
+    const effectiveRows = isSupplierMode
+      ? displayRows.flatMap((r: any) => [r, ...(r.children || [])])
+      : displayRows;
 
     for (const row of effectiveRows) {
-        // Supplier rows are GROUP, their children are ITEM
-        const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
-        const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
-        const name = String(row.name || '').trim();
-        
-        // If we're inside a collapsed group, we only stop hiding if we hit a row of SAME or HIGHER level (smaller level number)
-        // AND that row must be a valid header with a name.
-        if (hideUntilLevel !== -1 && level <= hideUntilLevel && (row.is_header && name)) {
-            hideUntilLevel = -1;
-        }
-        
-        if (hideUntilLevel !== -1) continue;
-        
-        // Don't show "ghost" rows that aren't valid items or meaningful headers
-        if (!name && !row.is_header) continue;
-        if (row.is_header && !name) continue; // Final safety for empty headers
-        
-        // Remove children from supplier header if flattened, so TableRow doesn't double-render them
-        const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;
-        
-        res.push(renderedRow);
-        if (collapsedIds[row.id]) hideUntilLevel = level;
+      const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
+      const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
+      const name = String(row.name || '').trim();
+
+      // Выход из свёрнутой группы при встрече заголовка того же или выше уровня
+      if (hideUntilLevel !== -1 && level <= hideUntilLevel && row.is_header && name) {
+        hideUntilLevel = -1;
+      }
+      if (hideUntilLevel !== -1) continue;
+
+      // Отсеиваем «призрачные» строки без имени
+      if (!name && !row.is_header) continue;
+      if (row.is_header && !name) continue;
+
+      // У supplier-заголовка убираем children перед рендером (они уже развёрнуты)
+      const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;
+      res.push(renderedRow);
+
+      if (collapsedIds[row.id]) hideUntilLevel = level;
     }
     return res;
   }, [displayRows, collapsedIds, viewMode]);
-
-  React.useEffect(() => {
-    onVisibleCountChange?.(visibleRows.length);
-  }, [visibleRows.length, onVisibleCountChange]);
-
-  // Pagination only applies in merged mode; other modes show all rows
-  const startIndex = viewMode === 'merged' ? (currentPage - 1) * rowsPerPage : 0;
-  const slicedRows = viewMode === 'merged' ? visibleRows.slice(startIndex, startIndex + rowsPerPage) : visibleRows;
 
   return (
     <div className="flex flex-col">
       {specRows.length > 0 ? (
         <div className="bg-white min-w-full">
-          <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={visibleRows.map((r: any) => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => (
+            {visibleRows.map((row: any, i: number) => (
               <TableRow
                 key={row.id}
                 row={row}
                 columns={columns}
                 stage="spec"
-                actualIndex={startIndex + i}
+                actualIndex={i}
                 isSelected={selectedIds.includes(row.id)}
                 selectedIds={selectedIds}
                 toggleRowSelection={toggleRowSelection}
@@ -511,8 +482,8 @@ function SpecTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: nu
   );
 }
 
-function RequestTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
-  const { requestRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
+function RequestTable() {
+  const { requestRows, handleFile, selectedIds, toggleRowSelection } = useData();
   const { handleCellUpdate } = useTableEditor('request');
   const { handleKeyDown } = useTableNavigation();
 
@@ -526,28 +497,19 @@ function RequestTable({ onVisibleCountChange }: { onVisibleCountChange?: (count:
     { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' }
   ];
 
-  const displayRows = isOnlySelectedView ? requestRows.filter(r => selectedIds.includes(r.id)) : requestRows;
-  
-  React.useEffect(() => {
-    onVisibleCountChange?.(displayRows.length);
-  }, [displayRows.length, onVisibleCountChange]);
-
-  const startIndex = (currentPage - 1) * rowsPerPage;
-  const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
-
   return (
     <div className="flex flex-col">
       {requestRows.length > 0 ? (
         <>
-          <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={requestRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => (
+            {requestRows.map((row, i) => (
               <TableRow
                 key={row.id}
                 row={row}
                 columns={columns}
                 stage="request"
-                actualIndex={startIndex + i}
+                actualIndex={i}
                 isSelected={selectedIds.includes(row.id)}
                 selectedIds={selectedIds}
                 toggleRowSelection={toggleRowSelection}
@@ -566,8 +528,8 @@ function RequestTable({ onVisibleCountChange }: { onVisibleCountChange?: (count:
   );
 }
 
-function InvoiceTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
-  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView, specRows } = useData();
+function InvoiceTable() {
+  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows } = useData();
   const { handleCellUpdate } = useTableEditor('invoice');
   const { handleKeyDown } = useTableNavigation();
 
@@ -583,28 +545,19 @@ function InvoiceTable({ onVisibleCountChange }: { onVisibleCountChange?: (count:
     { key: 'total', label: 'Итого', width: '110px', align: 'right' }
   ];
 
-  const displayRows = isOnlySelectedView ? invoiceRows.filter(r => selectedIds.includes(r.id)) : invoiceRows;
-  
-  React.useEffect(() => {
-    onVisibleCountChange?.(displayRows.length);
-  }, [displayRows.length, onVisibleCountChange]);
-
-  const startIndex = (currentPage - 1) * rowsPerPage;
-  const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
-
   return (
     <div className="flex flex-col">
       {invoiceRows.length > 0 ? (
         <div className="bg-white">
-          <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={invoiceRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => (
+            {invoiceRows.map((row, i) => (
               <TableRow
                 key={row.id}
                 row={row}
                 columns={columns}
                 stage="invoice"
-                actualIndex={startIndex + i}
+                actualIndex={i}
                 isSelected={selectedIds.includes(row.id)}
                 selectedIds={selectedIds}
                 toggleRowSelection={toggleRowSelection}
@@ -633,8 +586,8 @@ function InvoiceTable({ onVisibleCountChange }: { onVisibleCountChange?: (count:
   );
 }
 
-function EstimateTable({ onVisibleCountChange }: { onVisibleCountChange?: (count: number) => void }) {
-  const { estimateRows, handleFile, selectedIds, toggleRowSelection, currentPage, rowsPerPage, isOnlySelectedView } = useData();
+function EstimateTable() {
+  const { estimateRows, handleFile, selectedIds, toggleRowSelection } = useData();
   const { handleCellUpdate } = useTableEditor('estimate');
   const { handleKeyDown } = useTableNavigation();
 
@@ -648,28 +601,19 @@ function EstimateTable({ onVisibleCountChange }: { onVisibleCountChange?: (count
     { key: 'clientPrice', label: 'Цена заказчика', width: '120px', align: 'right' }
   ];
 
-  const displayRows = isOnlySelectedView ? estimateRows.filter(r => selectedIds.includes(r.id)) : estimateRows;
-  
-  React.useEffect(() => {
-    onVisibleCountChange?.(displayRows.length);
-  }, [displayRows.length, onVisibleCountChange]);
-
-  const startIndex = (currentPage - 1) * rowsPerPage;
-  const slicedRows = displayRows.slice(startIndex, startIndex + rowsPerPage);
-
   return (
     <div className="flex flex-col">
       {estimateRows.length > 0 ? (
         <div className="bg-white min-w-full shadow-sm rounded-xl overflow-hidden border border-slate-200/60">
-          <TableHeader columns={columns} pageIds={slicedRows.map(r => r.id)} />
+          <TableHeader columns={columns} pageIds={estimateRows.map(r => r.id)} />
           <div className="divide-y divide-slate-100">
-            {slicedRows.map((row, i) => (
+            {estimateRows.map((row, i) => (
               <TableRow
                 key={row.id}
                 row={row}
                 columns={columns}
                 stage="estimate"
-                actualIndex={startIndex + i}
+                actualIndex={i}
                 isSelected={selectedIds.includes(row.id)}
                 selectedIds={selectedIds}
                 toggleRowSelection={toggleRowSelection}
