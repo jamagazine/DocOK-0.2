@@ -67,11 +67,15 @@ export const TableRow = React.memo(({
   const [localExpanded, setLocalExpanded] = React.useState(false);
 
   const isMergedRow = String(row.id).startsWith('merged_');
-  const isSupplierRow = String(row.id).startsWith('supplier_');
-  const isSummaryRow = isMergedRow || isSupplierRow;
+  const isSupplierRow = String(row.id).startsWith('supplier_header_'); // More specific check
+  const isSItem = String(row.id).startsWith('s_item_');
+  const isSummaryRow = isMergedRow || isSupplierRow || isSItem;
+
+
 
   // ШАГ 2: Реально сгруппированная строка (больше 1 элемента)
-  const isActuallyMerged = isMergedRow && row.children && row.children.length > 1;
+  const isActuallyMerged = (isMergedRow || String(row.id).startsWith('s_item_')) && row.children && row.children.length > 1;
+
 
 
   const hasChildren = row.children && row.children.length > 0;
@@ -153,13 +157,14 @@ export const TableRow = React.memo(({
                       {(isLocation && row.pos !== '§') && <MapPin className="w-4 h-4 opacity-70" />}
                       {isGroup && <Folders className="w-4 h-4 text-indigo-500/70" />}
                       {isSupplierRow && <UserCheck className="w-4 h-4 text-blue-500/70" />}
-                      {isActuallyMerged && <Layers className="w-4 h-4 text-emerald-600/70" />}
                       
                       {/* Если есть номер — показываем номер */}
-                      {((isWorkType || isLocation) && row.pos) && (
+                      {((isWorkType || isLocation || isActuallyMerged) && row.pos) && (
                         <span className={cn(
                           "font-black tabular-nums whitespace-nowrap",
-                          isLocation ? "text-emerald-100 text-lg" : "text-slate-400 text-sm"
+                          isLocation ? "text-emerald-100 text-lg" : 
+                          isActuallyMerged ? "text-emerald-600 text-sm" :
+                          "text-slate-400 text-sm"
                         )}>
                           {row.pos}
                         </span>
@@ -186,13 +191,12 @@ export const TableRow = React.memo(({
             )}>
               <span className="truncate flex-grow mr-4">{row.name}</span>
               
-              {(toggleCollapse || isSummaryRow) && (
+              {(toggleCollapse || isActuallyMerged || (isSupplierRow && hasChildren)) && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     if (toggleCollapse) toggleCollapse(row.id);
-                    else if (isSummaryRow) setLocalExpanded(!localExpanded);
-                    else toggleCollapse?.(row.id);
+                    else if (isActuallyMerged || isSupplierRow) setLocalExpanded(!localExpanded);
                   }}
                   className={cn(
                     "p-1 rounded transition-colors flex-shrink-0 ml-auto flex items-center justify-center",
@@ -202,7 +206,7 @@ export const TableRow = React.memo(({
                     "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
                   )}
                 >
-                  {((isSummaryRow && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                  {(( (isActuallyMerged || isSupplierRow) && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                 </button>
               )}
             </div>
@@ -254,16 +258,18 @@ export const TableRow = React.memo(({
                     <span className="text-slate-500 font-bold text-xs italic">{row.pos || '§'}</span>
                   ) : (
                     <>
-                      {isActuallyMerged ? (
-                        <Layers className="w-3.5 h-3.5 text-emerald-600/70" />
-                      ) : (
-                        <span className="group-hover:hidden text-slate-400 tabular-nums">
-                          {stage === 'spec' 
-                            ? (row.pos || '')
-                            : (actualIndex + 1).toString().padStart(2, '0')
-                          }
-                        </span>
-                      )}
+                       {(isActuallyMerged || stage === 'spec') ? (
+                         <span className={cn(
+                           "group-hover:hidden tabular-nums font-bold",
+                           isActuallyMerged ? "text-emerald-600 text-sm" : "text-slate-400 text-sm"
+                         )}>
+                           {row.pos || ''}
+                         </span>
+                       ) : (
+                         <span className="group-hover:hidden text-slate-400 tabular-nums">
+                           {(actualIndex + 1).toString().padStart(2, '0')}
+                         </span>
+                       )}
                       <input
                         type="checkbox"
                         className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"

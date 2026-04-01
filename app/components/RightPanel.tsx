@@ -137,7 +137,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   const {
     handleFile, viewMode, setViewMode, pdfGeometry,
     estimateRows, estimateTotal, specRows, invoiceRows,
-    resetData, sortRows, groupRows, filesMap, completeStage,
+    resetData, handleSort, groupRows, filesMap, completeStage,
     selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
     isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen,
     matchInvoiceToSpec, getCurrentRows, projectName,
@@ -193,10 +193,12 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   };
 
   const getIntermediateTotal = () => {
-    if (parseFloat(estimateTotal) > 0) return estimateTotal;
+    // estimateTotal is { cost: string, client: string }
+    const estVal = parseFloat(String(estimateTotal.client).replace(/\s/g, '').replace(/,/g, '.'));
+    if (estVal > 0) return estimateTotal.client;
 
     if (currentStage === 'invoice') {
-      return invoiceRows.reduce((acc: number, r: InvoiceRow) => acc + (parseFloat(String(r.total)) || 0), 0).toFixed(2);
+      return invoiceRows.reduce((acc: number, r: InvoiceRow) => acc + (parseFloat(String(r.total)) || 0), 0).toLocaleString('ru-RU');
     }
     return '0.00';
   };
@@ -361,9 +363,15 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
               <div className="flex flex-col items-center gap-4 h-full">
                 {/* Top file actions */}
                 <div className="flex flex-col gap-3 p-2 bg-slate-50 rounded-full border border-slate-200">
-                  <UploadCloud className="w-5 h-5 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => fileInputRef.current?.click()} title="Импорт" />
-                  <Download className="w-5 h-5 text-slate-400 hover:text-emerald-600 cursor-pointer" onClick={handleExport} title="Экспорт" />
-                  <RotateCcw className="w-5 h-5 text-slate-400 hover:text-red-500 cursor-pointer" onClick={() => setIsResetConfirmOpen(true)} title="Сброс" />
+                  <span title="Импорт" className="cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors" onClick={() => fileInputRef.current?.click()}>
+                    <UploadCloud className="w-5 h-5" />
+                  </span>
+                  <span title="Экспорт" className="cursor-pointer text-slate-400 hover:text-emerald-600 transition-colors" onClick={handleExport}>
+                    <Download className="w-5 h-5" />
+                  </span>
+                  <span title="Сброс" className="cursor-pointer text-slate-400 hover:text-red-500 transition-colors" onClick={() => setIsResetConfirmOpen(true)}>
+                    <RotateCcw className="w-5 h-5" />
+                  </span>
                 </div>
 
                 {/* View mode icons — collapsed: icons with blue highlight for active */}
@@ -394,18 +402,26 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
                 {/* Bottom action stack */}
                 <div className="flex flex-col items-center gap-3 bg-slate-50 rounded-full p-2.5 border border-slate-200 mb-2">
-                  <CheckSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={selectAllRows} title="Выбрать все" />
-                  <XSquare className="w-4 h-4 text-slate-400 hover:text-indigo-600 cursor-pointer" onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); setIsOnlySelectedView(false); }} title="Сброс выбора" />
+                  <span title="Выбрать все" className="cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors" onClick={selectAllRows}>
+                    <CheckSquare className="w-4 h-4" />
+                  </span>
+                  <span title="Сброс выбора" className="cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors" onClick={() => { setSelectedIds([]); setActiveHeaderIds([]); setIsOnlySelectedView(false); }}>
+                    <XSquare className="w-4 h-4" />
+                  </span>
                   <div className="w-6 h-px bg-slate-200 my-0.5" />
-                  <Filter
-                    className={cn("w-4 h-4 cursor-pointer transition-colors", isOnlySelectedView ? "text-emerald-500" : selectedIds.length > 0 ? "text-sky-500" : "text-slate-300 pointer-events-none")}
-                    onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}
-                    title={isOnlySelectedView ? "Показать все" : "Оставить выбранные"}
-                  />
-                  <Trash2 className={cn("w-4 h-4 cursor-pointer", selectedIds.length > 0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows} title="Удалить выделенные" />
+                  <span title={isOnlySelectedView ? "Показать все" : "Оставить выбранные"} className={cn("cursor-pointer transition-colors", isOnlySelectedView ? "text-emerald-500" : selectedIds.length > 0 ? "text-sky-500" : "text-slate-300 pointer-events-none")} onClick={() => setIsOnlySelectedView(!isOnlySelectedView)}>
+                    <Filter className="w-4 h-4" />
+                  </span>
+                  <span title="Удалить выделенные" className={cn("cursor-pointer transition-colors", selectedIds.length > 0 ? "text-red-500" : "text-slate-300 pointer-events-none")} onClick={deleteSelectedRows}>
+                    <Trash2 className="w-4 h-4" />
+                  </span>
                   <div className="w-6 h-px bg-slate-200 my-0.5" />
-                  <Undo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canUndo ? "text-slate-600 hover:text-indigo-600" : "text-slate-200 pointer-events-none")} onClick={undo} title="Отменить" />
-                  <Redo2 className={cn("w-4 h-4 cursor-pointer transition-colors", canRedo ? "text-slate-600 hover:text-indigo-600" : "text-slate-200 pointer-events-none")} onClick={redo} title="Повторить" />
+                  <span title="Отменить" className={cn("cursor-pointer transition-colors", canUndo ? "text-slate-600 hover:text-indigo-600" : "text-slate-200 pointer-events-none")} onClick={undo}>
+                    <Undo2 className="w-4 h-4" />
+                  </span>
+                  <span title="Повторить" className={cn("cursor-pointer transition-colors", canRedo ? "text-slate-600 hover:text-indigo-600" : "text-slate-200 pointer-events-none")} onClick={redo}>
+                    <Redo2 className="w-4 h-4" />
+                  </span>
                 </div>
               </div>
             )}
@@ -499,8 +515,12 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
               </>
             ) : (
               <div className="flex flex-col gap-6 items-center">
-                <CalcIcon className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" title="Единицы измерения" />
-                <Percent className="w-6 h-6 text-slate-400 hover:text-indigo-600 cursor-pointer transition-colors" title="Расчет наценки" />
+                <span title="Единицы измерения" className="cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors">
+                  <CalcIcon className="w-6 h-6" />
+                </span>
+                <span title="Расчет наценки" className="cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors">
+                  <Percent className="w-6 h-6" />
+                </span>
               </div>
             )}
           </div>
@@ -522,7 +542,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
               "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold transition-all",
               expanded ? "px-6 py-4" : "w-12 h-12 p-0",
               canProceed
-                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100 shadow-xl"
+                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
                 : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
             )}
             title={canProceed ? "Перейти к следующему этапу" : "Загрузите данные для продолжения"}
@@ -532,7 +552,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
           </button>
         ) : (
           <div className={cn(
-            "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold bg-indigo-600 text-white shadow-indigo-100 shadow-xl",
+            "w-full flex items-center justify-center gap-3 rounded-xl font-extrabold bg-indigo-600 text-white shadow-sm",
             expanded ? "px-6 py-4" : "w-12 h-12 p-0"
           )}>
             {expanded && <span className="uppercase tracking-widest text-xs">Завершить</span>}

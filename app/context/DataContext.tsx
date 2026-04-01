@@ -47,6 +47,84 @@ export function naturalSort(a: any, b: any): number {
   return ax.length - bx.length;
 }
 
+function getSortPriority(s: string): number {
+  if (!s) return 4;
+  // Игнорируем спецсимволы в начале для определения приоритета
+  const clean = s.replace(/^[^a-zA-Zа-яА-ЯёЁ0-9]+/, '');
+  if (!clean) return 4;
+  const first = clean[0];
+  if (/[0-9]/.test(first)) return 1;
+  if (/[а-яА-ЯёЁ]/.test(first)) return 2;
+  if (/[a-zA-Z]/.test(first)) return 3;
+  return 4;
+}
+
+export function priorityCompare(a: string, b: string, dir: 'asc' | 'desc' = 'asc'): number {
+  const pA = getSortPriority(a);
+  const pB = getSortPriority(b);
+  if (pA !== pB) return (pA - pB) * (dir === 'asc' ? 1 : -1);
+
+  const cleanA = a.replace(/^[^a-zA-Zа-яА-ЯёЁ0-9]+/, '');
+  const cleanB = b.replace(/^[^a-zA-Zа-яА-ЯёЁ0-9]+/, '');
+  return cleanA.localeCompare(cleanB, 'ru') * (dir === 'asc' ? 1 : -1);
+}
+
+export const applySortAndFilter = <T extends { id: string }>(rows: T[], config: SortConfig, query: string, searchFields: string[]): T[] => {
+  let result = rows;
+
+  // Search Filter
+  if (query) {
+    const lowQuery = query.toLowerCase();
+    result = result.filter((r: any) =>
+      searchFields.some(field => String(r[field] || '').toLowerCase().includes(lowQuery))
+    );
+  }
+
+  // Sort
+  if (!config.key || !config.direction) {
+    return result; // RETURN ORIGINAL FILE ORDER
+  }
+
+  return [...result].sort((a: any, b: any) => {
+    let valA = a[config.key!];
+    let valB = b[config.key!];
+
+    // Smart Sorting: Empty values always at the bottom
+    const isEmptyA = valA === undefined || valA === null || valA === '';
+    const isEmptyB = valB === undefined || valB === null || valB === '';
+    if (isEmptyA && !isEmptyB) return 1;
+    if (!isEmptyA && isEmptyB) return -1;
+    if (isEmptyA && isEmptyB) return 0;
+
+    if (config.key === 'pos') {
+      return naturalSort(valA, valB) * (config.direction === 'asc' ? 1 : -1);
+    }
+
+    // Handle numbers
+    const numA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
+    const numB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
+
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return config.direction === 'asc' ? numA - numB : numB - numA;
+    }
+
+    // Handle strings with priority: Digital -> RU -> EN
+    const strA = String(valA || '');
+    const strB = String(valB || '');
+    
+    const pA = getSortPriority(strA);
+    const pB = getSortPriority(strB);
+
+    if (pA !== pB) {
+      return (pA - pB) * (config.direction === 'asc' ? 1 : -1);
+    }
+
+    const cleanA = strA.replace(/^[^a-zA-Zа-яА-ЯёЁ0-9]+/, '');
+    const cleanB = strB.replace(/^[^a-zA-Zа-яА-ЯёЁ0-9]+/, '');
+    return cleanA.localeCompare(cleanB, 'ru') * (config.direction === 'asc' ? 1 : -1);
+  });
+};
+
 export interface SpecRow extends MaterialPosition {
   id: string;
   fileId?: string;
@@ -949,56 +1027,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const applySortAndFilter = <T extends { id: string }>(rows: T[], config: SortConfig, query: string, searchFields: string[]): T[] => {
-    let result = rows;
 
-    // Search Filter
-    if (query) {
-      const lowQuery = query.toLowerCase();
-      result = result.filter((r: any) =>
-        searchFields.some(field => String(r[field] || '').toLowerCase().includes(lowQuery))
-      );
-    }
-
-    // Sort
-    if (!config.key || !config.direction) {
-      return result; // RETURN ORIGINAL FILE ORDER
-    }
-
-    return [...result].sort((a: any, b: any) => {
-      let valA = a[config.key!];
-      let valB = b[config.key!];
-
-      // Smart Sorting: Empty values always at the bottom
-      const isEmptyA = valA === undefined || valA === null || valA === '';
-      const isEmptyB = valB === undefined || valB === null || valB === '';
-      if (isEmptyA && !isEmptyB) return 1;
-      if (!isEmptyA && isEmptyB) return -1;
-      if (isEmptyA && isEmptyB) return 0;
-
-      if (config.key === 'pos') {
-        return naturalSort(valA, valB) * (config.direction === 'asc' ? 1 : -1);
-      }
-
-      // Handle numbers
-      const numA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
-      const numB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
-
-      if (!isNaN(Number(valA)) && !isNaN(Number(valB))) {
-        return config.direction === 'asc' ? numA - numB : numB - numA;
-      }
-
-      // Handle strings
-      const strA = String(valA || '').toLowerCase();
-      const strB = String(valB || '').toLowerCase();
-
-      if (config.direction === 'asc') {
-        return strA.localeCompare(strB, 'ru');
-      } else {
-        return strB.localeCompare(strA, 'ru');
-      }
-    });
-  };
 
   const sortedSpecRows = React.useMemo(() =>
     applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier']),
@@ -1033,7 +1062,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return `${prefix}_${Math.abs(hash)}`;
   };
 
-  const getMergedRows = useCallback((items: SpecRow[]) => {
+  const getMergedRows = useCallback((items: SpecRow[], config: SortConfig) => {
     const onlyItems = items.filter(r => !r.is_header && r.row_type !== 'WORK_TYPE' && r.row_type !== 'LOCATION' && r.row_type !== 'GROUP');
     const map = new Map<string, SpecRow[]>();
 
@@ -1096,11 +1125,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 3. Сортировка по алфавиту (A-Z, А-Я)
-    rawResult.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    // 3. Сортируем с учетом глобального конфига или по умолчанию по имени
+    const sortedResult = rawResult.sort((a: any, b: any) => {
+      if (!config.key || !config.direction) {
+         return priorityCompare(a.name, b.name, 'asc');
+      }
+      
+      const valA = a[config.key!];
+      const valB = b[config.key!];
+      
+      // Numbers
+      const nA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
+      const nB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
+      if (!isNaN(nA) && !isNaN(nB) && config.key !== 'name') {
+         return (nA - nB) * (config.direction === 'asc' ? 1 : -1);
+      }
+      
+      // Strings
+      return priorityCompare(String(valA), String(valB), config.direction);
+    });
 
     // 4. Присвоение иерархических номеров (N и N.M)
-    rawResult.forEach((row, idx) => {
+    sortedResult.forEach((row, idx) => {
       const mainNum = idx + 1;
       row.pos = mainNum.toString();
 
@@ -1115,50 +1161,143 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return finalRows;
   }, []);
 
-  const getSupplierRows = useCallback((items: SpecRow[]) => {
+  const getSupplierRows = useCallback((items: SpecRow[], config: SortConfig) => {
     const onlyItems = items.filter(r => !r.is_header);
-    const map = new Map<string, { id: string; name: string; is_header: boolean; row_type: string; quantity: string; children: any[]; names: string[] }>();
+    // map: supplierKey -> { id, name, is_header, row_type, quantity, itemsMap: fingerprint -> mergedItem, names[] }
+    const supplierMap = new Map<string, { 
+      id: string; 
+      name: string; 
+      is_header: boolean; 
+      row_type: string; 
+      quantity: string; 
+      itemsMap: Map<string, any>; 
+      names: string[] 
+    }>();
 
     onlyItems.forEach(item => {
       const rawSupplier = (item.supplier || '').trim();
       const sKey = rawSupplier.toLowerCase() || 'без поставщика';
       
-      if (map.has(sKey)) {
-        const existing = map.get(sKey)!;
-        const q1 = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        const q2 = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        existing.quantity = String(q1 + q2);
-        existing.children.push(item);
-        if (rawSupplier) existing.names.push(rawSupplier);
-      } else {
-        // Use 'supplier_header_[name]' pattern for stable, predictable supplier header IDs
+      if (!supplierMap.has(sKey)) {
         const safeId = `supplier_header_${sKey}`;
-        map.set(sKey, { 
+        supplierMap.set(sKey, { 
           id: safeId, 
           name: rawSupplier || 'БЕЗ ПОСТАВЩИКА', 
           is_header: true, 
-          row_type: 'LOCATION', // Elevated to LOCATION for full-width rendering
-          quantity: item.quantity,
-          children: [item],
+          row_type: 'LOCATION',
+          quantity: '0',
+          itemsMap: new Map<string, any>(),
           names: rawSupplier ? [rawSupplier] : []
         });
       }
+
+      const group = supplierMap.get(sKey)!;
+      if (rawSupplier) group.names.push(rawSupplier);
+
+      // Local merge within supplier: fingerprint by name, brand, code, unit
+      const fingerprint = `${String(item.name || '').trim()}|${String(item.brand || '').trim()}|${String(item.code || '').trim()}|${String(item.unit || '').trim()}`.toLowerCase();
+      
+      const q = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+      const m = parseFloat(String(item.mass || item.weight || 0).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+
+      if (group.itemsMap.has(fingerprint)) {
+        const existing = group.itemsMap.get(fingerprint)!;
+        const oldQ = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const oldM = parseFloat(String(existing.mass).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        
+        existing.quantity = String(oldQ + q);
+        existing.mass = String(oldM + m);
+        
+        if (item.note && !existing.note.includes(item.note)) {
+          existing.note = existing.note ? `${existing.note}; ${item.note}` : item.note;
+        }
+        
+        // Track original rows for drill-down (pivot behavior)
+        if (!existing.children) existing.children = [];
+        existing.children.push({ ...item });
+        
+        if (item.id) {
+           if (!existing.originalRowsIds) existing.originalRowsIds = [existing.id];
+           existing.originalRowsIds.push(item.id);
+        }
+      } else {
+        // Create a stable ID for the merged item within this supplier
+        const itemSafeId = `s_item_${sKey}_${fingerprint.replace(/[^a-z0-9]/g, '_')}`;
+        group.itemsMap.set(fingerprint, { 
+          ...item, 
+          id: itemSafeId,
+          quantity: String(q),
+          mass: String(m),
+          is_header: false,
+          row_type: 'ITEM',
+          children: [{ ...item }], // Initialize children with the first occurrence
+          originalRowsIds: [item.id]
+        });
+      }
+
+      
+      // Update total quantity for supplier header
+      const totalQ = parseFloat(String(group.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+      group.quantity = String(totalQ + q);
     });
 
-    const result = Array.from(map.values()).map(group => {
-      // Pick the "nicest" name (e.g. one starting with uppercase)
+    const result = Array.from(supplierMap.values()).map(group => {
+      // Pick the "nicest" name
       if (group.names.length > 0) {
         const niceName = group.names.find(n => /^[A-ZА-ЯЁ]/.test(n)) || group.names[0];
         group.name = niceName;
       }
-      // Sequential numbering per supplier group
+      
+      // Flatten merged items and assign sequential positions
       let posCounter = 1;
-      group.children = group.children.map((child: any) => ({
-        ...child,
-        pos: String(posCounter++)
-      }));
-      return group;
+      const children = Array.from(group.itemsMap.values())
+        .sort((a, b) => {
+          if (!config.key || !config.direction) {
+            return priorityCompare(a.name, b.name, 'asc');
+          }
+          const valA = a[config.key!];
+          const valB = b[config.key!];
+          
+          // Numbers
+          const nA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
+          const nB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
+          if (!isNaN(nA) && !isNaN(nB) && config.key !== 'name') {
+            return (nA - nB) * (config.direction === 'asc' ? 1 : -1);
+          }
+          
+          return priorityCompare(String(valA), String(valB), config.direction);
+        })
+        .map(child => {
+          let qStr = String(child.quantity);
+          if (Number(qStr) % 1 !== 0) qStr = Number(qStr).toFixed(2);
+          
+          let mStr = String(child.mass);
+          if (Number(mStr) > 0) mStr = Number(mStr).toFixed(2);
+
+          return {
+            ...child,
+            quantity: qStr,
+            mass: mStr,
+            pos: String(posCounter++),
+            is_header: false,
+            row_type: 'ITEM'
+          };
+        });
+
+      let headerQ = group.quantity;
+      if (Number(headerQ) % 1 !== 0) headerQ = Number(headerQ).toFixed(2);
+
+      return {
+        id: group.id,
+        name: group.name,
+        is_header: group.is_header,
+        row_type: group.row_type,
+        quantity: headerQ,
+        children: children
+      };
     });
+
+
 
     // Sort: "БЕЗ ПОСТАВЩИКА" always last
     return result.sort((a, b) => {
@@ -1167,6 +1306,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return a.name.localeCompare(b.name, 'ru');
     });
   }, []);
+
 
   const estimateTotal = React.useMemo(() => {
     const cost = estimateRows.reduce((acc: number, row: EstimateRow) => acc + (parseFloat(String(row.costSum).replace(/\s/g, '').replace(/,/g, '.')) || 0), 0);
@@ -1285,39 +1425,66 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 
   const dataPipeline = React.useMemo(() => {
-    // 1. БАЗА + ТЕКСТОВЫЙ ПОИСК
-    let rawRows: any[] = [];
-    if (currentStage === 'spec') rawRows = sortedSpecRows;
-    else if (currentStage === 'request') rawRows = sortedRequestRows;
-    else if (currentStage === 'invoice') rawRows = sortedInvoiceRows;
-    else if (currentStage === 'estimate') rawRows = sortedEstimateRows;
+    // 1. БАЗА (Берем ОРИГИНАЛЬНЫЙ порядок для корректной работы навигатора)
+    let baseRows: any[] = [];
+    let searchFields: string[] = [];
+    if (currentStage === 'spec') { baseRows = specRows; searchFields = ['name', 'code', 'supplier']; }
+    else if (currentStage === 'request') { baseRows = requestRows; searchFields = ['name', 'code', 'supplier']; }
+    else if (currentStage === 'invoice') { baseRows = invoiceRows; searchFields = ['name', 'article', 'supplier']; }
+    else if (currentStage === 'estimate') { baseRows = estimateRows; searchFields = ['name', 'workType', 'supplier']; }
 
-    // ГЛОБАЛЬНАЯ ОЧИСТКА ПУСТЫХ СТРОК (Stage 12)
-    // Убираем строки, в которых абсолютно все колонки пустые
-    let result = rawRows.filter(r => !isActuallyEmpty(r));
+    // ГЛОБАЛЬНАЯ ОЧИСТКА ПУСТЫХ СТРОК
+    let result = baseRows.filter(r => !isActuallyEmpty(r));
 
+    // 2. ФИЛЬТР НАВИГАТОРА (Работает только на оригинальном порядке!)
+    if (activeHeaderIds.length > 0 && (viewMode === 'original' || viewMode === 'merged')) {
+      result = applyNavigatorFilter(result, activeHeaderIds);
+    }
+
+    // 3. ТЕКСТОВЫЙ ПОИСК
     if (searchQuery && searchQuery.trim()) {
       result = applyHierarchySearchFilter(result, searchQuery);
     }
 
-    // 2. ФИЛЬТР НАВИГАТОРА (Только для режима original!)
-    // Для режима supplier этот фильтр должен сработать ПОСЛЕ трансформации (Step 3), 
-    // так как заголовки поставщиков создаются динамически.
-    if (currentStage === 'spec' && viewMode === 'original' && activeHeaderIds.length > 0) {
-      result = applyNavigatorFilter(result, activeHeaderIds);
-    }
+    // 4. ТРАНСФОРМАЦИЯ (Группировка) И СОРТИРОВКА
+    const isSortingActive = !!(sortConfig.key && sortConfig.direction);
 
-    // 3. ТРАНСФОРМАЦИЯ (Группировка)
     if (currentStage === 'spec') {
       if (viewMode === 'merged') {
-        result = getMergedRows(result as SpecRow[]);
+        result = getMergedRows(result as SpecRow[], sortConfig);
       } else if (viewMode === 'supplier') {
-        result = getSupplierRows(result as SpecRow[]);
+        result = getSupplierRows(result as SpecRow[], sortConfig);
         // Фильтр навигатора для ПОСТАВЩИКОВ (срабатывает после их создания)
         if (activeHeaderIds.length > 0) {
           result = result.filter(group => activeHeaderIds.includes(group.id));
         }
+      } else if (viewMode === 'original') {
+        // В оригинальном режиме сначала сортируем
+        if (isSortingActive) {
+          result = applySortAndFilter(result, sortConfig, '', []); // Поиск уже применен выше
+          // СКРЫВАЕМ ЗАГОЛОВКИ ПРИ СОРТИРОВКЕ (Плоский список)
+          result = result.filter(r => !r.is_header);
+        }
       }
+    } else {
+      // Для остальных вкладок (не spec) просто применяем сортировку, если она активна
+      if (isSortingActive) {
+        result = applySortAndFilter(result, sortConfig, '', []);
+      }
+    }
+
+
+    // 4. ГЛОБАЛЬНАЯ ПЕРЕНУМЕРАЦИЯ (Если активна сортировка)
+    if (isSortingActive) {
+       let globalPos = 1;
+       result = result.map(r => {
+         // Для поставщиков нумеруем дочерние элементы, саму группу не трогаем (она уже пронумерована внутри)
+         // Но если это плоский список (original + sort), нумеруем всё подряд.
+         if (viewMode === 'original') {
+            return { ...r, pos: String(globalPos++) };
+         }
+         return r;
+       });
     }
 
 
@@ -1396,11 +1563,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return { displayRows, totalProcessedCount, isPaginationActive, selectableIdsForMode };
   }, [
     currentStage, viewMode,
-    sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows,
+    specRows, requestRows, invoiceRows, estimateRows,
     activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery,
+    sortConfig,
     currentPage, rowsPerPage,
     getMergedRows, getSupplierRows,
   ]);
+
 
   const { displayRows, totalProcessedCount, isPaginationActive, selectableIdsForMode } = dataPipeline;
 
@@ -1788,7 +1957,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (viewMode === 'merged') return [];
 
     if (viewMode === 'supplier') {
-      const grouped = getSupplierRows(baseRows);
+      const grouped = getSupplierRows(baseRows, sortConfig);
       return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] as any[] }));
     }
 
