@@ -1,17 +1,47 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Search,
-  Edit2,
-  ArrowUpDown,
   Building2,
   FileText,
   Clock,
-  Zap
+  MoreVertical,
+  Pencil,
+  Copy,
+  FolderOpen,
+  Trash2
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { useData } from '../context/DataContext';
-import { toast } from 'sonner';
+import { useData, Project } from '../context/DataContext';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from './ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from './ui/dialog';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -19,9 +49,7 @@ function cn(...inputs: ClassValue[]) {
 
 // ─── Project Card ─────────────────────────────────────────────────────────────
 
-type ProjectStatus = 'current' | 'active' | 'archive' | 'tender';
-
-const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string }> = {
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   current: { label: 'Открыт',   color: 'text-indigo-600 bg-indigo-50 border-indigo-100' },
   active:  { label: 'Активный', color: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
   archive: { label: 'Архив',    color: 'text-slate-500 bg-slate-50 border-slate-200' },
@@ -29,101 +57,209 @@ const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string }> = {
 };
 
 interface ProjectCardProps {
-  title: string;
-  filesCount: number;
-  lastModified: string;
-  progress?: number;
-  status: ProjectStatus;
-  isLive?: boolean;
+  project: Project;
   onClick: () => void;
 }
 
-function ProjectCard({ title, filesCount, lastModified, progress, status, isLive, onClick }: ProjectCardProps) {
-  const { label, color } = STATUS_CONFIG[status];
+function ProjectCard({ project, onClick }: ProjectCardProps) {
+  const { title, filesCount, lastModified, progress, status, id } = project;
+  const { label, color } = STATUS_CONFIG[status] || { label: status, color: 'bg-slate-100' };
+  const { 
+    duplicateProject, 
+    renameProject, 
+    moveProject, 
+    deleteProject, 
+    categories 
+  } = useData();
+
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState(title);
+
+  const isLive = id === 'live-main';
 
   return (
-    <div
-      onClick={onClick}
-      className={cn(
-        'group relative flex flex-col bg-white rounded-2xl border border-slate-200 p-5 cursor-pointer',
-        'transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 hover:border-slate-300',
-        isLive && 'ring-2 ring-indigo-200'
-      )}
-    >
-      {/* Top */}
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div className={cn(
-          'w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors',
-          isLive ? 'bg-indigo-100 group-hover:bg-indigo-200' : 'bg-slate-100 group-hover:bg-slate-200'
-        )}>
-          <Building2 className={cn('w-6 h-6', isLive ? 'text-indigo-600' : 'text-slate-500')} />
-        </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0">
-          <span className={cn('text-[11px] font-semibold px-2.5 py-0.5 rounded-full border', color)}>
-            {label}
-          </span>
-          {isLive && (
-            <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-              Текущий
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Title */}
-      <h3 className="text-sm font-bold text-slate-900 leading-snug mb-1 group-hover:text-indigo-700 transition-colors line-clamp-2">
-        {title}
-      </h3>
-
-      {/* Meta */}
-      <div className="flex items-center gap-3 mt-1 mb-4">
-        <span className="flex items-center gap-1 text-xs text-slate-400">
-          <FileText className="w-3 h-3" />
-          {filesCount} {filesCount === 1 ? 'файл' : filesCount < 5 ? 'файла' : 'файлов'}
-        </span>
-        <span className="w-1 h-1 rounded-full bg-slate-200" />
-        <span className="flex items-center gap-1 text-xs text-slate-400">
-          <Clock className="w-3 h-3" />
-          {lastModified}
-        </span>
-      </div>
-
-      {/* Progress */}
-      {progress !== undefined && (
-        <div className="mt-auto">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] text-slate-400 font-medium">Готовность</span>
-            <span className="text-[11px] font-bold text-slate-600">{progress}%</span>
+    <>
+      <div
+        className={cn(
+          'group relative flex flex-col bg-white rounded-2xl border border-slate-200 p-5 cursor-pointer',
+          'transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 hover:border-slate-300',
+          isLive && 'ring-2 ring-indigo-200'
+        )}
+        onClick={onClick}
+      >
+        {/* Top */}
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div className={cn(
+            'w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors',
+            isLive ? 'bg-indigo-100 group-hover:bg-indigo-200' : 'bg-slate-100 group-hover:bg-slate-200'
+          )}>
+            <Building2 className={cn('w-6 h-6', isLive ? 'text-indigo-600' : 'text-slate-500')} />
           </div>
-          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-            <div
-              className={cn(
-                'h-full rounded-full transition-all duration-500',
-                progress >= 80 ? 'bg-emerald-400' : progress >= 40 ? 'bg-indigo-400' : 'bg-amber-400'
-              )}
-              style={{ width: `${progress}%` }}
+          
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="flex items-center gap-2">
+              <span className={cn('text-[11px] font-semibold px-2.5 py-0.5 rounded-full border', color)}>
+                {label}
+              </span>
+              
+              {/* Context Menu Button */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                  <button className="p-1 hover:bg-slate-100 rounded-md text-slate-400 group-hover:text-slate-600 transition-colors">
+                    <MoreVertical className="size-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setIsRenameOpen(true); }} className="gap-2">
+                    <Pencil className="size-3.5" /> Переименовать
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={(e) => { e.stopPropagation(); duplicateProject(id); }} className="gap-2">
+                    <Copy className="size-3.5" /> Сделать копию
+                  </DropdownMenuItem>
+                  
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="gap-2">
+                      <FolderOpen className="size-3.5" /> Переместить в...
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-48">
+                      {categories.map(cat => (
+                        <DropdownMenuItem 
+                          key={cat.id} 
+                          onClick={(e) => { e.stopPropagation(); moveProject(id, cat.id); }}
+                          className={cn(project.categoryId === cat.id && "bg-slate-100 font-bold")}
+                        >
+                          {cat.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+
+                  <DropdownMenuItem 
+                    variant="destructive" 
+                    onClick={(e) => { e.stopPropagation(); setIsDeleteOpen(true); }}
+                    className="gap-2"
+                  >
+                    <Trash2 className="size-3.5" /> Удалить проект
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {isLive && (
+              <span className="flex items-center gap-1 text-[10px] text-indigo-500 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                Текущий
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Title */}
+        <h3 className="text-sm font-bold text-slate-900 leading-snug mb-1 group-hover:text-indigo-700 transition-colors line-clamp-2">
+          {title}
+        </h3>
+
+        {/* Meta */}
+        <div className="flex items-center gap-3 mt-1 mb-4">
+          <span className="flex items-center gap-1 text-xs text-slate-400">
+            <FileText className="w-3 h-3" />
+            {filesCount} {filesCount === 1 ? 'файл' : filesCount < 5 ? 'файла' : 'файлов'}
+          </span>
+          <span className="w-1 h-1 rounded-full bg-slate-200" />
+          <span className="flex items-center gap-1 text-xs text-slate-400">
+            <Clock className="w-3 h-3" />
+            {lastModified}
+          </span>
+        </div>
+
+        {/* Progress */}
+        {progress !== undefined && (
+          <div className="mt-auto">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] text-slate-400 font-medium">Готовность</span>
+              <span className="text-[11px] font-bold text-slate-600">{progress}%</span>
+            </div>
+            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-all duration-500',
+                  progress >= 80 ? 'bg-emerald-400' : progress >= 40 ? 'bg-indigo-400' : 'bg-amber-400'
+                )}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Rename Dialog */}
+      <Dialog open={isRenameOpen} onOpenChange={setIsRenameOpen}>
+        <DialogContent onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Переименовать проект</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="proj-name" className="text-xs font-bold uppercase text-slate-500 mb-2 block">
+              Новое название
+            </Label>
+            <Input
+              id="proj-name"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newTitle.trim()) {
+                  renameProject(id, newTitle.trim());
+                  setIsRenameOpen(false);
+                }
+              }}
             />
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsRenameOpen(false)}>Отмена</Button>
+            <Button 
+              disabled={!newTitle.trim()}
+              onClick={() => {
+                renameProject(id, newTitle.trim());
+                setIsRenameOpen(false);
+              }}
+            >
+              Сохранить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* Hover arrow */}
-      <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-        <div className="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center">
-          <Zap className="w-3.5 h-3.5 text-indigo-500" />
-        </div>
-      </div>
-    </div>
+      {/* Delete Confirmation */}
+      <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <AlertDialogContent onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Вы уверены?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Проект и все его файлы будут удалены навсегда.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setIsDeleteOpen(false)}>Отмена</AlertDialogCancel>
+            <AlertDialogAction 
+              className="bg-rose-600 hover:bg-rose-700" 
+              onClick={() => deleteProject(id)}
+            >
+              Удалить навсегда
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
-// ─── Footer strip — mirrors CenterPanel Footer ─────────────────────────────
+// ─── Footer strip ─────────────────────────────────────────────────────────
 
-function DashboardFooter() {
+function DashboardFooter({ count }: { count: number }) {
   return (
     <div className="h-16 flex items-center px-6 border-t border-slate-200 bg-white text-xs text-slate-400 shrink-0 gap-4">
-      <span>Всего проектов: 4</span>
+      <span>Всего проектов: {count}</span>
       <span className="ml-auto">Список проектов</span>
     </div>
   );
@@ -131,24 +267,28 @@ function DashboardFooter() {
 
 // ─── Main Dashboard Center Panel ────────────────────────────────────────────
 
-const STUB_PROJECTS = [
-  { id: 'stub-1', title: 'ЖК Скандинавия — инженерные системы', filesCount: 12, lastModified: '27 мар', progress: 65,  status: 'active'  as ProjectStatus },
-  { id: 'stub-2', title: 'Тендер: Вентиляция ТЦ «Европолис»',   filesCount: 5,  lastModified: '14 мар', progress: 30,  status: 'tender'  as ProjectStatus },
-  { id: 'stub-3', title: 'БЦ Сити — слаботочка и ОПС',          filesCount: 8,  lastModified: '2 янв',  progress: 100, status: 'archive' as ProjectStatus },
-];
-
 export function DashboardCenterPanel() {
-  const { projectName, setProjectName, uploadStatuses, setViewContext } = useData();
-  const [isEditingName, setIsEditingName] = React.useState(false);
+  const { 
+    projects, 
+    activeCategory, 
+    setViewContext 
+  } = useData();
+  
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isSortOpen, setIsSortOpen] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const fileCount = Object.keys(uploadStatuses || {}).length;
-  const today = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 
-  React.useEffect(() => {
-    if (isEditingName && inputRef.current) inputRef.current.focus();
-  }, [isEditingName]);
+  const filteredProjects = projects.filter(p => {
+    // Search
+    if (searchQuery && !p.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    
+    // Category mapping
+    if (activeCategory === 'all') return true;
+    if (activeCategory === 'active') return p.status === 'active' || p.status === 'current';
+    if (activeCategory === 'archive') return p.status === 'archive';
+    if (activeCategory === 'tender') return p.status === 'tender';
+    
+    return p.categoryId === activeCategory;
+  });
 
   const openProject = () => setViewContext('workspace');
 
@@ -156,48 +296,27 @@ export function DashboardCenterPanel() {
     <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
       <div className="flex flex-col h-full flex-1 min-h-0">
 
-        {/* ── Attic — strict clone of CenterPanel header ── */}
+        {/* ── Attic ── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shadow-sm h-[72px] shrink-0">
-
-          {/* Left: section title (mirrors project name slot) */}
           <div className="flex-1 min-w-0 flex items-center gap-2">
-            {isEditingName ? (
-              <input
-                ref={inputRef}
-                type="text"
-                value={projectName}
-                onChange={e => setProjectName(e.target.value)}
-                onBlur={() => setIsEditingName(false)}
-                onKeyDown={e => e.key === 'Enter' && setIsEditingName(false)}
-                className="text-sm font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
-              />
-            ) : (
-              <div
-                className="group flex items-center gap-1.5 cursor-pointer max-w-sm hover:bg-slate-50 rounded-md px-2 py-1 -ml-2 transition-colors"
-                onClick={() => setIsEditingName(true)}
-                title="Редактировать название"
-              >
-                <h1 className="text-sm font-bold text-slate-800 truncate">Мои проекты</h1>
-                <Edit2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            )}
+            <h1 className="text-sm font-bold text-slate-800 truncate">Мои проекты</h1>
           </div>
 
-          {/* Center: search — same as CenterPanel */}
+          {/* Center: search */}
           <div className="flex-1 flex justify-center px-4">
             <div className="relative w-full max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
                 placeholder="Найти проект..."
                 className="w-full bg-slate-100 hover:bg-slate-200 focus:bg-white border border-transparent focus:border-indigo-300 rounded-full pl-10 pr-4 py-2 text-sm text-slate-700 outline-none transition-all shadow-sm focus:shadow-md"
               />
             </div>
           </div>
 
-          {/* Right: Sort button — same position/size as "Files" button in CenterPanel */}
+          {/* Right: Sort button */}
           <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
             <button
               onClick={() => setIsSortOpen(!isSortOpen)}
@@ -213,39 +332,55 @@ export function DashboardCenterPanel() {
           </div>
         </div>
 
-        {/* ── Content — cards grid (mirrors table content area) ── */}
+        {/* ── Content ── */}
         <div className="flex-1 overflow-auto relative bg-slate-50">
           <div className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Live card */}
-              <ProjectCard
-                title={projectName}
-                filesCount={fileCount}
-                lastModified={today}
-                progress={fileCount > 0 ? 50 : 10}
-                status="current"
-                isLive
-                onClick={openProject}
-              />
-              {/* Stubs */}
-              {STUB_PROJECTS.map(p => (
-                <ProjectCard
-                  key={p.id}
-                  title={p.title}
-                  filesCount={p.filesCount}
-                  lastModified={p.lastModified}
-                  progress={p.progress}
-                  status={p.status}
-                  onClick={openProject}
-                />
-              ))}
+            <div className={cn(
+              "grid gap-4",
+              filteredProjects.length > 0 ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3" : "flex flex-col items-center justify-center h-[50vh]"
+            )}>
+              {filteredProjects.length > 0 ? (
+                filteredProjects.map(p => (
+                  <ProjectCard
+                    key={p.id}
+                    project={p}
+                    onClick={openProject}
+                  />
+                ))
+              ) : (
+                <div className="text-center">
+                   <div className="text-slate-400 mb-2">Нет проектов в этой категории</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── Footer — mirrors CenterPanel Footer ── */}
-      <DashboardFooter />
+      <DashboardFooter count={projects.length} />
     </div>
   );
+}
+
+// Re-using local icon because it was used in original
+function ArrowUpDown(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m21 16-4 4-4-4" />
+      <path d="M17 20V4" />
+      <path d="m3 8 4-4 4 4" />
+      <path d="M7 4v16" />
+    </svg>
+  )
 }

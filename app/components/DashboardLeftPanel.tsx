@@ -6,14 +6,12 @@ import {
   Archive,
   Award,
   Cloud,
-  DollarSign,
-  UserCheck,
   Briefcase,
   FolderOpen,
-  CheckCircle2,
-  Circle,
-  XCircle,
-  AlertCircle
+  FolderPlus,
+  MoreHorizontal,
+  Folder,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -21,6 +19,21 @@ import { twMerge } from 'tailwind-merge';
 import { useData } from '../context/DataContext';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from './ui/dialog';
+import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -31,24 +44,30 @@ interface DashboardLeftPanelProps {
   onToggle: () => void;
 }
 
-const CATEGORIES = [
-  { id: 'all',     label: 'Все проекты',  icon: LayoutGrid, count: 4 },
-  { id: 'active',  label: 'Активные',     icon: Zap,        count: 2 },
-  { id: 'archive', label: 'В архиве',     icon: Archive,    count: 1 },
-  { id: 'tender',  label: 'Тендеры',      icon: Award,      count: 1 },
-];
+const ICON_MAP: Record<string, any> = {
+  LayoutGrid,
+  Zap,
+  Archive,
+  Award,
+  Folder
+};
 
 export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelProps) {
-  const [activeCategory, setActiveCategory] = useState('all');
   const { 
-    estimateTotal, 
     yandexConfig, 
     saveYandexConfig,
     viewContext, 
-    setViewContext 
+    setViewContext,
+    categories,
+    addCategory,
+    deleteCategory,
+    activeCategory,
+    setActiveCategory
   } = useData();
   const [showSettings, setShowSettings] = useState(false);
   const [isServerAvailable, setIsServerAvailable] = useState(true);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
 
   const isApiConfigured = !!yandexConfig.apiKey && !!yandexConfig.catalogId;
 
@@ -135,37 +154,117 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
         <div className={cn('px-4 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider', !expanded && 'sr-only')}>
           Категории
         </div>
-        {CATEGORIES.map(({ id, label, icon: Icon, count }) => {
-          const isActive = activeCategory === id;
+        {categories.map((cat) => {
+          const isActive = activeCategory === cat.id;
+          const Icon = ICON_MAP[cat.icon] || Folder;
           return (
-            <button
-              key={id}
-              onClick={() => setActiveCategory(id)}
-              className={cn(
-                'w-full flex items-center px-4 py-3 transition-colors group',
-                isActive ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-700',
-                !expanded && 'justify-center px-0 py-4'
-              )}
-              title={!expanded ? label : undefined}
-            >
-              <div className="shrink-0 flex items-center justify-center relative">
-                <Icon className={cn('size-5', isActive ? 'text-indigo-600' : 'text-slate-400')} />
-                {isActive && (
-                  <span className="absolute -left-4 w-1 h-6 bg-indigo-600 rounded-r-full" />
+            <div key={cat.id} className="relative group/item">
+              <button
+                onClick={() => setActiveCategory(cat.id)}
+                className={cn(
+                  'w-full flex items-center px-4 py-3 transition-colors group',
+                  isActive ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-50 text-slate-700',
+                  !expanded && 'justify-center px-0 py-4'
                 )}
-              </div>
-              {expanded && (
-                <>
-                  <span className="ml-3 text-sm font-medium whitespace-nowrap flex-1 text-left">{label}</span>
-                  <span className={cn(
-                    'text-xs font-semibold rounded-full px-2 py-0.5 min-w-[22px] text-center',
-                    isActive ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'
-                  )}>{count}</span>
-                </>
+                title={!expanded ? cat.label : undefined}
+              >
+                <div className="shrink-0 flex items-center justify-center relative">
+                  <Icon className={cn('size-5', isActive ? 'text-indigo-600' : 'text-slate-400')} />
+                  {isActive && (
+                    <span className="absolute -left-4 w-1 h-6 bg-indigo-600 rounded-r-full" />
+                  )}
+                </div>
+                {expanded && (
+                  <>
+                    <span className="ml-3 text-sm font-medium whitespace-nowrap flex-1 text-left">{cat.label}</span>
+                    <span className={cn(
+                      'text-xs font-semibold rounded-full px-2 py-0.5 min-w-[22px] text-center transition-opacity',
+                      isActive ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400',
+                      cat.type === 'custom' && 'group-hover/item:opacity-0'
+                    )}>{cat.count}</span>
+                  </>
+                )}
+              </button>
+
+              {/* Management Menu (Three dots) for custom folders */}
+              {expanded && cat.type === 'custom' && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className="p-1 hover:bg-slate-200 rounded text-slate-400">
+                        <MoreHorizontal className="size-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem 
+                        variant="destructive"
+                        onClick={() => deleteCategory(cat.id)}
+                        className="gap-2"
+                      >
+                        <Trash2 className="size-3.5" />
+                        Удалить
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               )}
-            </button>
+            </div>
           );
         })}
+
+        {/* Add Folder Button */}
+        <div className="mt-2 px-4">
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <button
+                className={cn(
+                  'flex items-center gap-2 p-3 w-full rounded-xl border border-dashed border-slate-200 text-slate-400 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 transition-all group',
+                  !expanded && 'justify-center p-4 border-none bg-transparent hover:bg-indigo-50'
+                )}
+                title="Добавить папку"
+              >
+                <FolderPlus className={cn("size-5", expanded && "size-4")} />
+                {expanded && <span className="text-xs font-bold uppercase tracking-tighter">Добавить папку</span>}
+              </button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Создать новую папку</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <Label htmlFor="folder-name" className="text-xs font-bold uppercase text-slate-500 mb-2 block">
+                  Название папки
+                </Label>
+                <Input
+                  id="folder-name"
+                  placeholder="Например: Спецпроекты..."
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newCatName.trim()) {
+                      addCategory(newCatName.trim());
+                      setNewCatName('');
+                      setIsDialogOpen(false);
+                    }
+                  }}
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setIsDialogOpen(false)}>Отмена</Button>
+                <Button 
+                  disabled={!newCatName.trim()}
+                  onClick={() => {
+                    addCategory(newCatName.trim());
+                    setNewCatName('');
+                    setIsDialogOpen(false);
+                  }}
+                >
+                  Создать
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
 

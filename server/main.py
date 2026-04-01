@@ -475,3 +475,15 @@ async def storage_get(name: str):
     p = os.path.join(STORAGE_DIR, dk or secure_filename(name))
     if os.path.exists(p): return FileResponse(p)
     raise HTTPException(status_code=404)
+
+# --- Project Management Stubs ---
+
+@app.post("/api/projects/duplicate")
+async def duplicate_project(data: dict):
+    # In a real app, this would copy folders in STORAGE_DIR
+    return {"status": "success", "message": "Project folder duplicated (stub)"}
+
+@app.delete("/api/projects/delete/{project_id}")
+async def delete_project(project_id: str):
+    # In a real app, this would delete folders in STORAGE_DIR
+    return {"status": "success", "message": "Project folder deleted (stub)"}

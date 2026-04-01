@@ -13,6 +13,26 @@ export interface SortConfig {
   direction: 'asc' | 'desc' | null;
 }
 
+export interface Category {
+  id: string;
+  label: string;
+  icon: string;
+  count: number;
+  type?: 'system' | 'custom';
+}
+
+export type ProjectStatus = 'current' | 'active' | 'archive' | 'tender';
+
+export interface Project {
+  id: string;
+  title: string;
+  filesCount: number;
+  lastModified: string;
+  progress: number;
+  status: ProjectStatus;
+  categoryId: string;
+}
+
 export function genId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -332,6 +352,23 @@ interface DataContextType {
   // Navigation context
   viewContext: 'dashboard' | 'workspace';
   setViewContext: (ctx: 'dashboard' | 'workspace') => void;
+
+  // Category management
+  categories: Category[];
+  addCategory: (label: string) => void;
+  deleteCategory: (id: string) => void;
+
+  // Project management
+  projects: Project[];
+  addProject: (title: string) => void;
+  duplicateProject: (id: string) => void;
+  renameProject: (id: string, newTitle: string) => void;
+  moveProject: (id: string, categoryId: string) => void;
+  deleteProject: (id: string) => void;
+
+  // Active category for filtering
+  activeCategory: string;
+  setActiveCategory: (id: string) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -345,6 +382,163 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return 'Проект Торговый Центр "Галактика"';
   });
   const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('workspace');
+
+  const [categories, setCategories] = useState<Category[]>(() => {
+    try {
+      const saved = localStorage.getItem('docok_categories');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      { id: 'all',     label: 'Все проекты',  icon: 'LayoutGrid', count: 4, type: 'system' },
+      { id: 'active',  label: 'Активные',     icon: 'Zap',        count: 2, type: 'system' },
+      { id: 'archive', label: 'В архиве',     icon: 'Archive',    count: 1, type: 'system' },
+      { id: 'tender',  label: 'Тендеры',      icon: 'Award',      count: 1, type: 'system' },
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('docok_categories', JSON.stringify(categories));
+  }, [categories]);
+
+  const addCategory = useCallback((label: string) => {
+    setCategories(prev => [
+      ...prev,
+      { id: genId(), label, icon: 'Folder', count: 0, type: 'custom' }
+    ]);
+    toast.success(`Папка "${label}" создана`);
+  }, []);
+
+  const deleteCategory = useCallback((id: string) => {
+    setCategories(prev => {
+      const cat = prev.find(c => c.id === id);
+      if (cat?.type === 'system') {
+        toast.error('Системные папки нельзя удалять');
+        return prev;
+      }
+      toast.success(`Папка "${cat?.label}" удалена`);
+      return prev.filter(c => c.id !== id);
+    });
+  }, []);
+
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const saved = localStorage.getItem('docok_projects');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    // Default stubs
+    return [
+      { id: 'live-main', title: projectName, filesCount: 1, lastModified: 'Сегодня', progress: 50, status: 'current', categoryId: 'active' },
+      { id: 'stub-1', title: 'ЖК Скандинавия — инженерные системы', filesCount: 12, lastModified: '27 мар', progress: 65,  status: 'active',  categoryId: 'active' },
+      { id: 'stub-2', title: 'Тендер: Вентиляция ТЦ «Европолис»',   filesCount: 5,  lastModified: '14 мар', progress: 30,  status: 'tender',  categoryId: 'tender' },
+      { id: 'stub-3', title: 'БЦ Сити — слаботочка и ОПС',          filesCount: 8,  lastModified: '2 янв',  progress: 100, status: 'archive', categoryId: 'archive' },
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('docok_projects', JSON.stringify(projects));
+  }, [projects]);
+
+  // Handle case where global projectName changes (e.g. from renaming live project)
+  useEffect(() => {
+    setProjects(prev => prev.map(p => p.id === 'live-main' ? { ...p, title: projectName } : p));
+  }, [projectName]);
+
+  const addProject = useCallback((title: string) => {
+    const newProject: Project = {
+      id: genId(),
+      title,
+      filesCount: 0,
+      lastModified: 'Сегодня',
+      progress: 0,
+      status: 'active',
+      categoryId: 'all'
+    };
+    setProjects(prev => [...prev, newProject]);
+    toast.success(`Проект "${title}" создан`);
+  }, []);
+
+  const duplicateProject = useCallback(async (id: string) => {
+    const project = projects.find(p => p.id === id);
+    if (!project) return;
+    
+    // Backend stub call
+    try {
+      await fetch('http://localhost:8000/api/projects/duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, title: project.title })
+      });
+    } catch (e) {
+      console.warn('Backend duplicate failed (stub only)', e);
+    }
+
+    const newProject: Project = {
+      ...project,
+      id: genId(),
+      title: `${project.title} — Копия`,
+      lastModified: 'Сегодня'
+    };
+    setProjects(prev => [...prev, newProject]);
+    toast.success(`Создана копия проекта "${project.title}"`);
+  }, [projects]);
+
+  const renameProject = useCallback((id: string, newTitle: string) => {
+    setProjects(prev => prev.map(p => p.id === id ? { ...p, title: newTitle } : p));
+    if (id === 'live-main') setProjectName(newTitle);
+    toast.success(`Проект переименован в "${newTitle}"`);
+  }, [setProjectName]);
+
+  const moveProject = useCallback((id: string, categoryId: string) => {
+    const category = categories.find(c => c.id === categoryId);
+    setProjects(prev => prev.map(p => {
+      if (p.id !== id) return p;
+      // If moving to a system folder (active/archive/tender), update the status too
+      const isSystem = categoryId === 'active' || categoryId === 'archive' || categoryId === 'tender';
+      return { 
+        ...p, 
+        categoryId, 
+        status: isSystem ? (categoryId as ProjectStatus) : p.status 
+      };
+    }));
+    toast.success(`Проект перемещен в "${category?.label || categoryId}"`);
+  }, [categories]);
+
+  const deleteProject = useCallback(async (id: string) => {
+    const project = projects.find(p => p.id === id);
+    if (!project) return;
+
+    // Backend stub call
+    try {
+      await fetch(`http://localhost:8000/api/projects/delete/${id}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Backend delete failed (stub only)', e);
+    }
+
+    setProjects(prev => prev.filter(p => p.id !== id));
+    toast.success(`Проект "${project.title}" удален`);
+  }, [projects]);
+
+  // Dynamic counts for categories
+  const categoriesWithCounts = React.useMemo(() => {
+    return categories.map(cat => {
+      let count = 0;
+      if (cat.id === 'all') {
+        count = projects.length;
+      } else if (cat.id === 'active') {
+        count = projects.filter(p => p.status === 'active' || p.status === 'current').length;
+      } else if (cat.id === 'archive') {
+        count = projects.filter(p => p.status === 'archive').length;
+      } else if (cat.id === 'tender') {
+        count = projects.filter(p => p.status === 'tender').length;
+      } else {
+        // Custom folders: projects explicitly assigned to this category
+        count = projects.filter(p => p.categoryId === cat.id).length;
+      }
+      return { ...cat, count };
+    });
+  }, [categories, projects]);
+
+  const [activeCategory, setActiveCategory] = useState('all');
 
   useEffect(() => {
     localStorage.setItem('docok_projectName', JSON.stringify(projectName));
@@ -2076,6 +2270,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
         canRedo: history.future.length > 0,
         viewContext,
         setViewContext,
+        categories: categoriesWithCounts,
+        addCategory,
+        deleteCategory,
+        projects,
+        addProject,
+        duplicateProject,
+        renameProject,
+        moveProject,
+        deleteProject,
+        activeCategory,
+        setActiveCategory
       }}
     >
       {children}
