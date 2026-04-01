@@ -1,7 +1,17 @@
 import React, { Fragment } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { ChevronDown, ChevronRight, AlertTriangle, Edit2 } from 'lucide-react';
+import { 
+  ChevronDown, 
+  ChevronRight, 
+  AlertTriangle, 
+  Edit2, 
+  Database, 
+  MapPin, 
+  Folders, 
+  UserCheck, 
+  Layers 
+} from 'lucide-react';
 import { EditableCell } from './EditableCell';
 
 function cn(...inputs: ClassValue[]) {
@@ -65,9 +75,13 @@ export const TableRow = React.memo(({
 
 
   const hasChildren = row.children && row.children.length > 0;
-  const isWorkType = !isSummaryRow && (row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && row.name === String(row.name).toUpperCase() && String(row.name).length > 3));
-  const isLocation = isSupplierRow || (!isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§'));
+  // ШАГ 1: Более четкая категоризация заголовков и групп
+  const isWorkType = row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && !isSummaryRow && row.name === String(row.name).toUpperCase() && String(row.name).length > 3);
+  const isLocation = !isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§');
   const isGroup = !isSummaryRow && (row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType));
+  
+  // Ribbon Row — это любая строка, которая рендерится «на всю ширину» (заголовок или группа)
+  const isRibbonRow = isWorkType || isLocation || isGroup || isSupplierRow || isActuallyMerged;
   const isHeader = isWorkType || isLocation || isGroup;
 
   const baseRowClasses = cn(
@@ -78,17 +92,22 @@ export const TableRow = React.memo(({
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
+    // 1. Главный заголовок (Вид работ) - Чистый Индиго 600 с ярким акцентом
+    stage === 'spec' && isWorkType && "bg-indigo-600 text-white hover:bg-indigo-500 border-l-4 border-l-indigo-400 border-b border-indigo-700 shadow-md transition-all",
+    // 2. Место (Локация) - Глубокий Индиго 800 с мягким акцентом
+    stage === 'spec' && isLocation && "bg-indigo-800 text-white hover:bg-indigo-900 font-bold border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-sm transition-all",
+    // 3. Группы - Светлое Индиго с бортом
+    stage === 'spec' && isGroup && "bg-indigo-50/50 text-indigo-900 border-l-4 border-l-indigo-500 hover:bg-indigo-100/60 transition-all",
+    // 4. Поставщики - Голубой Индиго с бортом
+    stage === 'spec' && isSupplierRow && "bg-blue-50/40 text-blue-900 border-l-4 border-l-blue-400 hover:bg-blue-100/50 transition-all",
+    // 5. Сводные - Изумрудный Индиго с бортом
     stage === 'spec' && isActuallyMerged && cn(
-      "bg-emerald-50/20 hover:bg-emerald-100/30 border-l-4 border-l-emerald-500",
-      (parentIsExpanded || localExpanded) && "bg-emerald-50/60 shadow-sm"
+      "bg-emerald-50/30 text-emerald-950 border-l-4 border-l-emerald-500 transition-all",
+      (parentIsExpanded || localExpanded) ? "bg-emerald-100/50" : "hover:bg-emerald-100/40"
     ),
 
-    stage === 'spec' && isSupplierRow && "bg-blue-50/40 hover:bg-blue-100/40 border-l-4 border-l-blue-400",
-    stage === 'spec' && !isSummaryRow && hasChildren && "bg-slate-50/30",
-    stage === 'spec' && isWorkType && "bg-slate-950 text-white hover:bg-slate-900 border-b border-white/10",
-    stage === 'spec' && isLocation && "bg-indigo-900/80 text-white hover:bg-indigo-800/80 font-bold border-b border-white/10",
-    stage === 'spec' && isGroup && "bg-blue-50/50 text-slate-900 border-l-4 border-l-indigo-500 hover:bg-blue-100/40",
-    stage === 'spec' && !isHeader && !isSummaryRow && "hover:bg-slate-50/80 cursor-pointer"
+    stage === 'spec' && !isSummaryRow && hasChildren && !isHeader && "bg-slate-50/30",
+    stage === 'spec' && !isRibbonRow && "hover:bg-slate-50/80 cursor-pointer"
   );
 
   return (
@@ -100,16 +119,18 @@ export const TableRow = React.memo(({
             return;
           }
           if (isSummaryRow) {
-            setLocalExpanded(!localExpanded);
+            if (toggleCollapse) toggleCollapse(row.id);
+            else setLocalExpanded(!localExpanded);
             return;
           }
           toggleRowSelection(row.id, false);
         }}
         className={baseRowClasses}
       >
-        {stage === 'spec' && (isHeader) ? (
-          // Special Header Rendering (Full Width) for SpecTable
-          <div className="flex w-full items-center select-none">
+        {stage === 'spec' && isRibbonRow ? (
+          // Ribbon Row Rendering (Full Width)
+          <div className="flex w-full items-center select-none group/ribbon relative">
+            {/* Позиция и Иконка */}
             <div 
               className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent group/poscell"
               onClick={(e) => {
@@ -127,12 +148,23 @@ export const TableRow = React.memo(({
                   />
                 ) : (
                   <>
-                    <span className={cn(
-                      "font-black tabular-nums whitespace-nowrap group-hover/poscell:hidden",
-                      isLocation ? "text-blue-300 text-xl" : "text-indigo-700 text-sm"
-                    )}>
-                      {!isWorkType ? row.pos : ''}
-                    </span>
+                    <div className="group-hover/poscell:hidden flex items-center justify-center">
+                      {(isWorkType && !row.pos) && <Database className="w-4 h-4 opacity-70" />}
+                      {(isLocation && row.pos !== '§') && <MapPin className="w-4 h-4 opacity-70" />}
+                      {isGroup && <Folders className="w-4 h-4 text-indigo-500/70" />}
+                      {isSupplierRow && <UserCheck className="w-4 h-4 text-blue-500/70" />}
+                      {isActuallyMerged && <Layers className="w-4 h-4 text-emerald-600/70" />}
+                      
+                      {/* Если есть номер — показываем номер */}
+                      {((isWorkType || isLocation) && row.pos) && (
+                        <span className={cn(
+                          "font-black tabular-nums whitespace-nowrap",
+                          isLocation ? "text-emerald-100 text-lg" : "text-slate-400 text-sm"
+                        )}>
+                          {row.pos}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="checkbox"
                       className="hidden group-hover/poscell:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
@@ -146,23 +178,31 @@ export const TableRow = React.memo(({
             {/* Content Area */}
             <div className={cn(
               "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
-              isWorkType ? "text-sm uppercase" : 
-              isLocation ? "text-base uppercase underline underline-offset-8 decoration-white/20 font-bold" : "text-sm font-bold"
+              isWorkType ? "text-sm uppercase font-bold text-white" : 
+              isLocation ? "text-base uppercase tracking-wide font-black text-white" : 
+              isActuallyMerged ? "text-emerald-950 font-bold" :
+              isSupplierRow ? "text-blue-900 font-bold" :
+              "text-sm font-bold text-indigo-900"
             )}>
               <span className="truncate flex-grow mr-4">{row.name}</span>
               
-              {toggleCollapse && (
+              {(toggleCollapse || isSummaryRow) && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleCollapse(row.id);
+                    if (toggleCollapse) toggleCollapse(row.id);
+                    else if (isSummaryRow) setLocalExpanded(!localExpanded);
+                    else toggleCollapse?.(row.id);
                   }}
                   className={cn(
                     "p-1 rounded transition-colors flex-shrink-0 ml-auto flex items-center justify-center",
-                    isWorkType || isLocation ? "text-white/70 hover:bg-white/20 hover:text-white" : "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
+                    (isWorkType || isLocation) ? "text-white/70 hover:bg-white/20 hover:text-white" : 
+                    isActuallyMerged ? "text-emerald-500 hover:bg-emerald-200/50" :
+                    isSupplierRow ? "text-blue-500 hover:bg-blue-200/50" :
+                    "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
                   )}
                 >
-                  {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  {((isSummaryRow && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                 </button>
               )}
             </div>
@@ -350,7 +390,7 @@ export const TableRow = React.memo(({
       </div>
 
       {/* Children Rows Container with Inner Shadows */}
-      {stage === 'spec' && (parentIsExpanded || localExpanded) && hasChildren && (
+      {stage === 'spec' && ((isSummaryRow && !toggleCollapse) ? localExpanded : !isCollapsed) && hasChildren && (
         <div className="flex flex-col shadow-[inset_0_2px_4px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.05)] bg-slate-50/60 border-y border-slate-200/60">
           {row.children.map((child: any, childIdx: number) => (
             <TableRow

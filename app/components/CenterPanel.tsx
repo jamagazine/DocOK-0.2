@@ -144,6 +144,7 @@ function Footer() {
     rowsPerPage,
     setRowsPerPage,
     totalProcessedCount,
+    selectedItemsCount,
     isPaginationActive,
   } = useData();
 
@@ -162,10 +163,10 @@ function Footer() {
         <div className="flex items-center gap-1 text-slate-400 whitespace-nowrap">
           <span>Всего строк:</span>
           <span className="font-semibold text-slate-700">{totalProcessedCount}</span>
-          {selectedIds.length > 0 && (
+          {selectedItemsCount > 0 && (
             <>
               <span className="mx-0.5 text-slate-300">|</span>
-              <span className="font-semibold text-indigo-600">{selectedIds.length} выбрано</span>
+              <span className="font-semibold text-indigo-600">{selectedItemsCount} выбрано</span>
             </>
           )}
         </div>
@@ -377,7 +378,7 @@ function SpecTable() {
   // SpecTable — «тупой» компонент: только рисует.
   // displayRows из pipeline уже содержит всё: фильтры, поиск, isOnlySelectedView, пагинацию.
   // Единственная UI-логика, которая остаётся здесь — аккордеон (collapsedIds).
-  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, displayRows, viewMode } = useData();
+  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, displayRows, viewMode, isOnlySelectedView } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
@@ -412,9 +413,7 @@ function SpecTable() {
     const res: any[] = [];
     let hideUntilLevel = -1;
     const isSupplierMode = viewMode === 'supplier';
-    const effectiveRows = isSupplierMode
-      ? displayRows.flatMap((r: any) => [r, ...(r.children || [])])
-      : displayRows;
+    const effectiveRows = displayRows;
 
     for (const row of effectiveRows) {
       const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
@@ -438,7 +437,8 @@ function SpecTable() {
     }
 
     return res;
-  }, [displayRows, collapsedIds, viewMode]);
+  }, [displayRows, collapsedIds, viewMode, isOnlySelectedView]);
+
 
 
 

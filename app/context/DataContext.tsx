@@ -929,13 +929,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const applySortAndFilter = <T extends { id: string }>(rows: T[], config: SortConfig, query: string, searchFields: string[], selectedIds: string[], isOnlySelected: boolean): T[] => {
+  const applySortAndFilter = <T extends { id: string }>(rows: T[], config: SortConfig, query: string, searchFields: string[]): T[] => {
     let result = rows;
-
-    // Filter by "Only Selected"
-    if (isOnlySelected) {
-      result = result.filter(r => selectedIds.includes(r.id));
-    }
 
     // Search Filter
     if (query) {
@@ -986,21 +981,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const sortedSpecRows = React.useMemo(() =>
-    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], frozenSelectedIds, isOnlySelectedView),
-    [specRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
+    applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier']),
+    [specRows, sortConfig, searchQuery]
   );
   const sortedRequestRows = React.useMemo(() =>
-    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier'], frozenSelectedIds, isOnlySelectedView),
-    [requestRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
+    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier']),
+    [requestRows, sortConfig, searchQuery]
   );
   const sortedInvoiceRows = React.useMemo(() =>
-    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier'], frozenSelectedIds, isOnlySelectedView),
-    [invoiceRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
+    applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier']),
+    [invoiceRows, sortConfig, searchQuery]
   );
   const sortedEstimateRows = React.useMemo(() =>
-    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier'], frozenSelectedIds, isOnlySelectedView),
-    [estimateRows, sortConfig, searchQuery, frozenSelectedIds, isOnlySelectedView]
+    applySortAndFilter(estimateRows, sortConfig, searchQuery, ['name', 'workType', 'supplier']),
+    [estimateRows, sortConfig, searchQuery]
   );
+
 
   const groupRows = useCallback((stage: Stage, field: string) => {
     // Базовая заглушка: просто логируем, так как сложная группировка требует UI-состояния
@@ -1239,6 +1235,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   // ─── Мемоизированный конвейер данных (Stage 10) ──────────────────────────
+  const isActuallyEmpty = (r: any): boolean => {
+    // Если это заголовок, но у него пустое имя — это «фантомный» заголовок
+    if (r.is_header && (!r.name || !r.name.trim())) return true;
+
+    const fieldsToCheck = [
+      'pos', 'name', 'brand', 'model', 'type', 'code', 'article', 
+      'supplier', 'unit', 'quantity', 'mass', 'weight', 'note', 'comment'
+    ];
+    
+    // Значения, которые не считаются «контентом», если в строке нет ничего другого
+    const weakValues = new Set(['1', 'шт', '0', '0.00', '0,00', 'шт.', 'ед.', '0.0', '0,0']);
+
+    return !fieldsToCheck.some(f => {
+      const val = r[f];
+      if (val === undefined || val === null) return false;
+      const str = String(val).trim();
+      if (str.length === 0) return false;
+      // Если значение «слабое» — оно само по себе не делает строку непустой
+      if (weakValues.has(str.toLowerCase())) return false;
+      return true;
+    });
+  };
+
+
   const dataPipeline = React.useMemo(() => {
     // 1. БАЗА + ТЕКСТОВЫЙ ПОИСК
     let rawRows: any[] = [];
@@ -1247,34 +1267,97 @@ export function DataProvider({ children }: { children: ReactNode }) {
     else if (currentStage === 'invoice') rawRows = sortedInvoiceRows;
     else if (currentStage === 'estimate') rawRows = sortedEstimateRows;
 
-    let result = rawRows;
+    // ГЛОБАЛЬНАЯ ОЧИСТКА ПУСТЫХ СТРОК (Stage 12)
+    // Убираем строки, в которых абсолютно все колонки пустые
+    let result = rawRows.filter(r => !isActuallyEmpty(r));
+
     if (searchQuery && searchQuery.trim()) {
       result = applyHierarchySearchFilter(result, searchQuery);
     }
 
-    // 2. ФИЛЬТР НАВИГАТОРА (Только для режимов original и supplier!)
-    if (currentStage === 'spec' && viewMode !== 'merged' && activeHeaderIds.length > 0) {
+    // 2. ФИЛЬТР НАВИГАТОРА (Только для режима original!)
+    // Для режима supplier этот фильтр должен сработать ПОСЛЕ трансформации (Step 3), 
+    // так как заголовки поставщиков создаются динамически.
+    if (currentStage === 'spec' && viewMode === 'original' && activeHeaderIds.length > 0) {
       result = applyNavigatorFilter(result, activeHeaderIds);
     }
 
     // 3. ТРАНСФОРМАЦИЯ (Группировка)
-    // Делаем это ДО фильтра по чекбоксам, чтобы работать с финальными ID!
     if (currentStage === 'spec') {
       if (viewMode === 'merged') {
         result = getMergedRows(result as SpecRow[]);
       } else if (viewMode === 'supplier') {
         result = getSupplierRows(result as SpecRow[]);
+        // Фильтр навигатора для ПОСТАВЩИКОВ (срабатывает после их создания)
+        if (activeHeaderIds.length > 0) {
+          result = result.filter(group => activeHeaderIds.includes(group.id));
+        }
       }
     }
+
+
+    // ВАЖНО: Захватываем ID всех строк текущего режима ДО применения фильтра «Только выделенные»
+    // В режиме поставщиков собираем и ID заголовков, и ID всех товаров внутри них.
+    const selectableIdsForMode = viewMode === 'supplier'
+      ? result.flatMap(group => [group.id, ...(group.children?.map((c: any) => c.id) || [])])
+      : result.map(r => r.id);
 
     // 4. ФИЛЬТР ЧЕКБОКСОВ
     // Теперь selectedIds гарантированно содержит ID из текущего режима (original/merged/supplier)
     if (isOnlySelectedView && selectedIds.length > 0) {
-      result = result.filter(r => selectedIds.includes(r.id) || r.is_header || r.row_type !== 'ITEM');
+      if (viewMode === 'supplier') {
+        // Иерархический фильтр для режима поставщиков
+        result = result.map(group => {
+          const isGroupSelected = selectedIds.includes(group.id);
+          const selectedChildren = group.children?.filter((c: any) => selectedIds.includes(c.id)) || [];
+          
+          if (isGroupSelected || selectedChildren.length > 0) {
+            return {
+              ...group,
+              // Если выбран сам поставщик — оставляем всех детей. Если нет — только выбранных.
+              children: isGroupSelected ? group.children : selectedChildren
+            };
+          }
+          return null;
+        }).filter(Boolean);
+      } else {
+        // Умный фильтр для original/merged (убирает пустые заголовки)
+        const keepHeaderIds = new Set<string>();
+        let activeL0: string | null = null;
+        let activeL1: string | null = null;
+        let activeL2: string | null = null;
+
+        // Пасс 1: Ищем заголовки, у которых есть выбранные дети
+        for (const r of result) {
+          const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
+          if (type === 'WORK_TYPE') { activeL0 = r.id; activeL1 = null; activeL2 = null; }
+          else if (type === 'LOCATION') { activeL1 = r.id; activeL2 = null; }
+          else if (type === 'GROUP') { activeL2 = r.id; }
+          
+          if (selectedIds.includes(r.id)) {
+            if (activeL0) keepHeaderIds.add(activeL0);
+            if (activeL1) keepHeaderIds.add(activeL1);
+            if (activeL2) keepHeaderIds.add(activeL2);
+          }
+        }
+
+        // Пасс 2: Фильтруем
+        result = result.filter(r => 
+          selectedIds.includes(r.id) || 
+          (r.is_header && keepHeaderIds.has(r.id))
+        );
+      }
     }
 
+
+
     // 5. ИТОГ И ПАГИНАЦИЯ
-    const totalProcessedCount = result.length;
+    // Подсчет только ЗНАЧИМЫХ позиций (товаров) для отображения в футере и навигации.
+    // Убираем из счета заголовки видов работ, мест, групп и названия поставщиков.
+    const totalProcessedCount = viewMode === 'supplier'
+      ? result.reduce((acc, group) => acc + (group.children?.length || 0), 0)
+      : result.filter(r => !r.is_header).length;
+
     let displayRows = result;
 
     if (currentStage === 'spec' && viewMode === 'merged') {
@@ -1283,7 +1366,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     const isPaginationActive = currentStage === 'spec' && viewMode === 'merged';
-    return { displayRows, totalProcessedCount, isPaginationActive };
+    return { displayRows, totalProcessedCount, isPaginationActive, selectableIdsForMode };
   }, [
     currentStage, viewMode,
     sortedSpecRows, sortedRequestRows, sortedInvoiceRows, sortedEstimateRows,
@@ -1292,7 +1375,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
     getMergedRows, getSupplierRows,
   ]);
 
-  const { displayRows, totalProcessedCount, isPaginationActive } = dataPipeline;
+  const { displayRows, totalProcessedCount, isPaginationActive, selectableIdsForMode } = dataPipeline;
+
+  // ШАГ 6: Вычисляем количество ВЫБРАННЫХ ПОЗИЦИЙ (без учета заголовков)
+  const selectedItemsCount = React.useMemo(() => {
+    if (selectedIds.length === 0) return 0;
+    
+    // Собираем все текущие ряды (оригинальные) для быстрой проверки типа
+    const allBaseRows = [...specRows, ...invoiceRows, ...estimateRows, ...requestRows];
+    const headerIds = new Set(allBaseRows.filter(r => r.is_header).map(r => r.id));
+
+    return selectedIds.filter(id => {
+      // 1. Заголовки поставщиков — не считаем за позиции
+      if (id.startsWith('supplier_')) return false;
+      // 2. Оригинальные заголовки (Виды работ, места и т.д.) — не считаем
+      if (headerIds.has(id)) return false;
+      // 3. Все остальное (ITEM, merged_...) — это позиции
+      return true;
+    }).length;
+  }, [selectedIds, specRows, invoiceRows, estimateRows, requestRows]);
 
 
 
@@ -1447,25 +1548,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleRowSelection = useCallback((id: string, isCellClick: boolean) => {
-    let activeRows: { id: string, row_type?: string, is_header?: boolean, pos?: string }[] = [];
-    if (currentStage === 'spec') activeRows = specRows as any;
-    else if (currentStage === 'invoice') activeRows = invoiceRows;
-    else if (currentStage === 'estimate') activeRows = estimateRows;
-    else if (currentStage === 'request') activeRows = requestRows as any;
-
     let targetIds = [id];
-    const idx = activeRows.findIndex(r => r.id === id);
-    if (idx !== -1) {
-      const row = activeRows[idx];
-      const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
-      if (type === 'WORK_TYPE' || type === 'LOCATION' || type === 'GROUP') {
-        for (let i = idx + 1; i < activeRows.length; i++) {
-          const nr = activeRows[i];
-          const nType = nr.row_type || (nr.is_header ? (nr.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
-          if (type === 'WORK_TYPE' && nType === 'WORK_TYPE') break;
-          if (type === 'LOCATION' && (nType === 'WORK_TYPE' || nType === 'LOCATION')) break;
-          if (type === 'GROUP' && (nType === 'WORK_TYPE' || nType === 'LOCATION' || nType === 'GROUP')) break;
-          targetIds.push(nr.id);
+
+    // ШАГ 1: Обработка групп в режимах «Поставщики» и «Сводная»
+    const isModeGroup = id.startsWith('supplier_') || id.startsWith('merged_');
+    if (isModeGroup) {
+      const g = displayRows.find(r => r.id === id);
+      if (g && g.children) {
+        g.children.forEach((c: any) => targetIds.push(c.id));
+      }
+    } else {
+      // ШАГ 2: Обработка иерархии в режиме «Оригинал» (по плоскому списку)
+      let activeRows: { id: string, row_type?: string, is_header?: boolean, pos?: string }[] = [];
+      if (currentStage === 'spec') activeRows = specRows as any;
+      else if (currentStage === 'invoice') activeRows = invoiceRows;
+      else if (currentStage === 'estimate') activeRows = estimateRows;
+      else if (currentStage === 'request') activeRows = requestRows as any;
+
+      const idx = activeRows.findIndex(r => r.id === id);
+      if (idx !== -1) {
+        const row = activeRows[idx];
+        const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
+        if (type === 'WORK_TYPE' || type === 'LOCATION' || type === 'GROUP') {
+          for (let i = idx + 1; i < activeRows.length; i++) {
+            const nr = activeRows[i];
+            const nType = nr.row_type || (nr.is_header ? (nr.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
+            if (type === 'WORK_TYPE' && nType === 'WORK_TYPE') break;
+            if (type === 'LOCATION' && (nType === 'WORK_TYPE' || nType === 'LOCATION')) break;
+            if (type === 'GROUP' && (nType === 'WORK_TYPE' || nType === 'LOCATION' || nType === 'GROUP')) break;
+            targetIds.push(nr.id);
+          }
         }
       }
     }
@@ -1484,7 +1596,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return next;
       }
     });
-  }, [currentStage, specRows, invoiceRows, estimateRows, requestRows]);
+  }, [currentStage, specRows, invoiceRows, estimateRows, requestRows, displayRows]);
+
 
   const toggleSelectAllPage = useCallback((pageIds: string[]) => {
     if (pageIds.length === 0) return;
@@ -1506,22 +1619,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [selectedIds]);
 
   const selectAllRows = useCallback(() => {
-    let rows: { id: string }[] = [];
-    switch (currentStage) {
-      case 'spec': rows = specRows; break;
-      case 'request': rows = requestRows; break;
-      case 'invoice': rows = invoiceRows; break;
-      case 'estimate': rows = estimateRows; break;
-    }
-    const allIds = rows.map(r => r.id);
-    setSelectedIds(prev => {
-      const next = [...prev];
-      allIds.forEach(id => {
-        if (!next.includes(id)) next.push(id);
-      });
-      return next;
-    });
-  }, [currentStage, specRows, requestRows, invoiceRows, estimateRows]);
+    setSelectedIds(selectableIdsForMode);
+  }, [selectableIdsForMode]);
 
   const deleteSelectedRows = useCallback(() => {
     if (selectedIds.length === 0) return;
@@ -1761,6 +1860,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         getCurrentRows,
         displayRows,
         totalProcessedCount,
+        selectedItemsCount,
         isPaginationActive,
         reprocessAi,
         matchInvoiceToSpec,
