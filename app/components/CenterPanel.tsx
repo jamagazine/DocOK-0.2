@@ -21,6 +21,7 @@ import { useData, emptyInvoiceRow, emptySpecRow } from '../context/DataContext';
 import { useTableEditor } from '../hooks/useTableEditor';
 import { useTableNavigation } from '../hooks/useTableNavigation';
 import { TableRow, Column } from './Table/TableRow';
+import { NoResultsState } from './Table/NoResultsState';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -378,7 +379,10 @@ function SpecTable() {
   // SpecTable — «тупой» компонент: только рисует.
   // displayRows из pipeline уже содержит всё: фильтры, поиск, isOnlySelectedView, пагинацию.
   // Единственная UI-логика, которая остаётся здесь — аккордеон (collapsedIds).
-  const { specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection, displayRows, viewMode, isOnlySelectedView } = useData();
+  const {
+    specRows, setSpecRows, handleFile, selectedIds, toggleRowSelection,
+    displayRows, viewMode, isOnlySelectedView, searchQuery, setSearchQuery
+  } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
   const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
@@ -439,6 +443,18 @@ function SpecTable() {
     return res;
   }, [displayRows, collapsedIds, viewMode, isOnlySelectedView]);
 
+  const isActiveSearch = searchQuery.trim().length > 0;
+
+  if (isActiveSearch && visibleRows.length === 0) {
+    return (
+      <NoResultsState 
+        onReset={() => setSearchQuery('')} 
+        currentQuery={searchQuery} 
+        stage="spec"
+      />
+    );
+  }
+
 
 
 
@@ -488,7 +504,7 @@ function SpecTable() {
 }
 
 function RequestTable() {
-  const { requestRows, handleFile, selectedIds, toggleRowSelection, displayRows } = useData();
+  const { requestRows, handleFile, selectedIds, toggleRowSelection, displayRows, searchQuery, setSearchQuery } = useData();
   const { handleCellUpdate } = useTableEditor('request');
   const { handleKeyDown } = useTableNavigation();
 
@@ -501,6 +517,18 @@ function RequestTable() {
     { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
     { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' }
   ];
+
+  const isActiveSearch = searchQuery.trim().length > 0;
+
+  if (isActiveSearch && displayRows.length === 0) {
+    return (
+      <NoResultsState 
+        onReset={() => setSearchQuery('')} 
+        currentQuery={searchQuery} 
+        stage="request"
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col">
@@ -535,7 +563,7 @@ function RequestTable() {
 
 
 function InvoiceTable() {
-  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows, displayRows } = useData();
+  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows, displayRows, searchQuery, setSearchQuery } = useData();
   const { handleCellUpdate } = useTableEditor('invoice');
   const { handleKeyDown } = useTableNavigation();
 
@@ -550,6 +578,18 @@ function InvoiceTable() {
     { key: 'price', label: 'Цена', width: '100px', align: 'right' },
     { key: 'total', label: 'Итого', width: '110px', align: 'right' }
   ];
+
+  const isActiveSearch = searchQuery.trim().length > 0;
+
+  if (isActiveSearch && displayRows.length === 0) {
+    return (
+      <NoResultsState 
+        onReset={() => setSearchQuery('')} 
+        currentQuery={searchQuery} 
+        stage="invoice"
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col">
@@ -594,7 +634,7 @@ function InvoiceTable() {
 }
 
 function EstimateTable() {
-  const { estimateRows, handleFile, selectedIds, toggleRowSelection, displayRows } = useData();
+  const { estimateRows, handleFile, selectedIds, toggleRowSelection, displayRows, searchQuery, setSearchQuery } = useData();
   const { handleCellUpdate } = useTableEditor('estimate');
   const { handleKeyDown } = useTableNavigation();
 
@@ -607,6 +647,18 @@ function EstimateTable() {
     { key: 'costPrice', label: 'Себестоимость', width: '120px', align: 'right' },
     { key: 'clientPrice', label: 'Цена заказчика', width: '120px', align: 'right' }
   ];
+
+  const isActiveSearch = searchQuery.trim().length > 0;
+
+  if (isActiveSearch && displayRows.length === 0) {
+    return (
+      <NoResultsState 
+        onReset={() => setSearchQuery('')} 
+        currentQuery={searchQuery} 
+        stage="estimate"
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col">
