@@ -25,7 +25,8 @@ import {
   Redo2,
   Check,
   Folder,
-  ListTree
+  ListTree,
+  Sparkles
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -185,7 +186,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     matchInvoiceToSpec, getCurrentRows, projectName,
     activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
     keepSelectedRows, undo, redo, canUndo, canRedo,
-    uploadStatuses
+    uploadStatuses, activeFileId, setActiveFileId
   } = useData();
 
   const [spyId, setSpyId] = React.useState<string | null>(null);
@@ -530,40 +531,59 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                 <div className="flex flex-col gap-4">
                   {/* Metadata from Stamp (summary_md) */}
                   {(() => {
-                    // Try to find the summary from any file in the current stage
-                    const activeSummary = Object.values(uploadStatuses || {}).find(s => s.summary_md)?.summary_md;
+                    // Logic: If activeFileId is selected, show that file's specific summary_md.
+                    // If activeFileId is null, show the consolidation (all files in project).
+                    const activeSummary = activeFileId ? uploadStatuses[activeFileId]?.summary_md : null;
                     
                     if (activeSummary) {
                       return (
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 text-slate-700 text-xs leading-relaxed shadow-sm">
-                          <div className="prose prose-sm max-w-none whitespace-pre-wrap">
-                            {activeSummary.replace(/### Общая сводка\n\n/, '')}
+                        <div className="bg-white p-5 rounded-xl border border-indigo-200 text-slate-700 text-xs leading-relaxed shadow-sm ring-1 ring-indigo-50/50">
+                          <div className="prose prose-sm max-w-none whitespace-pre-wrap font-medium">
+                            {activeSummary}
                           </div>
                         </div>
                       );
                     }
                     
+                    // FALLBACK: PROJECT-WIDE SUMMARY
+                    const allSuppliers = new Set();
+                    Object.values(uploadStatuses).forEach(s => {
+                       if (s.summary_md && s.summary_md.includes('Поставщики:')) {
+                          const match = s.summary_md.match(/Поставщики:\s*([^\n]+)/);
+                          if (match && match[1] && match[1] !== 'Не определено') {
+                             match[1].split(',').forEach(p => allSuppliers.add(p.trim()));
+                          }
+                       }
+                    });
+
                     return (
-                      <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col gap-4 text-sm">
-                        <div className="flex justify-between items-center">
-                          <span className="text-slate-500 font-medium">{getStageLabel(currentStage)}:</span>
-                          <span className="font-bold text-slate-900 tabular-nums">{currentCount()}</span>
+                      <div className="bg-indigo-600 p-5 rounded-xl border border-indigo-500 shadow-md flex flex-col gap-4 text-white">
+                        <div className="flex justify-between items-center opacity-90">
+                          <span className="text-[10px] uppercase font-bold tracking-widest">Проект: Сводная информация</span>
+                          <Sparkles className="w-4 h-4 text-white/50" />
                         </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-slate-500 font-medium">Загружено файлов:</span>
-                          <span className="font-bold text-slate-900 tabular-nums">
-                            {currentStage === 'invoice'
-                              ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length
-                              : currentStage === 'estimate'
-                                ? new Set(estimateRows.map(r => r.fileId)).size
-                                : Object.keys(filesMap || {}).length
-                            }
-                          </span>
+                        
+                        <div className="flex flex-col">
+                           <span className="text-white/60 text-[11px] font-medium mb-1">Всего позиций в этапе</span>
+                           <span className="text-3xl font-black tabular-nums tracking-tight">{currentCount()} <span className="text-sm font-normal text-white/60 ml-1">шт.</span></span>
                         </div>
-                        <div className="h-px w-full bg-slate-200" />
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">Итого по этапу</span>
-                          <span className="font-extrabold text-indigo-700 text-xl tabular-nums">{getIntermediateTotal()} ₽</span>
+
+                        <div className="grid grid-cols-2 gap-4">
+                           <div className="flex flex-col gap-1">
+                              <span className="text-white/60 text-[10px] font-bold uppercase tracking-tight">Поставщиков</span>
+                              <span className="text-lg font-bold">{allSuppliers.size || '...'}</span>
+                           </div>
+                           <div className="flex flex-col gap-1">
+                              <span className="text-white/60 text-[10px] font-bold uppercase tracking-tight">Файлов</span>
+                              <span className="text-lg font-bold">{Object.keys(uploadStatuses).length}</span>
+                           </div>
+                        </div>
+
+                        <div className="h-px w-full bg-white/10" />
+                        
+                        <div className="flex flex-col gap-1 bg-white/10 -mx-5 -mb-5 p-5 rounded-b-xl border-t border-white/5">
+                          <span className="text-white/60 text-[10px] uppercase font-bold tracking-tight">Итоговая сумма этапа</span>
+                          <span className="font-black text-2xl tabular-nums drop-shadow-sm">{getIntermediateTotal()} ₽</span>
                         </div>
                       </div>
                     );

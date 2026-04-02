@@ -293,19 +293,19 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
     Analyzes rows below the main table and looks for Cipher (Шифр), Project Name (Назначение), and Notes.
     """
     # 1. Statistics (Items count and Unique Suppliers)
-    items = [r for r in parsed_rows if r.get("row_type") == "ITEM" and not r.get("is_header")]
+    # We always prioritize ITEMs from parsed_rows if available
+    items = [r for r in (parsed_rows or []) if r.get("row_type") == "ITEM" and not r.get("is_header")]
     total_positions = len(items)
     
-    # Unique suppliers from column index 4 (Provider)
-    # We use parsed_rows because they are already normalized
+    # Unique suppliers from column index 4 (normalized)
     suppliers = sorted(list(set([str(r.get("supplier", "")).strip() for r in items if r.get("supplier")])))
     suppliers_str = ", ".join(suppliers) if suppliers else "Не определено"
     
-    # 2. Slice bottom part (last 30 rows) for Stamp and Notes
+    # 2. Slice bottom part (last 25-30 rows) for Stamp and Notes
     bottom_df = df.iloc[-30:].fillna("")
     
-    # Cipher regex: e.g. 1058-25-OB.C or 000-00-11.2
-    cipher_regex = r'\d{4,}-\d{2,}-[A-ZА-ЯЁ\.\d-]+'
+    # Cipher regex: refined (\d+-\d+-[А-Яа-яA-Za-z.\d-]+)
+    cipher_regex = r'\d+-\d+-[А-Яа-яA-Za-z\.\d-]+'
     cipher = "Не определено"
     
     # Stamp detection (GOST keywords)
@@ -314,12 +314,13 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
     
     # Find the end of table to know where Notes start
     last_item_idx = -1
-    for r in reversed(parsed_rows):
-        if r.get("row_type") == "ITEM" and r.get("id", "").startswith("idx_"):
-            try:
-                last_item_idx = int(r.get("id")[4:])
-                break
-            except: continue
+    if parsed_rows:
+        for r in reversed(parsed_rows):
+            if r.get("row_type") == "ITEM" and r.get("id", "").startswith("idx_"):
+                try:
+                    last_item_idx = int(r.get("id")[4:])
+                    break
+                except: continue
 
     project_parts = []
     
@@ -327,7 +328,7 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
     for i, row in df.iterrows():
         if i < len(df) - 30: continue
         
-        row_values = [str(v).strip() for v in row.values if v and str(v).strip() != "nan"]
+        row_values = [str(v).strip() for v in row.values if v and str(v).strip() != "nan" and str(v).strip() != "0"]
         full_row_text = " ".join(row_values)
         
         # Cipher extraction
@@ -345,11 +346,11 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
         if stamp_start_idx != -1 and i >= stamp_start_idx:
             for v in row_values:
                 # Filter out numbers, names (usually short or CamelCase), and common labels
-                if len(v) > 12 and not any(k in v.lower() for k in ["спецификац", "изм.", ". .", "дата", "архив", "инв."]):
+                if len(v) > 12 and not any(k in v.lower() for k in ["спецификац", "изм.", ". .", "дата", "архив", "инв.", "формат", "копировал"]):
                     if v not in project_parts and not re.search(cipher_regex, v):
                         project_parts.append(v)
 
-    destination = " | ".join(project_parts) if project_parts else "Не определено"
+    destination = " — ".join(project_parts) if project_parts else "Не определено"
     
     # Notes extraction (everything from last ITEM to Stamp Start)
     notes_parts = []
@@ -358,19 +359,18 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
         search_limit = stamp_start_idx if stamp_start_idx != -1 else len(df)
         for idx in range(last_item_idx + 1, search_limit):
             if idx in df.index:
-                r_vals = [str(v).strip() for v in df.iloc[idx].values if v and str(v).strip() != "nan"]
+                r_vals = [str(v).strip() for v in df.iloc[idx].values if v and str(v).strip() != "nan" and str(v).strip() != "0"]
                 r_text = " ".join(r_vals)
-                if r_text:
+                if r_text and len(r_text) > 3:
                     notes_parts.append(r_text)
     
     notes_str = "\n".join(notes_parts) if notes_parts else "Отсутствуют"
 
-    # Assemble Markdown
-    summary_md = f"### Общая сводка\n\n" \
-                 f"**Номер (Шифр):** {cipher}\n" \
-                 f"**Назначение:** {destination}\n" \
-                 f"**Поставщики:** {suppliers_str}\n" \
-                 f"**Общее кол-во позиций:** {total_positions}\n\n" \
+    # Assemble Markdown according to the refined TZ
+    summary_md = f"**Шифр:** {cipher}\n\n" \
+                 f"**Назначение:** {destination}\n\n" \
+                 f"**Позиций:** {total_positions} шт.\n\n" \
+                 f"**Поставщики:** {suppliers_str}\n\n" \
                  f"**Примечания:**\n{notes_str}"
     
     return summary_md

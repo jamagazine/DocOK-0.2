@@ -372,6 +372,8 @@ interface DataContextType {
   setViewContext: (ctx: 'dashboard' | 'workspace') => void;
   activeProjectId: string | null;
   setActiveProjectId: (id: string | null) => void;
+  activeFileId: string | null;
+  setActiveFileId: (id: string | null) => void;
 
   // Category management
   categories: Category[];
@@ -432,6 +434,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, title: name } : p));
     }
   };
+
+  const [activeFileId, setActiveFileId] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeProjectId) {
@@ -1024,6 +1028,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
             };
           });
           setUploadStatuses(restoredStatuses);
+          // Set active file if not set
+          if (files.length > 0) {
+            const firstFile = files.find((f: any) => f.status !== 'reset') || files[0];
+            setActiveFileId(firstFile.disk_name || firstFile.name);
+          }
         }
       } catch (e) {
         console.error('Failed to fetch storage files:', e);
@@ -2649,6 +2658,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setViewContext,
         activeProjectId,
         setActiveProjectId,
+        activeFileId,
+        setActiveFileId,
         saveTableData,
         fetchHistory,
         categories: categoriesWithCounts,

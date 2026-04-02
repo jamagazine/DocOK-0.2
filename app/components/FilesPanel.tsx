@@ -25,7 +25,11 @@ interface FilesPanelProps {
 }
 
 export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
-  const { uploadStatuses, filesMap, removeFile, retryFile, handleFile, currentStage, resetFileData, reprocessAi } = useData();
+  const { 
+    uploadStatuses, filesMap, removeFile, retryFile, handleFile, 
+    currentStage, resetFileData, reprocessAi,
+    activeFileId, setActiveFileId
+  } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
 
   if (!isOpen) return null;
@@ -98,9 +102,11 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
       <div
         key={fileName}
         className={cn(
-          "group flex flex-col p-3 rounded-lg border border-slate-200 bg-white shadow-sm hover:border-indigo-300 transition-all",
+          "group flex flex-col p-3 rounded-lg border shadow-sm transition-all cursor-pointer",
+          activeFileId === fileName ? "border-indigo-500 bg-indigo-50/30 ring-1 ring-indigo-200" : "border-slate-200 bg-white hover:border-indigo-300",
           isResetItem && "opacity-60"
         )}
+        onClick={() => setActiveFileId(fileName)}
       >
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3 flex-1 overflow-hidden">
@@ -130,10 +136,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 ) : null}
               </span>
               
-              {/* Segmented Progress Bar (for finished AI with reports) */}
-              {data.chunks_report && data.chunks_report.length > 0 && (
                 <div className="flex gap-0.5 mt-1 h-1.5 w-full">
-                  {data.chunks_report.map((chunk) => (
+                  {(data.chunks_report as {id: string, ok: boolean}[]).map((chunk) => (
                     <div 
                       key={chunk.id} 
                       className={cn("flex-1 rounded-sm", chunk.ok ? "bg-green-500" : "bg-red-500")} 
@@ -141,7 +145,6 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                     />
                   ))}
                 </div>
-              )}
 
               {/* Inline Progress Bar for Loading State (when no report yet) */}
               {isLoading && (!data.chunks_report || data.chunks_report.length === 0) && (
@@ -345,6 +348,30 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
             </div>
           ) : (
             <>
+              {/* Total Project Summary Selection */}
+              <div
+                className={cn(
+                  "group flex items-center gap-3 p-3 rounded-lg border shadow-sm transition-all cursor-pointer mb-2",
+                  !activeFileId ? "border-indigo-600 bg-indigo-50 ring-1 ring-indigo-200" : "border-slate-200 bg-white hover:border-indigo-300"
+                )}
+                onClick={() => setActiveFileId(null)}
+              >
+                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div className="flex flex-col flex-1 min-w-0">
+                  <span className="font-bold text-slate-900 text-sm">Общая сводка проекта</span>
+                  <span className="text-[10px] text-slate-500">Консолидированные данные по всем файлам</span>
+                </div>
+                {!activeFileId && <CheckCircle2 className="w-4 h-4 text-indigo-600" />}
+              </div>
+
+              <div className="flex items-center gap-2 py-1 mb-2">
+                <hr className="flex-1 border-slate-200" />
+                <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Файлы спецификаций</span>
+                <hr className="flex-1 border-slate-200" />
+              </div>
+
               {/* Active Files */}
               {fileEntries
                 .filter(([_, data]: [string, any]) => data.status !== 'reset')

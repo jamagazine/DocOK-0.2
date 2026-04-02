@@ -546,6 +546,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     api_key, folder_id = get_yandex_keys()
     ext_text = ""
     is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
+    ext_text = ""
+    summary_md = ""
     
     if is_spreadsheet:
         try:
@@ -561,6 +563,15 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             ext_text = md_text
             estimated_tokens = int((len(ext_text) / 4) * 2.0)
             estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+
+            # --- AUTO-EXTRACT SUMMARY (Pre-AI) ---
+            try:
+                # We can do a quick pass to get basic stats
+                pre_items = convert_df_to_items(df)
+                summary_md = extract_specification_summary(df, pre_items)
+            except Exception as e_sum:
+                print(f"Pre-summary error: {e_sum}")
+                summary_md = ""
         except Exception as e:
             print(f"Spreadsheet processing error: {e}")
     elif api_key and folder_id:
@@ -588,7 +599,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "model": existing.get("model", "") if isinstance(existing, dict) else "",
         "method": existing.get("method", "") if isinstance(existing, dict) else "",
         "estimated_cost": estimated_cost,
-        "estimated_tokens": estimated_tokens
+        "estimated_tokens": estimated_tokens,
+        "summary_md": summary_md if is_spreadsheet else ""
     }
     _save_manifest(manifest, projectId)
     
@@ -613,7 +625,19 @@ async def storage_list(projectId: str):
         for f in os.listdir(files_dir):
             if f.startswith('.') or f.endswith((".json", ".md")): continue
             entry = manifest.get(f, {})
-            files.append({"name": entry.get("originalName", f), "disk_name": f, "status": entry.get("status", "ok"), "cost": entry.get("cost", 0)})
+            # Return all metadata from manifest
+            files.append({
+                "name": entry.get("originalName", f), 
+                "disk_name": f, 
+                "status": entry.get("status", "ok"), 
+                "cost": entry.get("cost", 0),
+                "tokens": entry.get("tokens", 0),
+                "estimated_cost": entry.get("estimated_cost", 0),
+                "estimated_tokens": entry.get("estimated_tokens", 0),
+                "model": entry.get("model", ""),
+                "method": entry.get("method", ""),
+                "summary_md": entry.get("summary_md", "")
+            })
     return files
 
 @app.patch("/api/storage/files/{name}")
