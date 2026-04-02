@@ -350,23 +350,6 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
             </div>
           ) : (
             <>
-              {/* Total Project Summary Selection */}
-              <div
-                className={cn(
-                  "group flex items-center gap-3 p-3 rounded-lg border shadow-sm transition-all cursor-pointer mb-2",
-                  !activeFileId ? "border-indigo-600 bg-indigo-50 ring-1 ring-indigo-200" : "border-slate-200 bg-white hover:border-indigo-300"
-                )}
-                onClick={() => setActiveFileId(null)}
-              >
-                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-                  <Sparkles className="w-5 h-5 text-indigo-600" />
-                </div>
-                <div className="flex flex-col flex-1 min-w-0">
-                  <span className="font-bold text-slate-900 text-sm">Общая сводка проекта</span>
-                  <span className="text-[10px] text-slate-500">Консолидированные данные по всем файлам</span>
-                </div>
-                {!activeFileId && <CheckCircle2 className="w-4 h-4 text-indigo-600" />}
-              </div>
 
               <div className="flex items-center gap-2 py-1 mb-2">
                 <hr className="flex-1 border-slate-200" />

@@ -593,6 +593,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                 sum_res = extract_specification_summary(df, pre_items, dest_path)
                 summary_md = sum_res["summary_md"]
                 debug_grid = sum_res["debug_grid"]
+                summary_fields = sum_res["fields"]
                 
                 if summary_md:
                     summary_p = get_file_path(projectId, secured_name, "_summary.md")
@@ -607,8 +608,10 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             except Exception as e_sum:
                 print(f"Pre-summary error: {e_sum}")
                 summary_md = ""
+                summary_fields = None
         except Exception as e:
             print(f"Spreadsheet processing error: {e}")
+            summary_fields = None
     elif api_key and folder_id:
         try:
             if original_filename.lower().endswith(".pdf"):
@@ -635,7 +638,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "method": existing.get("method", "") if isinstance(existing, dict) else "",
         "estimated_cost": estimated_cost,
         "estimated_tokens": estimated_tokens,
-        "summary_md": summary_md if is_spreadsheet else ""
+        "summary_md": summary_md if is_spreadsheet else "",
+        "summary_fields": summary_fields if is_spreadsheet else None
     }
     _save_manifest(manifest, projectId)
     
@@ -648,7 +652,9 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "filename": secured_name, 
         "estimated_cost": estimated_cost, 
         "estimated_tokens": estimated_tokens, 
-        "raw_markdown": ext_text if is_spreadsheet else None
+        "raw_markdown": ext_text if is_spreadsheet else None,
+        "summary_md": summary_md if is_spreadsheet else "",
+        "summary_fields": summary_fields if is_spreadsheet else None
     }
 
 @app.get("/api/storage/files")
@@ -671,7 +677,8 @@ async def storage_list(projectId: str):
                 "estimated_tokens": entry.get("estimated_tokens", 0),
                 "model": entry.get("model", ""),
                 "method": entry.get("method", ""),
-                "summary_md": entry.get("summary_md", "")
+                "summary_md": entry.get("summary_md", ""),
+                "summary_fields": entry.get("summary_fields", None)
             })
     return files
 

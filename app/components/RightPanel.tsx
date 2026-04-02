@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import {
+  Hash,
   Menu,
   Settings2,
   Info,
@@ -21,6 +22,7 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
+  Package,
   Undo2,
   Redo2,
   Check,
@@ -30,6 +32,9 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { Badge } from './ui/badge';
+import { Separator } from './ui/separator';
+import { Skeleton } from './ui/skeleton';
 import type { Stage, RightPanelTab } from '../types';
 import { useData, SpecRow, InvoiceRow, EstimateRow } from '../context/DataContext';
 import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/fileUtils';
@@ -527,86 +532,123 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
           <div className="flex flex-col gap-6">
             {expanded ? (
               <>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Общая сводка</div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Паспорт спецификации</div>
                 <div className="flex flex-col gap-4">
-                  {/* Metadata from Stamp (summary_md) */}
                   {(() => {
-                    // Logic: Use selected file OR find the first one with summary_md
                     let activeFileData = activeFileId ? uploadStatuses[activeFileId] : undefined;
                     if (!activeFileData) {
-                      activeFileData = Object.values(uploadStatuses).find((s: any) => s.summary_md);
+                      activeFileData = Object.values(uploadStatuses).find((s: any) => s.summary_fields || s.summary_md);
                     }
                     
-                    const activeSummary = activeFileData?.summary_md;
+                    const fields = activeFileData?.summary_fields;
+                    const status = activeFileData?.status || "";
+                    const isLoading = status.includes("Анализ") || status.includes("Старт");
                     
-                    // Positions logic: count only REAL items (row_type === ITEM)
                     const getRealItemCount = () => {
                       if (currentStage === 'spec') return specRows.filter(r => r.row_type === 'ITEM').length;
-                      if (currentStage === 'invoice') return invoiceRows.length; // Invoices are usually all items
+                      if (currentStage === 'invoice') return invoiceRows.length;
                       if (currentStage === 'estimate') return estimateRows.length;
                       return 0;
                     };
 
-                    if (activeSummary) {
-                      const lines = activeSummary.split('\n').filter(l => l.trim() !== "");
-                      
+                    const getSupplierCount = () => {
+                       const suppliers = new Set();
+                       if (currentStage === 'spec') specRows.forEach(r => r.supplier && suppliers.add(r.supplier));
+                       if (currentStage === 'invoice') invoiceRows.forEach(r => r.supplier && suppliers.add(r.supplier));
+                       return suppliers.size;
+                    };
+
+                    if (isLoading) {
+                      return (
+                        <div className="space-y-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+                          <div className="space-y-2">
+                             <Skeleton className="h-4 w-1/4" />
+                             <Skeleton className="h-6 w-3/4" />
+                          </div>
+                          <Separator />
+                          <div className="space-y-2">
+                             <Skeleton className="h-4 w-1/4" />
+                             <Skeleton className="h-20 w-full" />
+                          </div>
+                          <div className="flex gap-2 pt-2">
+                             <Skeleton className="h-8 w-24 rounded-lg" />
+                             <Skeleton className="h-8 w-24 rounded-lg" />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (fields || activeFileData?.summary_md) {
+                      const cipher = fields?.cipher || "---";
+                      const destination = fields?.destination || "---";
+                      const notes = fields?.notes || "---";
+
                       return (
                         <div className="flex flex-col gap-4">
-                          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
+                          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden flex flex-col gap-5">
+                            <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
                             
-                            {lines.map((line, idx) => {
-                               if (line.startsWith('###')) {
-                                 return <h3 key={idx} className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.15em] mb-4">{line.replace('###', '').trim()}</h3>;
-                               }
-                               if (line.includes(':**')) {
-                                  const parts = line.split(':**');
-                                  const label = parts[0].replace(/\*/g, '').trim();
-                                  const content = parts[1]?.trim() || "";
-                                  const isMissing = content.includes('Не найдено в сетке');
-                                  
-                                  return (
-                                    <div key={idx} className="mb-4 last:mb-0 flex flex-col gap-1">
-                                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{label}</span>
-                                      <span className={cn(
-                                        "text-[13px] leading-relaxed",
-                                        isMissing ? "text-red-400 italic font-medium" : "text-slate-800 font-semibold"
-                                      )}>
-                                        {content}
-                                      </span>
-                                    </div>
-                                  );
-                               }
-                               if (line.trim() === "Примечания:") return null;
-                               return (
-                                 <p key={idx} className="text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-100 mt-2 italic font-medium leading-relaxed">
-                                   {line}
-                                 </p>
-                               );
-                            })}
-                            
-                            <div className="h-px bg-slate-100 my-5" />
-                            
-                            <div className="flex flex-col gap-3">
-                               <div className="flex justify-between items-center text-xs">
-                                  <span className="text-slate-400 font-bold uppercase tracking-tighter">Всего позиций:</span>
-                                  <span className="text-indigo-700 font-black bg-indigo-50 px-2.5 py-1 rounded-lg text-sm">{getRealItemCount()} шт.</span>
-                               </div>
-                               {currentStage !== 'spec' && (
-                                 <div className="flex justify-between items-center text-xs">
-                                    <span className="text-slate-400 font-bold uppercase tracking-tighter">Сумма этапа:</span>
-                                    <span className="text-emerald-700 font-black bg-emerald-50 px-2.5 py-1 rounded-lg text-sm">{getIntermediateTotal()} ₽</span>
-                                 </div>
-                                )}
+                            {/* Cipher */}
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2 text-indigo-600">
+                                <Hash className="w-4 h-4" />
+                                <span className="text-[10px] font-black uppercase tracking-wider">Шифр проекта</span>
+                              </div>
+                              <div className="text-sm font-bold text-slate-900 leading-tight">
+                                {cipher}
+                              </div>
+                            </div>
+
+                            <Separator className="bg-slate-100" />
+
+                            {/* Destination */}
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center gap-2 text-slate-400">
+                                <Info className="w-4 h-4" />
+                                <span className="text-[10px] font-bold uppercase tracking-tight">Назначение объекта</span>
+                              </div>
+                              <div className="text-[12px] text-slate-700 font-medium leading-relaxed">
+                                {destination}
+                              </div>
+                            </div>
+
+                            {/* Notes */}
+                            {notes !== "---" && (
+                              <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-100 flex flex-col gap-2">
+                                <div className="flex items-center gap-2 text-slate-400">
+                                  <FileText className="w-3.5 h-3.5" />
+                                  <span className="text-[9px] font-bold uppercase">Общие примечания</span>
+                                </div>
+                                <div className="text-[11px] text-slate-600 italic leading-snug">
+                                  {notes}
+                                </div>
+                              </div>
+                            )}
+
+                            <Separator className="bg-slate-100" />
+
+                            {/* Stats Bar */}
+                            <div className="flex flex-wrap gap-2 pt-1">
+                               <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 px-2.5 py-1 flex items-center gap-1.5 hover:bg-indigo-100 transition-colors">
+                                  <Package className="w-3.5 h-3.5" />
+                                  <span className="font-bold">{getRealItemCount()}</span>
+                                  <span className="opacity-60 font-medium">поз.</span>
+                               </Badge>
+                               <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-100 px-2.5 py-1 flex items-center gap-1.5 hover:bg-emerald-100 transition-colors">
+                                  <Truck className="w-3.5 h-3.5" />
+                                  <span className="font-bold">{getSupplierCount()}</span>
+                                  <span className="opacity-60 font-medium">пост.</span>
+                               </Badge>
                             </div>
                           </div>
                           
-                          <div className="bg-slate-900/5 p-4 rounded-xl flex items-start gap-3 border border-slate-200/50">
-                             <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-sm border border-slate-100 shrink-0">
-                                <Info className="w-4 h-4 text-indigo-500" />
+                          <div className="bg-indigo-50/50 p-4 rounded-xl flex items-start gap-3 border border-indigo-100/50">
+                             <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-sm border border-indigo-50 shrink-0">
+                                <Sparkles className="w-4 h-4 text-indigo-500" />
                              </div>
                              <p className="text-[10px] text-slate-500 leading-normal font-medium">
-                               Данные извлечены методом «Координатного среза» штампа. Сетка поиска доступна в файле <span className="text-slate-800 underline decoration-indigo-200">_debug.md</span> в папке проекта.
+                               Данные извлечены алгоритмом <b>DocOK Scan v0.2</b>. 
+                               Вертикальная рамка штампа определена автоматически.
                              </p>
                           </div>
                         </div>
@@ -614,13 +656,13 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                     }
                     
                     return (
-                      <div className="bg-slate-50 p-8 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-4 text-center">
-                        <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
-                           <FileText className="w-6 h-6 text-slate-400" />
+                      <div className="bg-slate-50 p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-4 text-center mt-4">
+                        <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center border border-slate-100">
+                           <FileText className="w-6 h-6 text-slate-300" />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <span className="text-slate-600 font-bold text-sm">Выберите файл</span>
-                          <span className="text-[11px] text-slate-400 max-w-[180px]">Загрузите спецификацию для отображения сводной информации из штампа.</span>
+                          <span className="text-slate-600 font-bold text-sm">Паспорт не сформирован</span>
+                          <span className="text-[11px] text-slate-400 max-w-[180px]">Загрузите спецификацию (XLS) для мгновенного анализа данных штампа.</span>
                         </div>
                       </div>
                     );

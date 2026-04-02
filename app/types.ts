@@ -29,6 +29,13 @@ export interface UploadStatus {
   total_chunks?: number;
   current_step?: 'prep' | 'ai' | 'final';
   summary_md?: string;
+  summary_fields?: {
+    cipher: string;
+    destination: string;
+    notes: string;
+    total_positions?: number;
+    suppliers?: string;
+  };
 }
 
 export interface UploadedFile {

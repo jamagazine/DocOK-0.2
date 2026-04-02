@@ -1025,13 +1025,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
               model: f.model || '',
               method: f.method || '',
               summary_md: f.summary_md || '',
+              summary_fields: f.summary_fields || null
             };
           });
-          setUploadStatuses(restoredStatuses);
+          setUploadStatuses((prev: any) => ({ ...prev, ...restoredStatuses }));
           // Set active file if not set
           if (files.length > 0) {
             const firstFile = files.find((f: any) => f.status !== 'reset') || files[0];
-            setActiveFileId(firstFile.disk_name || firstFile.name);
+            setActiveFileId(firstFile.name); // Using originalName consistently
           }
         }
       } catch (e) {
@@ -1205,13 +1206,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (res.ok) {
           const resData = await res.json();
           serverFilename = resData.filename || '';
-          if (resData.estimated_cost !== undefined || resData.estimated_tokens !== undefined) {
+          if (resData.estimated_cost !== undefined || resData.estimated_tokens !== undefined || resData.summary_fields) {
             setUploadStatuses((prev: any) => ({
               ...prev,
               [file.name]: {
                 ...prev[file.name],
                 ...(resData.estimated_cost !== undefined && { estimated_cost: resData.estimated_cost }),
-                ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens })
+                ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens }),
+                ...(resData.summary_fields && { summary_fields: resData.summary_fields }),
+                ...(resData.summary_md && { summary_md: resData.summary_md })
               }
             }));
           }
@@ -1225,6 +1228,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
               setInvoiceRows(prev => [...prev, ...instantRows as InvoiceRow[]]);
             }
           }
+
+          // Force focus on the newly uploaded file to show Passport immediately
+          setActiveFileId(file.name);
         }
       } catch (e) {
         console.error('Failed to upload file to storage:', e);
@@ -1400,7 +1406,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       model: data.model || '',
                       method: data.method || '',
                       chunks_report: data.chunks_report || [],
-                      summary_md: data.summary_md || ''
+                      summary_md: data.summary_md || '',
+                      summary_fields: data.fields || null
                     }
                   }));
                   setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
