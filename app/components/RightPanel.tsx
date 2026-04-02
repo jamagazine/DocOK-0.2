@@ -9,11 +9,9 @@ import {
   UploadCloud,
   RotateCcw,
   Rows3,
-  ArrowUpDown,
   Calculator as CalcIcon,
   Percent,
   CheckCircle2,
-  Merge,
   CheckSquare,
   XSquare,
   Trash2,
@@ -25,8 +23,9 @@ import {
   ChevronRight,
   Undo2,
   Redo2,
-  SaveAll,
-  Check
+  Check,
+  Folder,
+  ListTree
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -38,14 +37,21 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+interface NavNodeData {
+  id: string;
+  name: string;
+  children?: NavNodeData[];
+  count?: number;
+}
+
 const NavNode = ({
-  node, activeIds, onSolo, onToggle, level = 0
+  node, activeIds, onToggle, onSolo, level = 0, spyId
 }: {
-  key?: string;
-  node: any;
+  spyId?: string | null;
+  node: NavNodeData;
   activeIds: string[];
-  onSolo: (id: string) => void;
-  onToggle: (id: string) => void;
+  onToggle: (id: string, isolate?: boolean) => void;
+  onSolo?: (id: string) => void;
   level?: number
 }) => {
   const isActive = activeIds.includes(node.id);
@@ -59,33 +65,49 @@ const NavNode = ({
       ? 'text-[11px] font-semibold'
       : 'text-[11px] font-medium';
 
-  const colorCls = isActive
-    ? 'text-indigo-700'
-    : level === 0 ? 'text-slate-800' : level === 1 ? 'text-slate-700' : 'text-slate-500';
+  const isSpy = spyId === node.id;
+  // Text color uniformly black/dark as requested. Bold if it is currently in viewport (scroll spy).
+  const colorCls = isActive ? 'text-indigo-700' : isSpy ? 'text-slate-900 font-extrabold pr-2 underline' : 'text-slate-900';
+
+  const handleLabelClick = () => {
+    const el = document.getElementById(`row-${node.id}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  const renderIcon = () => {
+    if (level === 0) return <ListTree className="w-[14px] h-[14px]" />;
+    if (level === 1) return (
+      <div className="relative w-[14px] h-[14px]">
+        <Folder className="w-full h-full" />
+        <Folder className="w-full h-full absolute top-[3px] left-[3px] opacity-40" />
+      </div>
+    );
+    return <Folder className="w-[14px] h-[14px]" />;
+  };
 
   return (
     <div className="flex flex-col">
       <div
         className={cn(
-          'flex items-center gap-1.5 rounded-md transition-all py-[5px] px-2 group cursor-default',
+          'flex items-center gap-1.5 rounded-md transition-all py-1.5 px-2 group cursor-default',
           isActive
             ? 'bg-indigo-50 border-l-[3px] border-l-indigo-500 pl-[5px]'
             : 'border-l-[3px] border-l-transparent hover:bg-slate-50/80'
         )}
-        style={{ marginLeft: `${level * 16}px` }}
+        style={{ marginLeft: `${level * 12}px` }}
       >
         {/* Expand/collapse chevron */}
         <div
           className={cn(
             'w-4 h-4 flex shrink-0 items-center justify-center rounded transition-colors',
-            hasChildren ? 'cursor-pointer text-slate-400 hover:text-indigo-500 hover:bg-indigo-50' : 'opacity-0 pointer-events-none'
+            hasChildren ? 'cursor-pointer text-slate-400 hover:text-indigo-600 hover:bg-indigo-100' : 'opacity-0 pointer-events-none'
           )}
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
         >
           {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         </div>
 
-        {/* Checkbox — multi-select */}
+        {/* Checkbox — multi-select / isolate */}
         <div
           className={cn(
             'w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-all cursor-pointer',
@@ -93,27 +115,47 @@ const NavNode = ({
               ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm shadow-indigo-200'
               : 'border-slate-300 bg-white group-hover:border-indigo-400'
           )}
-          onClick={(e: React.MouseEvent) => { e.stopPropagation(); onToggle(node.id); }}
+          onClick={(e: React.MouseEvent) => { e.stopPropagation(); onToggle(node.id, !e.shiftKey && !e.metaKey && !e.ctrlKey); }}
         >
           {isActive && <Check className="w-2 h-2 stroke-[3]" />}
         </div>
+        
+        {/* Dynamic Icon */}
+        <div className={cn("text-slate-400 flex items-center justify-center", isActive && "text-indigo-500")}>
+           {renderIcon()}
+        </div>
 
-        {/* Label — solo focus click */}
+        {/* Label — scroll to row */}
         <span
-          className={cn('flex-1 truncate select-none leading-snug cursor-pointer', labelCls, colorCls)}
+          className={cn('flex-1 truncate select-none leading-snug cursor-pointer hover:underline', labelCls, colorCls)}
           title={node.name}
-          onClick={() => onSolo(node.id)}
+          onClick={handleLabelClick}
         >
           {node.name}
         </span>
+        
+        {/* Item count badge */}
+        {((node.count ?? 0) > 0 || hasChildren) && (
+          <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full tabular-nums">
+            {node.count || 0}
+          </span>
+        )}
       </div>
 
       {/* Children with visual tree line */}
       {isExpanded && hasChildren && (
         <div className="flex flex-col" style={{ marginLeft: `${level * 16 + 10}px` }}>
           <div className="border-l-2 border-slate-200/80 pl-0">
-            {node.children.map((child: any) => (
-              <NavNode key={child.id} node={child} activeIds={activeIds} onSolo={onSolo} onToggle={onToggle} level={level + 1} />
+            {node.children?.map((child) => (
+              <NavNode 
+                key={child.id} 
+                node={child} 
+                activeIds={activeIds} 
+                onToggle={onToggle} 
+                onSolo={onSolo}
+                level={level + 1} 
+                spyId={spyId} 
+              />
             ))}
           </div>
         </div>
@@ -144,6 +186,51 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
     keepSelectedRows, undo, redo, canUndo, canRedo
   } = useData();
+
+  const [spyId, setSpyId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (currentStage !== 'spec') return;
+    const container = document.querySelector('.flex-1.overflow-auto.relative.bg-white') || document.body;
+    let lastSpyId: string | null = null;
+    let fallbackTimer: ReturnType<typeof setTimeout>;
+    let lastExecution = 0;
+    const throttleTime = 100;
+
+    const handleScroll = () => {
+      const now = Date.now();
+      if (now - lastExecution < throttleTime) return;
+      lastExecution = now;
+
+      const parentRect = container === document.body 
+        ? { top: 0 } as DOMRect 
+        : container.getBoundingClientRect();
+      
+      const rows = document.querySelectorAll('[id^="row-"]');
+      let minPos = Infinity;
+      let matchedId: string | null = null;
+      
+      rows.forEach(r => {
+        const box = r.getBoundingClientRect();
+        const offset = box.top - parentRect.top;
+        if (offset > -200 && offset < 300 && offset < minPos) {
+          minPos = offset;
+          matchedId = r.id.replace('row-', '');
+        }
+      });
+
+      if (matchedId && matchedId !== lastSpyId) {
+        lastSpyId = matchedId;
+        setSpyId(matchedId);
+      }
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    fallbackTimer = setTimeout(handleScroll, 500);
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      clearTimeout(fallbackTimer);
+    };
+  }, [currentStage]);
 
   const handleExport = () => {
     let headers: string[] = [];
@@ -305,13 +392,19 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                           {getNavigatorTree().length === 0 ? (
                             <div className="text-xs text-slate-400 py-4 text-center">Нет структуры</div>
                           ) : (
-                            getNavigatorTree().map((node: any) => (
+                            getNavigatorTree().map((node) => (
                               <NavNode
                                 key={node.id}
                                 node={node}
                                 activeIds={activeHeaderIds}
                                 onSolo={(id: string) => setActiveHeaderIds((prev: string[]) => prev.length === 1 && prev[0] === id ? [] : [id])}
-                                onToggle={(id: string) => setActiveHeaderIds((prev: string[]) => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id])}
+                                onToggle={(id: string, isolate?: boolean) => {
+                                  if (isolate) {
+                                    setActiveHeaderIds((prev: string[]) => prev.length === 1 && prev[0] === id ? [] : [id]);
+                                  } else {
+                                    setActiveHeaderIds((prev: string[]) => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id]);
+                                  }
+                                }}
                               />
                             ))
                           )}

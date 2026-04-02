@@ -5,12 +5,14 @@ import {
   ChevronDown, 
   ChevronRight, 
   AlertTriangle, 
-  Edit2, 
-  Database, 
-  MapPin, 
-  Folders, 
+  GripVertical,
+  ListTree,
+  Folders,
+  Folder,
+  Library,
   UserCheck, 
-  Layers 
+  Layers,
+  Edit2
 } from 'lucide-react';
 import { EditableCell } from './EditableCell';
 
@@ -95,19 +97,18 @@ export const TableRow = React.memo(({
     row.math_error && stage === 'request' && "bg-red-50/70 hover:bg-red-100/70",
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
-    // Spec specific classes:
-    // 1. Главный заголовок (Вид работ) - Чистый Индиго 600 с ярким акцентом
-    stage === 'spec' && isWorkType && "bg-indigo-600 text-white hover:bg-indigo-500 border-l-4 border-l-indigo-400 border-b border-indigo-700 shadow-md transition-all",
-    // 2. Место (Локация) - Глубокий Индиго 800 с мягким акцентом
-    stage === 'spec' && isLocation && "bg-indigo-800 text-white hover:bg-indigo-900 font-bold border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-sm transition-all",
-    // 3. Группы - Светлое Индиго с бортом
-    stage === 'spec' && isGroup && "bg-indigo-50/50 text-indigo-900 border-l-4 border-l-indigo-500 hover:bg-indigo-100/60 transition-all",
+    // Spec specific classes based on Level Hierachy
+    // Spec specific classes based on Level Hierachy (Inversion logic: high level = dark BG)
+    stage === 'spec' && (row.level || 0) >= 3 && "bg-indigo-950 text-slate-50 font-black border-l-4 border-l-amber-500 border-b border-indigo-900 shadow-md transition-all hover:bg-indigo-900",
+    stage === 'spec' && row.level === 2 && "bg-indigo-700 text-indigo-50 font-bold border-l-4 border-l-indigo-400 border-b border-indigo-600 transition-all hover:bg-indigo-600",
+    stage === 'spec' && row.level === 1 && "bg-indigo-100/80 text-indigo-950 font-semibold border-l-4 border-l-indigo-300 border-b border-indigo-200 hover:bg-indigo-200/90 transition-all",
+    
     // 4. Поставщики - Голубой Индиго с бортом
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 text-blue-900 border-l-4 border-l-blue-400 hover:bg-blue-100/50 transition-all",
-    // 5. Сводные - Изумрудный Индиго с бортом
+    // 5. Сводные - Обычный фон, но с зеленым бортом
     stage === 'spec' && isActuallyMerged && cn(
-      "bg-emerald-50/50 text-emerald-950 border-l-4 border-l-emerald-500 transition-all font-semibold",
-      (parentIsExpanded || localExpanded) ? "bg-emerald-100/60" : "hover:bg-emerald-100/40"
+      "bg-white border-l-4 border-l-emerald-500 transition-all",
+      (parentIsExpanded || localExpanded) ? "bg-slate-50" : "hover:bg-slate-50"
     ),
 
     stage === 'spec' && !isSummaryRow && hasChildren && !isHeader && "bg-slate-50/30",
@@ -117,6 +118,7 @@ export const TableRow = React.memo(({
   return (
     <Fragment>
       <div
+        id={`row-${row.id}`}
         onClick={() => {
           if (stage === 'spec' && isHeader) {
             toggleCollapse?.(row.id);
@@ -153,16 +155,25 @@ export const TableRow = React.memo(({
                 ) : (
                   <>
                     <div className="group-hover/poscell:hidden flex items-center justify-center">
-                      {(isWorkType && !row.pos) && <Database className="w-4 h-4 opacity-70" />}
-                      {(isLocation && row.pos !== '§') && <MapPin className="w-4 h-4 opacity-70" />}
-                      {isGroup && <Folders className="w-4 h-4 text-indigo-500/70" />}
+                      {/* Icons logic based on level (Matryoshka logic) */}
+                      {stage === 'spec' && !isSummaryRow && !isSupplierRow && (
+                        <div className="flex items-center gap-0.5 relative z-10 px-1">
+                          {row.level === 1 && <Folder className="w-4 h-4 text-indigo-600" />}
+                          {row.level === 2 && <Folders className="w-5 h-5 text-indigo-200" />}
+                          {(row.level || 0) >= 3 && <Library className="w-5 h-5 text-indigo-300" />}
+                          {/* Fallback for undefined level but old properties */}
+                          {row.level === undefined && isWorkType && <Library className="w-5 h-5 text-indigo-300" />}
+                          {row.level === undefined && isLocation && <Folders className="w-5 h-5 text-indigo-200" />}
+                          {row.level === undefined && isGroup && <Folder className="w-4 h-4 text-indigo-600" />}
+                        </div>
+                      )}
                       {isSupplierRow && <UserCheck className="w-4 h-4 text-blue-500/70" />}
                       
                       {/* Если есть номер — показываем номер */}
-                      {((isWorkType || isLocation || isActuallyMerged) && row.pos) && (
+                      {((isWorkType || isLocation || isActuallyMerged || row.is_header) && row.pos) && (
                         <span className={cn(
                           "font-black tabular-nums whitespace-nowrap",
-                          isLocation ? "text-emerald-100 text-lg" : 
+                          (row.level || 0) >= 2 ? "text-amber-400 text-sm" : 
                           isActuallyMerged ? "text-emerald-600 text-sm" :
                           "text-slate-400 text-sm"
                         )}>
@@ -182,12 +193,13 @@ export const TableRow = React.memo(({
             </div>
             {/* Content Area */}
             <div className={cn(
-              "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
-              isWorkType ? "text-sm uppercase font-bold text-white" : 
-              isLocation ? "text-base uppercase tracking-wide font-black text-white" : 
-              isActuallyMerged ? "text-emerald-950 font-bold" :
-              isSupplierRow ? "text-blue-900 font-bold" :
-              "text-sm font-bold text-indigo-900"
+               "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
+               (row.level || 0) >= 3 ? "text-sm uppercase font-black tracking-widest text-slate-50" : 
+               row.level === 2 ? "text-sm font-bold text-indigo-50" : 
+               row.level === 1 ? "text-sm font-bold text-indigo-950" :
+               isActuallyMerged ? "text-slate-900" :
+               isSupplierRow ? "text-blue-900 font-bold" :
+               "text-sm font-bold text-indigo-900"
             )}>
               <span className="truncate flex-grow mr-4">{row.name}</span>
               
@@ -200,7 +212,7 @@ export const TableRow = React.memo(({
                   }}
                   className={cn(
                     "p-1 rounded transition-colors flex-shrink-0 ml-auto flex items-center justify-center",
-                    (isWorkType || isLocation) ? "text-white/70 hover:bg-white/20 hover:text-white" : 
+                    (row.level || 0) >= 2 ? "text-indigo-200 hover:bg-white/10 hover:text-white" : 
                     isActuallyMerged ? "text-emerald-500 hover:bg-emerald-200/50" :
                     isSupplierRow ? "text-blue-500 hover:bg-blue-200/50" :
                     "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
@@ -297,11 +309,11 @@ export const TableRow = React.memo(({
                 >
                   <div className="flex flex-col gap-0.5 min-w-0">
                     <span className={cn(
-                      "font-bold whitespace-normal break-words leading-tight",
-                      isWorkType ? "text-base uppercase tracking-wider" : "text-sm",
-                      isLocation && !isSupplierRow && "text-slate-100 underline underline-offset-8 decoration-white/20",
-                      isSupplierRow && "text-indigo-900 border-b-2 border-indigo-200",
-                      isActuallyMerged && "text-emerald-900"
+                      "whitespace-normal break-words leading-tight",
+                      isWorkType ? "text-base uppercase tracking-wider font-bold" : "text-sm",
+                      isLocation && !isSupplierRow && "text-slate-100 underline underline-offset-8 decoration-white/20 font-bold",
+                      isSupplierRow && "text-indigo-900 border-b-2 border-indigo-200 font-bold",
+                      isActuallyMerged ? "text-slate-900 font-normal" : "font-bold"
                     )}>
                       {String(row.name || '')}
                     </span>

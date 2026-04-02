@@ -429,18 +429,18 @@ function SpecTable() {
     const effectiveRows = displayRows;
 
     for (const row of effectiveRows) {
-      const type = row.row_type || (row.is_header ? (row.pos === '§' ? 'LOCATION' : 'GROUP') : 'ITEM');
-      const level = type === 'WORK_TYPE' ? 0 : type === 'LOCATION' ? 1 : type === 'GROUP' ? 2 : 3;
+      // Используем динамический уровень (0 - позиция, 1+ - заголовки)
+      const level = typeof row.level === 'number' ? row.level : (row.is_header ? 1 : 0);
 
-      // Выход из свёрнутой группы при встрече заголовка того же или выше уровня
-      if (hideUntilLevel !== -1 && level <= hideUntilLevel && row.is_header) {
+      // Выход из свёрнутой группы при встрече заголовка того же или более высокого уровня (level >= hideUntilLevel)
+      if (hideUntilLevel !== -1 && level >= hideUntilLevel && row.is_header) {
         hideUntilLevel = -1;
       }
       
       if (hideUntilLevel !== -1) continue;
 
       // У supplier-заголовка убираем children перед рендером (они уже развёрнуты)
-      const renderedRow = (isSupplierMode && type === 'GROUP') ? { ...row, children: undefined } : row;
+      const renderedRow = (isSupplierMode && row.row_type === 'GROUP') ? { ...row, children: undefined } : row;
       res.push(renderedRow);
       
       // ШАГ 3: Если включен фильтр «Только выделенные», игнорируем схлопывание

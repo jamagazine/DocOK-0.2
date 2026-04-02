@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { toast } from 'sonner';
 import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
+import { calculateHierarchy } from '../utils/hierarchy';
 import { Stage, FileStatus, UploadStatus } from '../types';
 
 export interface YandexConfig {
@@ -158,7 +159,13 @@ export interface SpecRow extends MaterialPosition {
   originalRowsIds?: string[];
   children?: SpecRow[];
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  level?: number;
+  parentId?: string | null;
+  // Field-mapping aliases (mass/weight and note/notes)
+  mass: string;
   weight?: string;
+  note: string;
+  notes?: string;
 }
 
 export const SPEC_COLUMNS = [
@@ -197,16 +204,18 @@ export interface InvoiceRow {
   unit: string;
   price: string | number;
   vatRate?: string;
-  vatAmount?: string;
+  vatAmount?: string | number;
   total: string | number;
   discount?: string | number;
   priceAfterDiscount?: string | number;
   totalBeforeDiscount?: string | number;
+  level?: number;
+  parentId?: string | null;
   match_data?: {
     target_id: string | null;
     target_name: string | null;
     score: number;
-    status: 'perfect' | 'warning' | 'none';
+    status?: 'perfect' | 'warning' | 'none';
   };
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
   is_header?: boolean;
@@ -267,15 +276,17 @@ export interface EstimateRow {
   fileId?: string;
   workType: string;
   name: string;
-  unit: string;
-  quantity: string;
-  costPrice: string;
-  clientPrice: string;
-  costSum: string;
-  clientSum: string;
+  unit?: string;
+  quantity: string | number;
+  costPrice: string | number;
+  clientPrice: string | number;
+  costSum: string | number;
+  clientSum: string | number;
   supplier: string;
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
   is_header?: boolean;
+  level?: number;
+  parentId?: string | null;
 }
 
 interface DataContextType {
@@ -1957,6 +1968,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // ГЛОБАЛЬНАЯ ОЧИСТКА ПУСТЫХ СТРОК
     let result = baseRows.filter(r => !isActuallyEmpty(r));
 
+    // АВТО-РАСЧЕТ ИЕРАРХИИ (Спецификации)
+    if (currentStage === 'spec') {
+      result = calculateHierarchy(result);
+    }
+
     // 2. ФИЛЬТР НАВИГАТОРА (Работает только на оригинальном порядке!)
     if (activeHeaderIds.length > 0 && (viewMode === 'original' || viewMode === 'merged')) {
       result = applyNavigatorFilter(result, activeHeaderIds);
@@ -2492,33 +2508,56 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     if (viewMode === 'supplier') {
       const grouped = getSupplierRows(baseRows, sortConfig);
-      return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] as any[] }));
+      return grouped.map((r: any) => ({ 
+        id: r.id, 
+        name: r.name, 
+        row_type: 'SUPPLIER', 
+        children: [] as any[],
+        count: r.children?.length || 0 
+      }));
+    }
+
+    let processedBaseRows = baseRows;
+    if (currentStage === 'spec') {
+      processedBaseRows = calculateHierarchy(baseRows.filter(r => !(r.is_header && (!r.name || !r.name.trim()))));
     }
 
     const tree: any[] = [];
-    let currentL0: any = null;
-    let currentL1: any = null;
+    const nodes: Record<string, any> = {};
 
-    baseRows.forEach(r => {
-      // Use row_type as primary signal — robust regardless of is_header value in cached data
-      const type = r.row_type;
-      if (!type || type === 'ITEM') return;
-      // Skip rows with empty or blank names
-      if (!r.name || !r.name.trim()) return;
+    processedBaseRows.forEach(row => {
+      if (!row.name || !row.name.trim()) return;
+      const level = typeof row.level === 'number' ? row.level : (row.is_header ? 1 : 0);
+      if (level > 0 || row.is_header) {
+        nodes[row.id] = { 
+          id: row.id, 
+          name: row.name.trim(), 
+          row_type: row.row_type, 
+          level: level,
+          parentId: row.parentId, 
+          children: [] as any[], 
+          count: 0 
+        };
+      }
+    });
 
-      const node = { id: r.id, name: r.name.trim(), row_type: type, children: [] as any[] };
-      if (type === 'WORK_TYPE') {
-        currentL0 = node;
-        currentL1 = null;
-        tree.push(node);
-      } else if (type === 'LOCATION') {
-        currentL1 = node;
-        if (currentL0) currentL0.children.push(node);
-        else tree.push(node);
-      } else if (type === 'GROUP') {
-        if (currentL1) currentL1.children.push(node);
-        else if (currentL0) currentL0.children.push(node);
-        else tree.push(node);
+    processedBaseRows.forEach(row => {
+      if (!row.name || !row.name.trim()) return;
+      const level = typeof row.level === 'number' ? row.level : (row.is_header ? 1 : 0);
+      
+      if (level === 0 && !row.is_header) {
+        let currId = row.parentId;
+        while(currId && nodes[currId]) {
+          nodes[currId].count++;
+          currId = nodes[currId].parentId;
+        }
+      } else if (level > 0 || row.is_header) {
+        const node = nodes[row.id];
+        if (row.parentId && nodes[row.parentId]) {
+          nodes[row.parentId].children.push(node);
+        } else {
+          tree.push(node);
+        }
       }
     });
     return tree;
