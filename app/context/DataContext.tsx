@@ -353,6 +353,8 @@ interface DataContextType {
   // Navigation context
   viewContext: 'dashboard' | 'workspace';
   setViewContext: (ctx: 'dashboard' | 'workspace') => void;
+  activeProjectId: string | null;
+  setActiveProjectId: (id: string | null) => void;
 
   // Category management
   categories: Category[];
@@ -371,6 +373,10 @@ interface DataContextType {
   // Active category for filtering
   activeCategory: string;
   setActiveCategory: (id: string) => void;
+
+  // New project sync functions
+  saveTableData: () => Promise<void>;
+  fetchHistory: (type: 'text' | 'xlsx') => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -384,6 +390,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return 'Проект Торговый Центр "Галактика"';
   });
   const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('workspace');
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem('docok_activeProjectId');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return null;
+  });
+
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem('docok_activeProjectId', JSON.stringify(activeProjectId));
+    } else {
+      localStorage.removeItem('docok_activeProjectId');
+    }
+  }, [activeProjectId]);
 
   const [categories, setCategories] = useState<Category[]>(() => {
     try {
@@ -502,24 +523,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [projects]);
 
   const renameProject = useCallback(async (id: string, newTitle: string) => {
-    const project = projects.find(p => p.id === id);
-    if (!project) return;
-
-    const updated = { ...project, title: newTitle };
-    
     try {
-      await fetch('http://localhost:8000/api/projects/save', {
-        method: 'POST',
+      const res = await fetch(`http://localhost:8000/api/projects/${id}/rename`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated)
+        body: JSON.stringify({ title: newTitle })
       });
-      setProjects(prev => prev.map(p => p.id === id ? updated : p));
-      if (id === 'live-main') setProjectName(newTitle);
-      toast.success(`Проект переименован в "${newTitle}"`);
+      if (res.ok) {
+        setProjects(prev => prev.map(p => p.id === id ? { ...p, title: newTitle } : p));
+        if (id === activeProjectId) {
+          setProjectName(newTitle);
+        }
+        toast.success(`Проект переименован в "${newTitle}"`);
+      }
     } catch (e) {
       toast.error('Ошибка при переименовании');
     }
-  }, [projects, setProjectName]);
+  }, [activeProjectId, setProjectName]);
 
   const moveProject = useCallback(async (id: string, categoryId: string) => {
     const project = projects.find(p => p.id === id);
@@ -587,39 +607,104 @@ export function DataProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('docok_projectName', JSON.stringify(projectName));
   }, [projectName]);
 
-  const [specRows, setSpecRows] = useState<SpecRow[]>(() => {
+  const [specRows, setSpecRows] = useState<SpecRow[]>([]);
+  const [requestRows, setRequestRows] = useState<SpecRow[]>([]);
+  const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>([]);
+  const [estimateRows, setEstimateRows] = useState<EstimateRow[]>([]);
+
+  // Project-specific persistence
+  useEffect(() => {
+    if (!activeProjectId) return;
+    
+    // Cleanup workspace data before loading new
+    setSpecRows([]);
+    setRequestRows([]);
+    setInvoiceRows([]);
+    setEstimateRows([]);
+    setSelectedIds([]);
+    setActiveHeaderIds([]);
+
+    const loadLocal = (key: string) => {
+      try {
+        const saved = localStorage.getItem(`docok_p_${activeProjectId}_${key}`);
+        return saved ? JSON.parse(saved) : null;
+      } catch (e) { return null; }
+    };
+
+    const savedSpec = loadLocal('specRows');
+    if (savedSpec) setSpecRows(savedSpec);
+
+    const savedReq = loadLocal('requestRows');
+    if (savedReq) setRequestRows(savedReq);
+
+    const savedInv = loadLocal('invoiceRows');
+    if (savedInv) setInvoiceRows(savedInv);
+
+    const savedEst = loadLocal('estimateRows');
+    if (savedEst) setEstimateRows(savedEst);
+
+  }, [activeProjectId]);
+
+  const fetchHistory = useCallback((type: 'text' | 'xlsx') => {
+    if (!activeProjectId) return;
+    const url = type === 'xlsx' 
+      ? `http://localhost:8000/api/storage/history/export_xlsx?projectId=${activeProjectId}`
+      : `http://localhost:8000/api/storage/history/export?projectId=${activeProjectId}`;
+    window.open(url, '_blank');
+  }, [activeProjectId]);
+
+  const saveTableData = useCallback(async () => {
+    if (!activeProjectId) return;
+    
+    // Local persistence
+    localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
+    localStorage.setItem(`docok_p_${activeProjectId}_requestRows`, JSON.stringify(requestRows));
+    localStorage.setItem(`docok_p_${activeProjectId}_invoiceRows`, JSON.stringify(invoiceRows));
+    localStorage.setItem(`docok_p_${activeProjectId}_estimateRows`, JSON.stringify(estimateRows));
+
+    // Server-side project state sync
+    const project = projects.find(p => p.id === activeProjectId);
+    if (!project) return;
+    
+    const updated = {
+      ...project,
+      lastModified: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + ' | ' + new Date().toLocaleDateString('ru-RU'),
+    };
+    
     try {
-      const saved = localStorage.getItem('docok_specRows');
-      if (saved) {
-        const rows = JSON.parse(saved);
-        // Migrate cached rows: fix is_header/row_type inconsistencies
-        return rows.map((r: any) => {
-          // 1) Non-ITEM row_type must have is_header=true
-          if (r.row_type && r.row_type !== 'ITEM' && !r.is_header) {
-            return { ...r, is_header: true };
-          }
-          // 2) is_header=true but row_type missing or ITEM → force GROUP
-          if (r.is_header && (!r.row_type || r.row_type === 'ITEM')) {
-            return { ...r, row_type: 'GROUP' };
-          }
-          return r;
-        });
-      }
+      await fetch('http://localhost:8000/api/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      setProjects(prev => prev.map(p => p.id === activeProjectId ? updated : p));
     } catch (e) {}
-    return [];
-  });
-  const [requestRows, setRequestRows] = useState<SpecRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_requestRows'); if (saved) return JSON.parse(saved); } catch (e) { }
-    return [];
-  });
-  const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_invoiceRows'); if (saved) return JSON.parse(saved); } catch (e) { }
-    return [];
-  });
-  const [estimateRows, setEstimateRows] = useState<EstimateRow[]>(() => {
-    try { const saved = localStorage.getItem('docok_estimateRows'); if (saved) return JSON.parse(saved); } catch (e) { }
-    return [];
-  });
+  }, [activeProjectId, specRows, requestRows, invoiceRows, estimateRows, projects]);
+
+  // Sync rows to local storage whenever they change
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
+    }
+  }, [specRows, activeProjectId]);
+
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem(`docok_p_${activeProjectId}_requestRows`, JSON.stringify(requestRows));
+    }
+  }, [requestRows, activeProjectId]);
+
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem(`docok_p_${activeProjectId}_invoiceRows`, JSON.stringify(invoiceRows));
+    }
+  }, [invoiceRows, activeProjectId]);
+
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem(`docok_p_${activeProjectId}_estimateRows`, JSON.stringify(estimateRows));
+    }
+  }, [estimateRows, activeProjectId]);
 
   const [searchQuery, setSearchQueryRaw] = useState('');
   const setSearchQuery = useCallback((q: string) => {
@@ -637,10 +722,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } catch (e) { return []; }
   });
 
-  useEffect(() => { localStorage.setItem('docok_specRows', JSON.stringify(specRows)); }, [specRows]);
-  useEffect(() => { localStorage.setItem('docok_requestRows', JSON.stringify(requestRows)); }, [requestRows]);
-  useEffect(() => { localStorage.setItem('docok_invoiceRows', JSON.stringify(invoiceRows)); }, [invoiceRows]);
-  useEffect(() => { localStorage.setItem('docok_estimateRows', JSON.stringify(estimateRows)); }, [estimateRows]);
   useEffect(() => { localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); }, [completedStages]);
 
   const [configKeys, setConfigKeys] = useState<Record<string, string>>({});
@@ -745,10 +826,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     console.log(`Unmerge ${childId} from ${parentId}`);
   }, []);
 
-  // Helper to sync status (and optionally other fields) with server
   const updateFileStatusOnServer = async (fileName: string, status: FileStatus) => {
+    if (!activeProjectId) return;
     try {
-      await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}`, {
+      await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}?projectId=${activeProjectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
@@ -758,11 +839,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Load files from storage on mount
+  // Load files from storage when project changes
   useEffect(() => {
     const fetchStorageFiles = async () => {
+      if (!activeProjectId) return;
       try {
-        const res = await fetch('http://localhost:8000/api/storage/files');
+        const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
         if (res.ok) {
           const files = await res.json();
           const restoredStatuses: Record<string, UploadStatus> = {};
@@ -771,7 +853,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
               status: f.status === 'reset' ? 'reset' : 'Готово (Хранилище)',
               time: f.time,
               size: f.size,
-              // Preserve cost and tokens from server
               cost: f.cost || 0,
               tokens: f.tokens || 0,
               estimated_cost: f.estimated_cost || 0,
@@ -780,14 +861,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
               method: f.method || '',
             };
           });
-          setUploadStatuses(prev => ({ ...prev, ...restoredStatuses }));
+          setUploadStatuses(restoredStatuses);
         }
       } catch (e) {
         console.error('Failed to fetch storage files:', e);
       }
     };
     fetchStorageFiles();
-  }, []);
+  }, [activeProjectId]);
 
   // Reset pagination and selection on stage change
   useEffect(() => {
@@ -887,6 +968,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const syncProjectFilesCount = useCallback(async () => {
+    if (!activeProjectId) return;
+    
+    try {
+      // 1. Get real file list from server
+      const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
+      if (!res.ok) return;
+      const files = await res.json();
+      const count = files.length;
+      
+      // 2. Find current project state
+      const project = projects.find(p => p.id === activeProjectId);
+      if (!project) return;
+      
+      // 3. Update server-side project state
+      const updated = { ...project, filesCount: count };
+      await fetch('http://localhost:8000/api/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      
+      // 4. Update local projects list
+      setProjects(prev => prev.map(p => p.id === activeProjectId ? updated : p));
+      
+    } catch (e) {
+      console.error('Failed to sync files count:', e);
+    }
+  }, [activeProjectId, projects]);
+
   const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
@@ -913,6 +1024,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       try {
         const uploadData = new FormData();
         uploadData.append('file', file);
+        if (activeProjectId) {
+          uploadData.append('projectId', activeProjectId);
+        }
         const res = await fetch('http://localhost:8000/api/storage/upload', {
           method: 'POST',
           body: uploadData,
@@ -969,6 +1083,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
         const formData = new FormData();
         formData.append('doc_type', stage); // СТРОГО ПЕРВЫМ!
+        if (activeProjectId) {
+          formData.append('projectId', activeProjectId);
+        }
         
         // Если файл уже на сервере в хранилище — используем его ID (disk_name)
         if (serverFilename) {
@@ -1115,8 +1232,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     }
                   }));
                   setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-                  // Sync status 'Готово (ИИ)' to server
                   updateFileStatusOnServer(file.name, 'Готово (ИИ)');
+                  // Update project file count
+                  syncProjectFilesCount();
                 }
               }
             }
@@ -1127,12 +1245,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
           console.error('AI Processing error:', e);
           setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
         }
+      } else {
+        // Just uploaded without AI
+        syncProjectFilesCount();
       }
     }); // closes forEach
 
-  }, [yandexConfig, updateFileStatusOnServer]);
+  }, [yandexConfig, updateFileStatusOnServer, activeProjectId, syncProjectFilesCount]);
 
-  // Re-run AI processing on a file that already exists in filesMap
   const reprocessAi = useCallback(async (fileName: string) => {
     const file = filesMap[fileName];
     if (!file) return;
@@ -2313,6 +2433,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         canRedo: history.future.length > 0,
         viewContext,
         setViewContext,
+        activeProjectId,
+        setActiveProjectId,
+        saveTableData,
+        fetchHistory,
         categories: categoriesWithCounts,
         addCategory,
         deleteCategory,

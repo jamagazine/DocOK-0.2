@@ -39,34 +39,51 @@ app.add_middleware(
 )
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-STORAGE_DIR = os.path.join(os.path.dirname(__file__), "storage")
+PROJECTS_DIR = os.path.join(os.path.dirname(__file__), "projects")
+os.makedirs(PROJECTS_DIR, exist_ok=True)
 
-os.makedirs(STORAGE_DIR, exist_ok=True)
+def get_project_dir(project_id: str):
+    if not project_id:
+        raise HTTPException(status_code=400, detail="Missing project_id")
+    p_path = os.path.join(PROJECTS_DIR, project_id)
+    os.makedirs(p_path, exist_ok=True)
+    return p_path
 
-MANIFEST_FILE = os.path.join(STORAGE_DIR, "manifest.json")
-HISTORY_FILE = os.path.join(STORAGE_DIR, "history.json")
+def get_files_dir(project_id: str):
+    f_path = os.path.join(get_project_dir(project_id), "files")
+    os.makedirs(f_path, exist_ok=True)
+    return f_path
 
-def _load_manifest():
-    if not os.path.exists(MANIFEST_FILE):
+def get_manifest_path(project_id: str):
+    return os.path.join(get_project_dir(project_id), "manifest.json")
+
+def get_history_path(project_id: str):
+    return os.path.join(get_project_dir(project_id), "history.json")
+
+def _load_manifest(project_id: str):
+    manifest_file = get_manifest_path(project_id)
+    if not os.path.exists(manifest_file):
         return {}
     try:
-        with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
+        with open(manifest_file, "r", encoding="utf-8") as f:
             return json.load(f)
     except:
         return {}
 
-def _save_manifest(manifest):
+def _save_manifest(manifest, project_id: str):
+    manifest_file = get_manifest_path(project_id)
     try:
-        with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+        with open(manifest_file, "w", encoding="utf-8") as f:
             json.dump(manifest, f, ensure_ascii=False, indent=4)
     except Exception as e:
         print(f"Error saving manifest: {e}")
 
-def append_history(action_data: dict):
+def append_history(action_data: dict, project_id: str):
+    history_file = get_history_path(project_id)
     history = []
-    if os.path.exists(HISTORY_FILE):
+    if os.path.exists(history_file):
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            with open(history_file, "r", encoding="utf-8") as f:
                 history = json.load(f)
         except Exception:
             pass
@@ -76,7 +93,7 @@ def append_history(action_data: dict):
         
     history.append(action_data)
     
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+    with open(history_file, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 def get_yandex_keys():
@@ -106,12 +123,13 @@ def load_prompt(name: str) -> str:
         return ""
 
 @app.get("/api/storage/history/export")
-async def export_history():
-    if not os.path.exists(HISTORY_FILE):
+async def export_history(projectId: str):
+    history_file = get_history_path(projectId)
+    if not os.path.exists(history_file):
         return PlainTextResponse("История пуста")
         
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+        with open(history_file, "r", encoding="utf-8") as f:
             history = json.load(f)
             
         lines = ["Дата | Файл | Модель | Режим | Цена | Токены | Статус"]
@@ -130,12 +148,13 @@ async def export_history():
         return PlainTextResponse(f"Ошибка чтения: {e}")
 
 @app.get("/api/storage/history/export_xlsx")
-async def export_history_xlsx():
-    if not os.path.exists(HISTORY_FILE):
+async def export_history_xlsx(projectId: str):
+    history_file = get_history_path(projectId)
+    if not os.path.exists(history_file):
         return PlainTextResponse("История пуста")
         
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+        with open(history_file, "r", encoding="utf-8") as f:
             history = json.load(f)
             
         if not history:
@@ -214,6 +233,7 @@ async def save_config(request: Request):
 
 @app.post("/api/process-invoice")
 async def process_invoice(
+    projectId: str = Form(...),
     file: UploadFile | None = File(None),
     file_id: str | None = Form(None),
     doc_type: str = Form("invoice"),
@@ -230,12 +250,12 @@ async def process_invoice(
 
     if file_id:
         disk_name = file_id
-        manifest = _load_manifest()
+        manifest = _load_manifest(projectId)
         original_name = manifest.get(disk_name, {}).get("originalName", disk_name)
     elif file:
         original_name = file.filename
         secured_name = secure_filename(transliterate(original_name))
-        manifest = _load_manifest()
+        manifest = _load_manifest(projectId)
         disk_name = secured_name
         for k, v in manifest.items():
             if isinstance(v, dict) and (v.get("originalName") == original_name or v.get("original_name") == original_name):
@@ -244,8 +264,9 @@ async def process_invoice(
         raise HTTPException(status_code=400, detail="Require file or file_id")
 
     filename = original_name.lower()
-    temp_path = os.path.join(STORAGE_DIR, disk_name)
-    cache_path = os.path.join(STORAGE_DIR, f"{disk_name}.json")
+    files_dir = get_files_dir(projectId)
+    temp_path = os.path.join(files_dir, disk_name)
+    cache_path = os.path.join(files_dir, f"{disk_name}.json")
     is_spreadsheet = filename.endswith((".xlsx", ".xls", ".csv"))
 
     if file and not os.path.exists(temp_path):
@@ -307,7 +328,7 @@ async def process_invoice(
                 
                 # Debug prompt
                 try:
-                    with open(os.path.join(STORAGE_DIR, "last_prompt.txt"), "w", encoding="utf-8") as f:
+                    with open(os.path.join(get_project_dir(project_id), "last_prompt.txt"), "w", encoding="utf-8") as f:
                         f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== TEXT ===\n{extracted_text[:1000]}...")
                 except: pass
 
@@ -338,7 +359,7 @@ async def process_invoice(
             final_struct.update({"cost": cost, "method": p_method, "usage": {"total_tokens": total_tokens}})
             
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
-            append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"})
+            append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, project_id)
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
         except Exception as e:
             import traceback
@@ -363,11 +384,11 @@ async def match_items_endpoint(request: Request):
     return {"invoice_items": invoice_items}
 
 @app.post("/api/storage/upload")
-async def storage_upload(file: UploadFile = File(...)):
+async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...)):
     original_filename = file.filename
     transliterated_name = transliterate(original_filename)
     secured_name = secure_filename(transliterated_name)
-    dest_path = os.path.join(STORAGE_DIR, secured_name)
+    dest_path = os.path.join(get_files_dir(projectId), secured_name)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
         
@@ -408,7 +429,7 @@ async def storage_upload(file: UploadFile = File(...)):
         except Exception as e:
             print(f"Error estimating cost: {e}")
             
-    manifest = _load_manifest()
+    manifest = _load_manifest(projectId)
     existing = manifest.get(secured_name, {})
     manifest[secured_name] = {
         "originalName": original_filename,
@@ -420,11 +441,11 @@ async def storage_upload(file: UploadFile = File(...)):
         "estimated_cost": estimated_cost,
         "estimated_tokens": estimated_tokens
     }
-    _save_manifest(manifest)
+    _save_manifest(manifest, projectId)
     
     append_history({
         "fileName": original_filename, "method": "", "model": "", "cost": 0, "tokens": 0, "status": "UPLOAD"
-    })
+    }, projectId)
     
     return {
         "status": "success", 
@@ -435,52 +456,51 @@ async def storage_upload(file: UploadFile = File(...)):
     }
 
 @app.get("/api/storage/files")
-async def storage_list():
-    manifest = _load_manifest()
+async def storage_list(projectId: str):
+    manifest = _load_manifest(projectId)
     files = []
-    if os.path.exists(STORAGE_DIR):
-        for f in os.listdir(STORAGE_DIR):
-            if f in ["manifest.json", "last_prompt.txt"] or f.startswith('.') or f.endswith((".json", ".md")): continue
+    files_dir = get_files_dir(projectId)
+    if os.path.exists(files_dir):
+        for f in os.listdir(files_dir):
+            if f.startswith('.') or f.endswith((".json", ".md")): continue
             entry = manifest.get(f, {})
             files.append({"name": entry.get("originalName", f), "disk_name": f, "status": entry.get("status", "ok"), "cost": entry.get("cost", 0)})
     return files
 
 @app.patch("/api/storage/files/{name}")
-async def storage_update_file(name: str, data: dict):
-    m = _load_manifest()
+async def storage_update_file(name: str, projectId: str, data: dict):
+    m = _load_manifest(projectId)
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name:
             v.update({ki: vi for ki, vi in data.items() if ki in ["status", "cost", "tokens"]})
-            _save_manifest(m); return {"ok": True}
+            _save_manifest(m, projectId); return {"ok": True}
     raise HTTPException(status_code=404)
 
 @app.delete("/api/storage/files/{name}")
-async def storage_delete(name: str, nuclear: bool = False):
-    m = _load_manifest()
+async def storage_delete(name: str, projectId: str, nuclear: bool = False):
+    m = _load_manifest(projectId)
     dk = None
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
     if not dk: dk = secure_filename(name)
+    files_dir = get_files_dir(projectId)
     for ext in ["", ".json", ".md"]:
-        p = os.path.join(STORAGE_DIR, dk + ext)
+        p = os.path.join(files_dir, dk + ext)
         if os.path.exists(p): os.remove(p)
-    if dk in m: del m[dk]; _save_manifest(m)
+    if dk in m: del m[dk]; _save_manifest(m, projectId)
     return {"status": "success"}
 
 @app.get("/api/storage/files/{name}")
-async def storage_get(name: str):
-    m = _load_manifest()
+async def storage_get(name: str, projectId: str):
+    m = _load_manifest(projectId)
     dk = None
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
-    p = os.path.join(STORAGE_DIR, dk or secure_filename(name))
+    p = os.path.join(get_files_dir(projectId), dk or secure_filename(name))
     if os.path.exists(p): return FileResponse(p)
     raise HTTPException(status_code=404)
 
 # --- Project Management ---
-
-PROJECTS_DIR = os.path.join(os.path.dirname(__file__), "projects")
-os.makedirs(PROJECTS_DIR, exist_ok=True)
 
 @app.get("/api/projects")
 async def list_projects():
@@ -556,6 +576,32 @@ async def create_project(data: dict):
         json.dump(state, f, ensure_ascii=False, indent=4)
         
     return state
+
+@app.patch("/api/projects/{project_id}/rename")
+async def rename_project(project_id: str, data: dict):
+    new_title = data.get("title")
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Missing title")
+        
+    p_path = os.path.join(PROJECTS_DIR, project_id)
+    state_file = os.path.join(p_path, "project_state.json")
+    
+    if not os.path.exists(state_file):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    try:
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+            
+        state["title"] = new_title
+        state["updatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
+            
+        return {"status": "success", "title": new_title}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rename project: {e}")
 
 @app.get("/api/projects/{project_id}/download")
 async def download_project(project_id: str, background_tasks: BackgroundTasks):

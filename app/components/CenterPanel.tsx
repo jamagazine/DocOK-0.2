@@ -40,7 +40,9 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
     setSelectedIds,
     setIsOnlySelectedView,
     projectName,
-    setProjectName
+    setProjectName,
+    activeProjectId,
+    renameProject
   } = useData();
 
   const [isEditingName, setIsEditingName] = React.useState(false);
@@ -61,6 +63,13 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
     setIsOnlySelectedView(false);
   }, [currentStage, setCurrentPage, setSelectedIds, setIsOnlySelectedView]);
 
+  const handleRename = () => {
+    setIsEditingName(false);
+    if (activeProjectId) {
+      renameProject(activeProjectId, projectName);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
       <div className="flex flex-col h-full flex-1 min-h-0">
@@ -72,8 +81,8 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
                 type="text"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
-                onBlur={() => setIsEditingName(false)}
-                onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)}
+                onBlur={handleRename}
+                onKeyDown={(e) => e.key === 'Enter' && handleRename()}
                 className="text-sm font-bold text-slate-900 bg-slate-100 rounded-md px-2 py-1 outline-none ring-2 ring-indigo-500 w-full max-w-sm"
               />
             ) : (

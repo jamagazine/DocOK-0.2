@@ -266,13 +266,12 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
 // ─── Hybrid Action Card ────────────────────────────────────────────────────────
 
 function HybridActionCard() {
-  const { addProject, activeCategory, setViewContext, setProjectName } = useData();
+  const { addProject, activeCategory, setViewContext, setProjectName, setActiveProjectId } = useData();
 
   const handleCreate = async () => {
     const newProj = await addProject('Новый проект', activeCategory);
     if (newProj) {
-      // In a real app we'd load the project data here.
-      // For now, we update the global project name and enter workspace.
+      setActiveProjectId(newProj.id);
       setProjectName(newProj.title);
       setViewContext('workspace');
     }
@@ -327,7 +326,9 @@ export function DashboardCenterPanel() {
   const { 
     projects, 
     activeCategory, 
-    setViewContext 
+    setViewContext,
+    setActiveProjectId,
+    setProjectName
   } = useData();
   
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -346,7 +347,11 @@ export function DashboardCenterPanel() {
     return p.categoryId === activeCategory;
   });
 
-  const openProject = () => setViewContext('workspace');
+  const openProject = (project: Project) => {
+    setActiveProjectId(project.id);
+    setProjectName(project.title);
+    setViewContext('workspace');
+  };
 
   return (
     <div className="flex flex-col flex-1 bg-white relative min-w-0 h-full">
@@ -398,7 +403,7 @@ export function DashboardCenterPanel() {
                 <ProjectCard
                   key={p.id}
                   project={p}
-                  onClick={openProject}
+                  onClick={() => openProject(p)}
                 />
               ))}
             </div>
