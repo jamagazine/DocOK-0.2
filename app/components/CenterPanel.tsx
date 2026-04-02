@@ -401,8 +401,11 @@ function SpecTable() {
     setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
-  const toggleCollapse = React.useCallback((id: string) => {
-    setExpandedHeaderIds(prev => ({ ...prev, [id]: !prev[id] }));
+  const toggleCollapse = React.useCallback((id: string, defaultExpanded: boolean) => {
+    setExpandedHeaderIds(prev => {
+      const current = prev[id] !== undefined ? prev[id] : defaultExpanded;
+      return { ...prev, [id]: !current };
+    });
   }, []);
 
   const columns: Column[] = [
@@ -443,12 +446,12 @@ function SpecTable() {
       const renderedRow = (isSupplierMode && row.row_type === 'GROUP') ? { ...row, children: undefined } : row;
       res.push(renderedRow);
       
-      // ШАГ 3: Если включен фильтр «Только выделенные», игнорируем схлопывание
       // ПО УМОЛЧАНИЮ ВСЁ СКРЫТО (кроме поставщиков и оригинала), если ID нет в expandedHeaderIds
       const isRowSupplier = String(row.id).startsWith('supplier_header_');
+      const defaultExpanded = isRowSupplier || viewMode === 'original';
       const isExpanded = expandedHeaderIds[row.id] !== undefined 
         ? expandedHeaderIds[row.id] 
-        : (isRowSupplier || viewMode === 'original'); // Поставщики и Оригинал развернуты по умолчанию
+        : defaultExpanded;
 
       if (row.is_header && !isExpanded && !isOnlySelectedView) {
         hideUntilLevel = level;
@@ -495,12 +498,17 @@ function SpecTable() {
                 toggleExpand={toggleExpand}
                 isCollapsed={(() => {
                   const isRowSupplier = String(row.id).startsWith('supplier_header_');
-                  // В режиме Оригинал и для Поставщиков по умолчанию FALSE (развернуто)
-                  // Для Сводной (merged) по умолчанию TRUE (свернуто)
-                  if (expandedHeaderIds[row.id] !== undefined) return !expandedHeaderIds[row.id];
-                  return !(viewMode === 'original' || isRowSupplier);
+                  const defaultExpanded = isRowSupplier || viewMode === 'original';
+                  const isExpanded = expandedHeaderIds[row.id] !== undefined 
+                    ? expandedHeaderIds[row.id] 
+                    : defaultExpanded;
+                  return !isExpanded;
                 })()}
-                toggleCollapse={toggleCollapse}
+                toggleCollapse={(id) => {
+                  const isRowSupplier = String(id).startsWith('supplier_header_');
+                  const defaultExpanded = isRowSupplier || viewMode === 'original';
+                  toggleCollapse(id, defaultExpanded);
+                }}
                 onKeyDown={handleKeyDown}
               />
             ))}
