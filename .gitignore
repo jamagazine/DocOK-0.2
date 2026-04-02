@@ -47,6 +47,7 @@ pids
 *.pid.lock
 _legacy/
 server/storage/
+data/projects/
 # --- Данные пользователя ---
 server/projects/
 !server/projects/.gitkeep
