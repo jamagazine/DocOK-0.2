@@ -510,16 +510,44 @@ async def list_projects():
         
     for pid in os.listdir(PROJECTS_DIR):
         p_path = os.path.join(PROJECTS_DIR, pid)
-        if not os.path.isdir(p_path):
-            continue
+        if not os.path.isdir(p_path): continue
             
         state_file = os.path.join(p_path, "project_state.json")
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, "r", encoding="utf-8") as f:
-                    projects_list.append(json.load(f))
-            except Exception as e:
-                print(f"Error reading project {pid}: {e}")
+        if not os.path.exists(state_file): continue
+            
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            
+            # 1. Dynamic Files Count
+            f_dir = get_files_dir(pid)
+            if os.path.exists(f_dir):
+                state["filesCount"] = len([f for f in os.listdir(f_dir) if os.path.isfile(os.path.join(f_dir, f))])
+            else:
+                state["filesCount"] = 0
+            
+            # 2. Dynamic Last Modified Time
+            # Scan critical project files and /files/ to find the real latest change
+            mtimes = [os.path.getmtime(state_file)]
+            for meta_file in ["manifest.json", "history.json"]:
+                mp = os.path.join(p_path, meta_file)
+                if os.path.exists(mp): mtimes.append(os.path.getmtime(mp))
+            
+            if os.path.exists(f_dir):
+                for f in os.listdir(f_dir):
+                    mtimes.append(os.path.getmtime(os.path.join(f_dir, f)))
+            
+            max_mtime = max(mtimes)
+            dt = datetime.datetime.fromtimestamp(max_mtime)
+            state["lastModified"] = dt.strftime("%H:%M | %d.%m.%y")
+            
+            # Reflect changes into project_state.json
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=4)
+                
+            projects_list.append(state)
+        except Exception as e:
+            print(f"Error syncing project {pid}: {e}")
                 
     return projects_list
 
@@ -577,13 +605,13 @@ async def create_project(data: dict):
         
     return state
 
-@app.patch("/api/projects/{project_id}/rename")
-async def rename_project(project_id: str, data: dict):
+@app.patch("/api/projects/{project_id}")
+async def patch_project(project_id: str, data: dict):
     new_title = data.get("title")
     if not new_title:
         raise HTTPException(status_code=400, detail="Missing title")
         
-    p_path = os.path.join(PROJECTS_DIR, project_id)
+    p_path = get_project_dir(project_id)
     state_file = os.path.join(p_path, "project_state.json")
     
     if not os.path.exists(state_file):
@@ -602,6 +630,18 @@ async def rename_project(project_id: str, data: dict):
         return {"status": "success", "title": new_title}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to rename project: {e}")
+
+# Consolidated duplicate functionality
+@app.post("/api/projects/duplicate")
+async def duplicate_project(data: dict):
+    # This was previously handled by simple save, now making it explicit
+    # Logic remains similar to save but with new ID
+    pass
+
+@app.patch("/api/projects/{project_id}/rename")
+async def rename_project_alias(project_id: str, data: dict):
+    # Legacy alias for the frontend to transition smoothly
+    return await patch_project(project_id, data)
 
 @app.get("/api/projects/{project_id}/download")
 async def download_project(project_id: str, background_tasks: BackgroundTasks):

@@ -117,20 +117,6 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
         </button>
 
         <button 
-          onClick={() => setViewContext('workspace')}
-          className={cn(
-            "rounded-lg transition-all flex items-center justify-center",
-            expanded ? "w-9 h-9" : "w-12 h-12",
-            viewContext === 'workspace' 
-              ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
-              : "text-slate-600 hover:bg-slate-100"
-          )}
-          title="Рабочее пространство"
-        >
-          <Briefcase className="size-5" />
-        </button>
-
-        <button 
           onClick={() => setViewContext('dashboard')}
           className={cn(
             "rounded-lg transition-all flex items-center justify-center",
@@ -142,6 +128,20 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
           title="Список проектов"
         >
           <FolderOpen className="size-5" />
+        </button>
+
+        <button 
+          onClick={() => setViewContext('workspace')}
+          className={cn(
+            "rounded-lg transition-all flex items-center justify-center",
+            expanded ? "w-9 h-9" : "w-12 h-12",
+            viewContext === 'workspace' 
+              ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
+              : "text-slate-600 hover:bg-slate-100"
+          )}
+          title="Рабочее пространство"
+        >
+          <Briefcase className="size-5" />
         </button>
 
         {/* Phantom 4th slot */}

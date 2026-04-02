@@ -387,9 +387,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem('docok_projectName');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    return 'Проект Торговый Центр "Галактика"';
+    return 'Новый проект';
   });
-  const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('workspace');
+  const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('dashboard');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
     try {
       const saved = localStorage.getItem('docok_activeProjectId');
@@ -453,13 +453,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const res = await fetch('http://localhost:8000/api/projects');
         if (res.ok) {
           const data = await res.json();
-          if (data && data.length > 0) {
+          if (data && Array.isArray(data)) {
             setProjects(data);
-          } else {
-            // Default if none exists
-            setProjects([
-              { id: 'live-main', title: projectName, filesCount: 1, lastModified: 'Сегодня', progress: 50, status: 'current', categoryId: 'active', version: "1.0" }
-            ]);
           }
         }
       } catch (e) {
@@ -524,7 +519,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const renameProject = useCallback(async (id: string, newTitle: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/projects/${id}/rename`, {
+      const res = await fetch(`http://localhost:8000/api/projects/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle })
