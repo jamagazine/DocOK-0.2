@@ -160,10 +160,6 @@ function AppContent() {
               onToggle={() => setLeftExpanded(!leftExpanded)}
             />
             <DashboardCenterPanel />
-            <DashboardRightPanel
-              expanded={rightExpanded}
-              onToggle={() => setRightExpanded(!rightExpanded)}
-            />
           </div>
         )}
       </div>

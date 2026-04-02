@@ -476,14 +476,83 @@ async def storage_get(name: str):
     if os.path.exists(p): return FileResponse(p)
     raise HTTPException(status_code=404)
 
-# --- Project Management Stubs ---
+# --- Project Management ---
+
+PROJECTS_DIR = os.path.join(os.path.dirname(__file__), "projects")
+os.makedirs(PROJECTS_DIR, exist_ok=True)
+
+@app.get("/api/projects")
+async def list_projects():
+    projects_list = []
+    if not os.path.exists(PROJECTS_DIR):
+        return []
+        
+    for pid in os.listdir(PROJECTS_DIR):
+        p_path = os.path.join(PROJECTS_DIR, pid)
+        if not os.path.isdir(p_path):
+            continue
+            
+        state_file = os.path.join(p_path, "project_state.json")
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    projects_list.append(json.load(f))
+            except Exception as e:
+                print(f"Error reading project {pid}: {e}")
+                
+    return projects_list
+
+@app.post("/api/projects/save")
+async def save_project(state: dict = Body(...)):
+    pid = state.get("id")
+    if not pid:
+        raise HTTPException(status_code=400, detail="Missing project id")
+        
+    p_path = os.path.join(PROJECTS_DIR, pid)
+    os.makedirs(p_path, exist_ok=True)
+    
+    state["updatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if "createdAt" not in state:
+        state["createdAt"] = state["updatedAt"]
+        
+    state_file = os.path.join(p_path, "project_state.json")
+    try:
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
+        return {"status": "success", "id": pid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save project: {e}")
 
 @app.post("/api/projects/duplicate")
 async def duplicate_project(data: dict):
-    # In a real app, this would copy folders in STORAGE_DIR
-    return {"status": "success", "message": "Project folder duplicated (stub)"}
+    old_id = data.get("id")
+    new_id = f"copy_{old_id}_{int(datetime.datetime.now().timestamp())}"
+    
+    old_path = os.path.join(PROJECTS_DIR, old_id)
+    new_path = os.path.join(PROJECTS_DIR, new_id)
+    
+    if os.path.exists(old_path):
+        shutil.copytree(old_path, new_path)
+        
+        # Update the id in project_state.json
+        state_file = os.path.join(new_path, "project_state.json")
+        if os.path.exists(state_file):
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            state["id"] = new_id
+            state["title"] = f"{state.get('title', 'Project')} — Копия"
+            state["createdAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=4)
+                
+        return {"status": "success", "id": new_id}
+    
+    raise HTTPException(status_code=404, detail="Project not found")
 
 @app.delete("/api/projects/delete/{project_id}")
-async def delete_project(project_id: str):
-    # In a real app, this would delete folders in STORAGE_DIR
-    return {"status": "success", "message": "Project folder deleted (stub)"}
+async def delete_project_endpoint(project_id: str):
+    p_path = os.path.join(PROJECTS_DIR, project_id)
+    if os.path.exists(p_path):
+        shutil.rmtree(p_path)
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="Project not found")

@@ -420,102 +420,144 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const saved = localStorage.getItem('docok_projects');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    // Default stubs
-    return [
-      { id: 'live-main', title: projectName, filesCount: 1, lastModified: 'Сегодня', progress: 50, status: 'current', categoryId: 'active' },
-      { id: 'stub-1', title: 'ЖК Скандинавия — инженерные системы', filesCount: 12, lastModified: '27 мар', progress: 65,  status: 'active',  categoryId: 'active' },
-      { id: 'stub-2', title: 'Тендер: Вентиляция ТЦ «Европолис»',   filesCount: 5,  lastModified: '14 мар', progress: 30,  status: 'tender',  categoryId: 'tender' },
-      { id: 'stub-3', title: 'БЦ Сити — слаботочка и ОПС',          filesCount: 8,  lastModified: '2 янв',  progress: 100, status: 'archive', categoryId: 'archive' },
-    ];
-  });
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
 
+  // Fetch projects from backend
   useEffect(() => {
-    localStorage.setItem('docok_projects', JSON.stringify(projects));
-  }, [projects]);
+    const fetchProjects = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/projects');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.length > 0) {
+            setProjects(data);
+          } else {
+            // Default if none exists
+            setProjects([
+              { id: 'live-main', title: projectName, filesCount: 1, lastModified: 'Сегодня', progress: 50, status: 'current', categoryId: 'active' }
+            ]);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch projects:', e);
+      } finally {
+        setIsLoadingProjects(false);
+      }
+    };
+    fetchProjects();
+  }, []); // Only on mount
 
-  // Handle case where global projectName changes (e.g. from renaming live project)
-  useEffect(() => {
-    setProjects(prev => prev.map(p => p.id === 'live-main' ? { ...p, title: projectName } : p));
-  }, [projectName]);
+  // Sync projects to backend when they change (handled by explicit actions now)
 
-  const addProject = useCallback((title: string) => {
+  const addProject = useCallback(async (title: string) => {
     const newProject: Project = {
       id: genId(),
       title,
       filesCount: 0,
-      lastModified: 'Сегодня',
+      lastModified: new Date().toLocaleString('ru-RU'),
       progress: 0,
       status: 'active',
       categoryId: 'all'
     };
-    setProjects(prev => [...prev, newProject]);
-    toast.success(`Проект "${title}" создан`);
+    
+    try {
+      await fetch('http://localhost:8000/api/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProject)
+      });
+      setProjects(prev => [...prev, newProject]);
+      toast.success(`Проект "${title}" создан`);
+    } catch (e) {
+      toast.error('Ошибка сохранения проекта на сервере');
+    }
   }, []);
 
   const duplicateProject = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
     if (!project) return;
     
-    // Backend stub call
     try {
-      await fetch('http://localhost:8000/api/projects/duplicate', {
+      const res = await fetch('http://localhost:8000/api/projects/duplicate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, title: project.title })
       });
+      if (res.ok) {
+        const data = await res.json();
+        const newProject: Project = {
+          ...project,
+          id: data.id,
+          title: `${project.title} — Копия`,
+          lastModified: new Date().toLocaleString('ru-RU')
+        };
+        setProjects(prev => [...prev, newProject]);
+        toast.success(`Создана копия проекта "${project.title}"`);
+      }
     } catch (e) {
-      console.warn('Backend duplicate failed (stub only)', e);
+      toast.error('Ошибка при копировании проекта');
     }
-
-    const newProject: Project = {
-      ...project,
-      id: genId(),
-      title: `${project.title} — Копия`,
-      lastModified: 'Сегодня'
-    };
-    setProjects(prev => [...prev, newProject]);
-    toast.success(`Создана копия проекта "${project.title}"`);
   }, [projects]);
 
-  const renameProject = useCallback((id: string, newTitle: string) => {
-    setProjects(prev => prev.map(p => p.id === id ? { ...p, title: newTitle } : p));
-    if (id === 'live-main') setProjectName(newTitle);
-    toast.success(`Проект переименован в "${newTitle}"`);
-  }, [setProjectName]);
+  const renameProject = useCallback(async (id: string, newTitle: string) => {
+    const project = projects.find(p => p.id === id);
+    if (!project) return;
 
-  const moveProject = useCallback((id: string, categoryId: string) => {
+    const updated = { ...project, title: newTitle };
+    
+    try {
+      await fetch('http://localhost:8000/api/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      setProjects(prev => prev.map(p => p.id === id ? updated : p));
+      if (id === 'live-main') setProjectName(newTitle);
+      toast.success(`Проект переименован в "${newTitle}"`);
+    } catch (e) {
+      toast.error('Ошибка при переименовании');
+    }
+  }, [projects, setProjectName]);
+
+  const moveProject = useCallback(async (id: string, categoryId: string) => {
+    const project = projects.find(p => p.id === id);
+    if (!project) return;
+
     const category = categories.find(c => c.id === categoryId);
-    setProjects(prev => prev.map(p => {
-      if (p.id !== id) return p;
-      // If moving to a system folder (active/archive/tender), update the status too
-      const isSystem = categoryId === 'active' || categoryId === 'archive' || categoryId === 'tender';
-      return { 
-        ...p, 
-        categoryId, 
-        status: isSystem ? (categoryId as ProjectStatus) : p.status 
-      };
-    }));
-    toast.success(`Проект перемещен в "${category?.label || categoryId}"`);
-  }, [categories]);
+    const isSystem = categoryId === 'active' || categoryId === 'archive' || categoryId === 'tender';
+    const updated = { 
+      ...project, 
+      categoryId, 
+      status: isSystem ? (categoryId as ProjectStatus) : project.status 
+    };
+
+    try {
+      await fetch('http://localhost:8000/api/projects/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      setProjects(prev => prev.map(p => p.id === id ? updated : p));
+      toast.success(`Проект перемещен в "${category?.label || categoryId}"`);
+    } catch (e) {
+      toast.error('Ошибка при перемещении');
+    }
+  }, [projects, categories]);
 
   const deleteProject = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
     if (!project) return;
 
-    // Backend stub call
     try {
-      await fetch(`http://localhost:8000/api/projects/delete/${id}`, { method: 'DELETE' });
+      const res = await fetch(`http://localhost:8000/api/projects/delete/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setProjects(prev => prev.filter(p => p.id !== id));
+        toast.success(`Проект "${project.title}" удален`);
+      }
     } catch (e) {
-      console.warn('Backend delete failed (stub only)', e);
+      toast.error('Ошибка при удалении проекта');
     }
-
-    setProjects(prev => prev.filter(p => p.id !== id));
-    toast.success(`Проект "${project.title}" удален`);
   }, [projects]);
 
   // Dynamic counts for categories

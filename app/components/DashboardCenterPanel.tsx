@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import {
   Search,
   Building2,
@@ -8,7 +9,9 @@ import {
   Pencil,
   Copy,
   FolderOpen,
-  Trash2
+  Trash2,
+  Plus,
+  FolderInput,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -254,6 +257,39 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
   );
 }
 
+// ─── Hybrid Action Card ────────────────────────────────────────────────────────
+
+function HybridActionCard() {
+  const { addProject } = useData();
+
+  return (
+    <div className="group flex flex-col h-[200px] bg-white rounded-2xl border border-slate-200 overflow-hidden transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 hover:border-indigo-200">
+      {/* Top (70%): Create New Project */}
+      <div 
+        onClick={(e) => { e.stopPropagation(); addProject('Новый проект'); }}
+        className="flex-[7] flex flex-col items-center justify-center gap-3 bg-slate-50/50 hover:bg-indigo-50/50 cursor-pointer transition-colors border-b border-slate-100"
+      >
+        <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-indigo-500 group-hover:scale-110 group-hover:bg-indigo-500 group-hover:text-white transition-all shadow-sm">
+          <Plus className="size-6" />
+        </div>
+        <div className="flex flex-col items-center">
+          <span className="text-sm font-bold text-slate-800">Создать новый проект</span>
+          <span className="text-[10px] text-slate-400 mt-0.5">Личная рабочая область</span>
+        </div>
+      </div>
+
+      {/* Bottom (30%): Import Project */}
+      <div 
+        className="flex-[3] flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 cursor-pointer transition-colors"
+        onClick={(e) => { e.stopPropagation(); toast.info("Функция импорта будет доступна в следующей версии"); }}
+      >
+        <FolderInput className="size-4 text-slate-400" />
+        <span className="text-xs font-semibold text-slate-600">Импортировать проект...</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Footer strip ─────────────────────────────────────────────────────────
 
 function DashboardFooter({ count }: { count: number }) {
@@ -339,6 +375,9 @@ export function DashboardCenterPanel() {
               "grid gap-4",
               filteredProjects.length > 0 ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3" : "flex flex-col items-center justify-center h-[50vh]"
             )}>
+              {/* Hybrid Action Card first */}
+              <HybridActionCard />
+              
               {filteredProjects.length > 0 ? (
                 filteredProjects.map(p => (
                   <ProjectCard
@@ -348,9 +387,7 @@ export function DashboardCenterPanel() {
                   />
                 ))
               ) : (
-                <div className="text-center">
-                   <div className="text-slate-400 mb-2">Нет проектов в этой категории</div>
-                </div>
+                null
               )}
             </div>
           </div>
