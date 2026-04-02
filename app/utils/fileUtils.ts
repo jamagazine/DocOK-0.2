@@ -341,15 +341,33 @@ export async function exportSpecToExcel(rows: any[], filename: string, viewMode:
 
     applyBorders(mainSheetRow);
 
-    // Apply text wrapping for Name
-    const nameCell = mainSheetRow.getCell('name');
-    nameCell.alignment = { wrapText: true, vertical: 'middle' };
-
-    // Apply styling based on type
+    // Styling based on hierarchy
     if (isWorkType || isLocation) {
-      mainSheetRow.font = { bold: true };
+      // 1. SECTION (L0) - Full width Navy Ribbon
+      worksheet.mergeCells(`A${mainSheetRow.number}:I${mainSheetRow.number}`);
+      const cell = mainSheetRow.getCell(1);
+      cell.value = `§ ${String(r.name || '').toUpperCase()}`;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '312E81' } }; // Indigo-900
+      cell.font = { bold: true, color: { argb: 'FFFFFF' }, size: 12 };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      mainSheetRow.height = 25;
     } else if (isGroup) {
-      mainSheetRow.font = { bold: true };
+      // 2. GROUP (L1) - Full width Light Indigo Ribbon
+      worksheet.mergeCells(`A${mainSheetRow.number}:I${mainSheetRow.number}`);
+      const cell = mainSheetRow.getCell(1);
+      cell.value = String(r.name || '');
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E0E7FF' } }; // Indigo-100
+      cell.font = { bold: true, color: { argb: '1E1B4B' }, size: 11 }; // Indigo-950
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 2 };
+      mainSheetRow.height = 20;
+    } else {
+      // 3. ITEM - Standard Row
+      const nameCell = mainSheetRow.getCell('name');
+      nameCell.alignment = { wrapText: true, vertical: 'middle' };
+      if (isSummaryRow) {
+         mainSheetRow.font = { bold: true };
+         mainSheetRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'ECFDF5' } }; // Emerald-50
+      }
     }
 
     if (isSummaryRow && r.children && r.children.length > 0) {

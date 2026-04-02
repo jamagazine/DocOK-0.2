@@ -97,11 +97,11 @@ export const TableRow = React.memo(({
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
     // 1. Главный заголовок (Вид работ) - Чистый Индиго 600 с ярким акцентом
-    stage === 'spec' && isWorkType && "bg-indigo-600 text-white hover:bg-indigo-500 border-l-4 border-l-indigo-400 border-b border-indigo-700 shadow-md transition-all",
-    // 2. Место (Локация) - Глубокий Индиго 800 с мягким акцентом
-    stage === 'spec' && isLocation && "bg-indigo-800 text-white hover:bg-indigo-900 font-bold border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-sm transition-all",
+    stage === 'spec' && isWorkType && "bg-indigo-900 text-white hover:bg-indigo-950 border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-md transition-all",
+    // 2. Место (Локация) - Глубокий Индиго 900 с мягким акцентом
+    stage === 'spec' && isLocation && "bg-indigo-900 text-white hover:bg-indigo-950 font-black border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-sm transition-all",
     // 3. Группы - Светлое Индиго с бортом
-    stage === 'spec' && isGroup && "bg-indigo-50/50 text-indigo-900 border-l-4 border-l-indigo-500 hover:bg-indigo-100/60 transition-all",
+    stage === 'spec' && isGroup && "bg-indigo-100/60 text-indigo-900 border-l-4 border-l-indigo-500 hover:bg-indigo-200/60 transition-all",
     // 4. Поставщики - Голубой Индиго с бортом
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 text-blue-900 border-l-4 border-l-blue-400 hover:bg-blue-100/50 transition-all",
     // 5. Сводные - Изумрудный Индиго с бортом
@@ -157,6 +157,26 @@ export const TableRow = React.memo(({
                       {(isLocation && row.pos !== '§') && <MapPin className="w-4 h-4 opacity-70" />}
                       {isGroup && <Folders className="w-4 h-4 text-indigo-500/70" />}
                       {isSupplierRow && <UserCheck className="w-4 h-4 text-blue-500/70" />}
+                      
+                      {/* --- Type-Switch Manual Override --- */}
+                      {stage === 'spec' && !isSummaryRow && (
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/poscell:opacity-100 z-20">
+                           <select
+                             className="w-full h-full opacity-0 absolute inset-0 cursor-pointer"
+                             value={row.row_type || (row.is_header ? 'GROUP' : 'ITEM')}
+                             onChange={(e) => {
+                               e.stopPropagation();
+                               onUpdate(row.id, 'row_type', e.target.value);
+                             }}
+                             onClick={(e) => e.stopPropagation()}
+                           >
+                             <option value="LOCATION">Раздел (L0)</option>
+                             <option value="GROUP">Группа (L1)</option>
+                             <option value="ITEM">Позиция</option>
+                           </select>
+                           <Edit2 className="w-3 h-3 text-white/70" />
+                        </div>
+                      )}
                       
                       {/* Если есть номер — показываем номер */}
                       {((isWorkType || isLocation || isActuallyMerged) && row.pos) && (

@@ -33,7 +33,8 @@ def slugify_translit(text: str) -> str:
 from parser_utils import (
     normalize_for_match, calculate_uncertainty, 
     transliterate, secure_filename, sanitize_dataframe, 
-    convert_df_to_items, extract_text_from_pdf
+    convert_df_to_items, extract_text_from_pdf,
+    apply_structural_hierarchy
 )
 from ai_service import (
     ocr_yandex, gpt_yandex, get_token_count, 
@@ -478,6 +479,9 @@ async def process_invoice(
                             all_items = [v for v in items_dict.values() if v.get("row_type") not in ["DELETE", "IGNORE"]]
                         else:
                             all_items = gen_items
+            
+            # --- Apply structural hierarchy Look Ahead ---
+            all_items = apply_structural_hierarchy(all_items)
 
             final_struct = calculate_uncertainty({"document": main_doc or {"name": original_name}, "items": all_items}, has_low_confidence)
             rate = 1.2 if p_method == "ocr_table" else 0.2
@@ -971,3 +975,32 @@ async def delete_project_endpoint(project_id: str):
         shutil.rmtree(p_path)
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="Project not found")
+
+@app.patch("/api/projects/{project_id}/files/{filename}/rows/{row_id}")
+async def patch_row_data(project_id: str, filename: str, row_id: str, data: dict = Body(...)):
+    """Granularly update a single row in a file's JSON cache."""
+    cache_path = get_file_path(project_id, filename, ".json")
+    if not os.path.exists(cache_path):
+        raise HTTPException(status_code=404, detail="File cache not found")
+        
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            content = json.load(f)
+            
+        items = content.get("items", [])
+        found = False
+        for row in items:
+            if str(row.get("id")) == row_id:
+                row.update(data)
+                found = True
+                break
+        
+        if not found:
+            raise HTTPException(status_code=404, detail=f"Row {row_id} not found in {filename}")
+            
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(content, f, ensure_ascii=False, indent=2)
+            
+        return {"status": "success", "updated_row_id": row_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update row: {e}")

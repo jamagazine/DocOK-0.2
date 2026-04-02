@@ -2133,12 +2133,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // handleFile will call updateFileStatusOnServer(fileName, 'ok') on success
   }, [filesMap, removeFile, handleFile]);
 
-  const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: any) => {
+  const handleRowChange = useCallback(async (stage: Stage, rowId: string, field: string, value: any) => {
+    // Helper to find the original row for fileId reference
+    const findRow = (rows: any[]) => rows.find(r => r.id === rowId);
+
     if (stage === 'spec') {
+      const target = findRow(specRows);
       setSpecRows(prev => prev.map(row => {
         if (row.id !== rowId) return row;
         return { ...row, [field]: value };
       }));
+      
+      // IMMEDIATE SYNC for structural changes
+      if (field === 'row_type' && target?.fileId && activeProjectId) {
+         try {
+           fetch(`http://localhost:8000/api/projects/${activeProjectId}/files/${target.fileId}/rows/${rowId}`, {
+             method: 'PATCH',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ [field]: value })
+           });
+         } catch (e) { console.error('Failed to patch row type:', e); }
+      }
     } else if (stage === 'invoice') {
       setInvoiceRows(prev => prev.map(row => {
         if (row.id !== rowId) return row;
@@ -2400,28 +2415,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     const tree: any[] = [];
     let currentL0: any = null;
-    let currentL1: any = null;
 
     baseRows.forEach(r => {
-      // Use row_type as primary signal — robust regardless of is_header value in cached data
       const type = r.row_type;
       if (!type || type === 'ITEM') return;
-      // Skip rows with empty or blank names
       if (!r.name || !r.name.trim()) return;
 
       const node = { id: r.id, name: r.name.trim(), row_type: type, children: [] as any[] };
-      if (type === 'WORK_TYPE') {
+      
+      if (type === 'WORK_TYPE' || type === 'LOCATION') {
         currentL0 = node;
-        currentL1 = null;
         tree.push(node);
-      } else if (type === 'LOCATION') {
-        currentL1 = node;
-        if (currentL0) currentL0.children.push(node);
-        else tree.push(node);
       } else if (type === 'GROUP') {
-        if (currentL1) currentL1.children.push(node);
-        else if (currentL0) currentL0.children.push(node);
-        else tree.push(node);
+        if (currentL0) {
+          currentL0.children.push(node);
+        } else {
+          tree.push(node);
+        }
       }
     });
     return tree;

@@ -278,6 +278,54 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
 
     return items_out
 
+def apply_structural_hierarchy(rows: list) -> list:
+    """
+    Look Ahead Algorithm:
+    - LOCATION (L0): If a header is followed by another header.
+    - GROUP (L1): If a header is followed by an item (quantity/price is present).
+    """
+    def is_item(row):
+        qty = str(row.get("quantity", "")).strip()
+        price = str(row.get("price", "")).strip()
+        total = str(row.get("total", "")).strip()
+        # Non-empty and non-zero
+        def has_val(x): return x and x not in ("0", "0.0", "nan", "none")
+        return has_val(qty) or has_val(price) or has_val(total)
+
+    def is_header(row):
+        name = str(row.get("name", "")).strip()
+        return name and not is_item(row)
+
+    n = len(rows)
+    for i in range(n):
+        if is_header(rows[i]):
+            # LOOK AHEAD: find first non-empty next row
+            next_meaningful = None
+            for j in range(i + 1, n):
+                if is_header(rows[j]) or is_item(rows[j]):
+                    next_meaningful = rows[j]
+                    break
+            
+            if next_meaningful:
+                if is_header(next_meaningful):
+                    rows[i]["row_type"] = "LOCATION"
+                    rows[i]["hierarchy_level"] = 0
+                else:
+                    rows[i]["row_type"] = "GROUP"
+                    rows[i]["hierarchy_level"] = 1
+            else:
+                # Last header in document
+                rows[i]["row_type"] = "GROUP"
+                rows[i]["hierarchy_level"] = 1
+            
+            rows[i]["is_header"] = True
+        elif is_item(rows[i]):
+            rows[i]["row_type"] = "ITEM"
+            rows[i]["is_header"] = False
+            rows[i]["hierarchy_level"] = None
+
+    return rows
+
 def extract_text_from_pdf(path: str) -> str:
     ext_text = ""
     with pdfplumber.open(path) as pdf:

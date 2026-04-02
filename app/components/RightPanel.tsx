@@ -54,14 +54,12 @@ const NavNode = ({
 
   // Typography per hierarchy level
   const labelCls = level === 0
-    ? 'text-[12px] font-bold tracking-tight'
-    : level === 1
-      ? 'text-[11px] font-semibold'
-      : 'text-[11px] font-medium';
+    ? 'text-[12px] font-black tracking-tight uppercase' // L0: LOCATION
+    : 'text-[11px] font-bold'; // L1: GROUP
 
   const colorCls = isActive
     ? 'text-indigo-700'
-    : level === 0 ? 'text-slate-800' : level === 1 ? 'text-slate-700' : 'text-slate-500';
+    : level === 0 ? 'text-indigo-800' : 'text-indigo-600';
 
   return (
     <div className="flex flex-col">
