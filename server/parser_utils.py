@@ -279,50 +279,71 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
     return items_out
 
 def apply_structural_hierarchy(rows: list) -> list:
-    """
-    Look Ahead Algorithm:
-    - LOCATION (L0): If a header is followed by another header.
-    - GROUP (L1): If a header is followed by an item (quantity/price is present).
-    """
+    """Implement a 2-pass structural hierarchy with parentId and L0/L1 logic."""
+    if not rows:
+        return []
+    
+    # ── Helper for row classification ──────────────────────────────────────────
     def is_item(row):
         qty = str(row.get("quantity", "")).strip()
         price = str(row.get("price", "")).strip()
         total = str(row.get("total", "")).strip()
         # Non-empty and non-zero
-        def has_val(x): return x and x not in ("0", "0.0", "nan", "none")
+        def has_val(x): return x and x not in ("0", "0.0", "nan", "none", "None")
         return has_val(qty) or has_val(price) or has_val(total)
 
     def is_header(row):
         name = str(row.get("name", "")).strip()
         return name and not is_item(row)
 
+    # ── PASS 1: Type Determination (Look-Ahead) ──────────────────────────────
     n = len(rows)
     for i in range(n):
-        if is_header(rows[i]):
-            # LOOK AHEAD: find first non-empty next row
+        row = rows[i]
+        if is_header(row):
+            # Look ahead for the next relevant (non-empty) row
             next_meaningful = None
             for j in range(i + 1, n):
                 if is_header(rows[j]) or is_item(rows[j]):
                     next_meaningful = rows[j]
                     break
             
-            if next_meaningful:
-                if is_header(next_meaningful):
-                    rows[i]["row_type"] = "LOCATION"
-                    rows[i]["hierarchy_level"] = 0
-                else:
-                    rows[i]["row_type"] = "GROUP"
-                    rows[i]["hierarchy_level"] = 1
+            # Header A -> Header B => Location (L0)
+            # Header A -> Item => Group (L1)
+            if next_meaningful and is_header(next_meaningful):
+                row["row_type"] = "LOCATION"
             else:
-                # Last header in document
-                rows[i]["row_type"] = "GROUP"
-                rows[i]["hierarchy_level"] = 1
+                row["row_type"] = "GROUP"
+            row["is_header"] = True
+        elif is_item(row):
+            row["row_type"] = "ITEM"
+            row["is_header"] = False
+
+    # ── PASS 2: parentId Assignment (State Stack) ─────────────────────────────
+    current_l0_id = None
+    current_l1_id = None
+
+    for row in rows:
+        rtype = row.get("row_type")
+        
+        if rtype == "LOCATION":
+            row["parentId"] = None
+            current_l0_id = row.get("id")
+            current_l1_id = None # Reset Group on new Location
             
-            rows[i]["is_header"] = True
-        elif is_item(rows[i]):
-            rows[i]["row_type"] = "ITEM"
-            rows[i]["is_header"] = False
-            rows[i]["hierarchy_level"] = None
+        elif rtype == "GROUP":
+            # Parent of a Group is always the active Location (if exists)
+            row["parentId"] = current_l0_id
+            current_l1_id = row.get("id")
+            
+        elif rtype == "ITEM":
+            # Priority: Group ID -> Location ID -> None
+            if current_l1_id:
+                row["parentId"] = current_l1_id
+            elif current_l0_id:
+                row["parentId"] = current_l0_id
+            else:
+                row["parentId"] = None
 
     return rows
 

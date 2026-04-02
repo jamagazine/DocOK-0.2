@@ -2151,6 +2151,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
              method: 'PATCH',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify({ [field]: value })
+           })
+           .then(res => res.json())
+           .then(data => {
+              if (data.status === 'success' && data.items) {
+                 // Update specRows with recalculated parental links
+                 setSpecRows(prev => {
+                    // Create a map for faster lookup of new items
+                    const newItemsMap = new Map(data.items.map((it: any) => [String(it.id), it]));
+                    return prev.map(row => {
+                       const updated = newItemsMap.get(String(row.id));
+                       // If we found an updated row from the same file, merge its new properties (like parentId)
+                       if (updated && (updated as any).fileId === (target as any)?.fileId) {
+                          return { ...row, ...updated };
+                       }
+                       return row;
+                    });
+                 });
+              }
            });
          } catch (e) { console.error('Failed to patch row type:', e); }
       }
@@ -2413,27 +2431,41 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] as any[] }));
     }
 
+    // 1. Create nodes and a map for O(1) lookup
+    const nodesMap = new Map<string, any>();
     const tree: any[] = [];
-    let currentL0: any = null;
 
-    baseRows.forEach(r => {
-      const type = r.row_type;
-      if (!type || type === 'ITEM') return;
-      if (!r.name || !r.name.trim()) return;
+    // Filter FIRST: only structural headers
+    const headerRows = baseRows.filter(r => r.row_type === 'LOCATION' || r.row_type === 'GROUP' || r.row_type === 'WORK_TYPE');
 
-      const node = { id: r.id, name: r.name.trim(), row_type: type, children: [] as any[] };
-      
-      if (type === 'WORK_TYPE' || type === 'LOCATION') {
-        currentL0 = node;
+    headerRows.forEach(r => {
+      if (!r.id || !r.name?.trim()) return;
+      const node = { 
+        id: String(r.id), 
+        name: r.name.trim(), 
+        row_type: r.row_type, 
+        parentId: r.parentId ? String(r.parentId) : null,
+        children: [] as any[] 
+      };
+      nodesMap.set(node.id, node);
+    });
+
+    // 2. Build the hierarchy using parentId
+    headerRows.forEach(r => {
+      const id = String(r.id);
+      const node = nodesMap.get(id);
+      if (!node) return;
+
+      if (node.parentId && nodesMap.has(node.parentId)) {
+        nodesMap.get(node.parentId).children.push(node);
+      } else {
+        // Roots are nodes with no parent OR parent not in the header set
         tree.push(node);
-      } else if (type === 'GROUP') {
-        if (currentL0) {
-          currentL0.children.push(node);
-        } else {
-          tree.push(node);
-        }
       }
     });
+
+    return tree;
+
     return tree;
   }, [currentStage, viewMode, specRows, requestRows, invoiceRows, estimateRows, getSupplierRows]);
 

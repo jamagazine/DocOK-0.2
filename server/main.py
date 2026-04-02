@@ -978,7 +978,7 @@ async def delete_project_endpoint(project_id: str):
 
 @app.patch("/api/projects/{project_id}/files/{filename}/rows/{row_id}")
 async def patch_row_data(project_id: str, filename: str, row_id: str, data: dict = Body(...)):
-    """Granularly update a single row in a file's JSON cache."""
+    """Granularly update a single row and RECALCULATE the entire hierarchy."""
     cache_path = get_file_path(project_id, filename, ".json")
     if not os.path.exists(cache_path):
         raise HTTPException(status_code=404, detail="File cache not found")
@@ -998,9 +998,15 @@ async def patch_row_data(project_id: str, filename: str, row_id: str, data: dict
         if not found:
             raise HTTPException(status_code=404, detail=f"Row {row_id} not found in {filename}")
             
+        # --- RECALCULATE ALL parentId ---
+        # This ensures manual changes to 'row_type' or order are instantly reflected in links
+        updated_items = apply_structural_hierarchy(items)
+        content["items"] = updated_items
+        
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(content, f, ensure_ascii=False, indent=2)
             
-        return {"status": "success", "updated_row_id": row_id}
+        # Return COMPLETE items list for UI sync
+        return {"status": "success", "updated_row_id": row_id, "items": updated_items}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update row: {e}")
