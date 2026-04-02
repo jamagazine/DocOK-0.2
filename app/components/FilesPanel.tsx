@@ -136,15 +136,17 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 ) : null}
               </span>
               
-                <div className="flex gap-0.5 mt-1 h-1.5 w-full">
-                  {(data.chunks_report as {id: string, ok: boolean}[]).map((chunk) => (
-                    <div 
-                      key={chunk.id} 
-                      className={cn("flex-1 rounded-sm", chunk.ok ? "bg-green-500" : "bg-red-500")} 
-                      title={`Чанк ${chunk.id}: ${chunk.ok ? 'Успех' : 'Ошибка'}`}
-                    />
-                  ))}
-                </div>
+                {data.chunks_report && data.chunks_report.length > 0 && (
+                  <div className="flex gap-0.5 mt-1 h-1.5 w-full">
+                    {(data.chunks_report as {id: string, ok: boolean}[]).map((chunk) => (
+                      <div 
+                        key={chunk.id} 
+                        className={cn("flex-1 rounded-sm", chunk.ok ? "bg-green-500" : "bg-red-500")} 
+                        title={`Чанк ${chunk.id}: ${chunk.ok ? 'Успех' : 'Ошибка'}`}
+                      />
+                    ))}
+                  </div>
+                )}
 
               {/* Inline Progress Bar for Loading State (when no report yet) */}
               {isLoading && (!data.chunks_report || data.chunks_report.length === 0) && (

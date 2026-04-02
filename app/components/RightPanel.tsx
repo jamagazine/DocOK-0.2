@@ -531,59 +531,64 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                 <div className="flex flex-col gap-4">
                   {/* Metadata from Stamp (summary_md) */}
                   {(() => {
-                    // Logic: If activeFileId is selected, show that file's specific summary_md.
-                    // If activeFileId is null, show the consolidation (all files in project).
-                    const activeSummary = activeFileId ? uploadStatuses[activeFileId]?.summary_md : null;
+                    // Logic: Use selected file OR find the first one with summary_md
+                    let activeFileData = activeFileId ? uploadStatuses[activeFileId] : undefined;
+                    if (!activeFileData) {
+                      activeFileData = Object.values(uploadStatuses).find((s: any) => s.summary_md);
+                    }
                     
+                    const activeSummary = activeFileData?.summary_md;
+                    
+                    // Positions logic: count only REAL items (row_type === ITEM)
+                    const getRealItemCount = () => {
+                      if (currentStage === 'spec') return specRows.filter(r => r.row_type === 'ITEM').length;
+                      if (currentStage === 'invoice') return invoiceRows.length; // Invoices are usually all items
+                      if (currentStage === 'estimate') return estimateRows.length;
+                      return 0;
+                    };
+
                     if (activeSummary) {
                       return (
-                        <div className="bg-white p-5 rounded-xl border border-indigo-200 text-slate-700 text-xs leading-relaxed shadow-sm ring-1 ring-indigo-50/50">
-                          <div className="prose prose-sm max-w-none whitespace-pre-wrap font-medium">
-                            {activeSummary}
+                        <div className="flex flex-col gap-4">
+                          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                            <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap font-medium">
+                              {activeSummary}
+                            </div>
+                            
+                            <div className="h-px bg-slate-100 my-4" />
+                            
+                            <div className="flex flex-col gap-2.5">
+                               <div className="flex justify-between items-center text-xs">
+                                  <span className="text-slate-500 font-semibold uppercase tracking-wider">Всего позиций:</span>
+                                  <span className="text-indigo-700 font-bold bg-indigo-50 px-2 py-1 rounded min-w-[3rem] text-center">{getRealItemCount()} шт.</span>
+                               </div>
+                               {currentStage !== 'spec' && (
+                                 <div className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-500 font-semibold uppercase tracking-wider">Сумма этапа:</span>
+                                    <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-1 rounded">{getIntermediateTotal()} ₽</span>
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                          
+                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-start gap-2.5">
+                             <Info className="w-3.5 h-3.5 text-slate-400 mt-0.5" />
+                             <p className="text-[10px] text-slate-500 leading-normal">
+                               Данные извлечены из «штампа» и подвала документа. Выберите другой файл в списке файлов слева, чтобы переключить информацию.
+                             </p>
                           </div>
                         </div>
                       );
                     }
                     
-                    // FALLBACK: PROJECT-WIDE SUMMARY
-                    const allSuppliers = new Set();
-                    Object.values(uploadStatuses).forEach(s => {
-                       if (s.summary_md && s.summary_md.includes('Поставщики:')) {
-                          const match = s.summary_md.match(/Поставщики:\s*([^\n]+)/);
-                          if (match && match[1] && match[1] !== 'Не определено') {
-                             match[1].split(',').forEach(p => allSuppliers.add(p.trim()));
-                          }
-                       }
-                    });
-
                     return (
-                      <div className="bg-indigo-600 p-5 rounded-xl border border-indigo-500 shadow-md flex flex-col gap-4 text-white">
-                        <div className="flex justify-between items-center opacity-90">
-                          <span className="text-[10px] uppercase font-bold tracking-widest">Проект: Сводная информация</span>
-                          <Sparkles className="w-4 h-4 text-white/50" />
+                      <div className="bg-slate-50 p-8 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-4 text-center">
+                        <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center">
+                           <FileText className="w-6 h-6 text-slate-400" />
                         </div>
-                        
-                        <div className="flex flex-col">
-                           <span className="text-white/60 text-[11px] font-medium mb-1">Всего позиций в этапе</span>
-                           <span className="text-3xl font-black tabular-nums tracking-tight">{currentCount()} <span className="text-sm font-normal text-white/60 ml-1">шт.</span></span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                           <div className="flex flex-col gap-1">
-                              <span className="text-white/60 text-[10px] font-bold uppercase tracking-tight">Поставщиков</span>
-                              <span className="text-lg font-bold">{allSuppliers.size || '...'}</span>
-                           </div>
-                           <div className="flex flex-col gap-1">
-                              <span className="text-white/60 text-[10px] font-bold uppercase tracking-tight">Файлов</span>
-                              <span className="text-lg font-bold">{Object.keys(uploadStatuses).length}</span>
-                           </div>
-                        </div>
-
-                        <div className="h-px w-full bg-white/10" />
-                        
-                        <div className="flex flex-col gap-1 bg-white/10 -mx-5 -mb-5 p-5 rounded-b-xl border-t border-white/5">
-                          <span className="text-white/60 text-[10px] uppercase font-bold tracking-tight">Итоговая сумма этапа</span>
-                          <span className="font-black text-2xl tabular-nums drop-shadow-sm">{getIntermediateTotal()} ₽</span>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-slate-600 font-bold text-sm">Выберите файл</span>
+                          <span className="text-[11px] text-slate-400 max-w-[180px]">Загрузите спецификацию для отображения сводной информации из штампа.</span>
                         </div>
                       </div>
                     );
