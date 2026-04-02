@@ -10,9 +10,7 @@ import {
   MapPin, 
   Folders, 
   UserCheck, 
-  Layers, 
-  ArrowUp, 
-  ArrowDown 
+  Layers 
 } from 'lucide-react';
 import { EditableCell } from './EditableCell';
 
@@ -99,11 +97,11 @@ export const TableRow = React.memo(({
     (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes:
     // 1. Главный заголовок (Вид работ) - Чистый Индиго 600 с ярким акцентом
-    stage === 'spec' && isWorkType && "bg-indigo-900 text-white hover:bg-indigo-950 border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-md transition-all",
-    // 2. Место (Локация) - Глубокий Индиго 900 с мягким акцентом
-    stage === 'spec' && isLocation && "bg-indigo-900 text-white hover:bg-indigo-950 font-black border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-sm transition-all",
+    stage === 'spec' && isWorkType && "bg-indigo-600 text-white hover:bg-indigo-500 border-l-4 border-l-indigo-400 border-b border-indigo-700 shadow-md transition-all",
+    // 2. Место (Локация) - Глубокий Индиго 800 с мягким акцентом
+    stage === 'spec' && isLocation && "bg-indigo-800 text-white hover:bg-indigo-900 font-bold border-l-4 border-l-indigo-400 border-b border-indigo-950 shadow-sm transition-all",
     // 3. Группы - Светлое Индиго с бортом
-    stage === 'spec' && isGroup && "bg-indigo-100/60 text-indigo-900 border-l-4 border-l-indigo-500 hover:bg-indigo-200/60 transition-all",
+    stage === 'spec' && isGroup && "bg-indigo-50/50 text-indigo-900 border-l-4 border-l-indigo-500 hover:bg-indigo-100/60 transition-all",
     // 4. Поставщики - Голубой Индиго с бортом
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 text-blue-900 border-l-4 border-l-blue-400 hover:bg-blue-100/50 transition-all",
     // 5. Сводные - Изумрудный Индиго с бортом
@@ -191,57 +189,7 @@ export const TableRow = React.memo(({
               isSupplierRow ? "text-blue-900 font-bold" :
               "text-sm font-bold text-indigo-900"
             )}>
-              <div className="flex-grow flex items-center relative group/namecell min-w-0">
-                <span className="truncate flex-grow mr-4">{row.name}</span>
-                
-                {/* --- Hierarchy Controls (Moved here to Name cell) --- */}
-                {stage === 'spec' && !isSummaryRow && (
-                  <div className="opacity-0 group-hover/namecell:opacity-100 flex items-center gap-1 bg-white/90 rounded border border-indigo-100 shadow-sm px-1 py-0.5 mr-2 transition-all shrink-0">
-                     <button
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         const types: any = ['ITEM', 'GROUP', 'LOCATION'];
-                         const curr = row.row_type || 'ITEM';
-                         const idx = types.indexOf(curr);
-                         if (idx < 2) onUpdate(row.id, 'row_type', types[idx + 1]);
-                       }}
-                       className="p-1 hover:bg-indigo-100 rounded text-indigo-600 transition-colors"
-                       title="Повысить уровень"
-                     >
-                       <ArrowUp className="w-3.5 h-3.5" />
-                     </button>
-                     <button
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         const types: any = ['ITEM', 'GROUP', 'LOCATION'];
-                         const curr = row.row_type || 'ITEM';
-                         const idx = types.indexOf(curr);
-                         if (idx > 0) onUpdate(row.id, 'row_type', types[idx - 1]);
-                       }}
-                       className="p-1 hover:bg-slate-100 rounded text-slate-600 transition-colors"
-                       title="Понизить уровень"
-                     >
-                       <ArrowDown className="w-3.5 h-3.5" />
-                     </button>
-                     <div className="relative border-l border-slate-200 pl-1 ml-0.5">
-                       <select
-                         className="w-5 h-5 opacity-0 absolute inset-0 cursor-pointer z-10"
-                         value={row.row_type || 'ITEM'}
-                         onChange={(e) => {
-                           e.stopPropagation();
-                           onUpdate(row.id, 'row_type', e.target.value);
-                         }}
-                         onClick={(e) => e.stopPropagation()}
-                       >
-                         <option value="LOCATION">Раздел (L0)</option>
-                         <option value="GROUP">Группа (L1)</option>
-                         <option value="ITEM">Позиция</option>
-                       </select>
-                       <Edit2 className="w-3 h-3 text-slate-400" />
-                     </div>
-                  </div>
-                )}
-              </div>
+              <span className="truncate flex-grow mr-4">{row.name}</span>
               
               {(toggleCollapse || isActuallyMerged || (isSupplierRow && hasChildren)) && (
                 <button

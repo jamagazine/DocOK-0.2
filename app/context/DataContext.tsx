@@ -33,6 +33,11 @@ export interface Project {
   status: ProjectStatus;
   categoryId: string;
   version?: string;
+  // Dynamic rows persistence
+  specRows?: SpecRow[];
+  requestRows?: SpecRow[];
+  invoiceRows?: InvoiceRow[];
+  estimateRows?: EstimateRow[];
 }
 
 export function genId(): string {
@@ -385,8 +390,20 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('dashboard');
+  const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('project')) return 'workspace';
+    }
+    return 'dashboard';
+  });
+
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlId = params.get('project');
+      if (urlId) return urlId;
+    }
     try {
       const saved = localStorage.getItem('docok_activeProjectId');
       if (saved) return JSON.parse(saved);
@@ -395,6 +412,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   });
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const isInitializing = useRef(false);
   
   const activeProject = projects.find(p => p.id === activeProjectId);
   const projectName = activeProject?.title || 'Новый проект';
@@ -411,6 +429,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('docok_activeProjectId');
     }
   }, [activeProjectId]);
+
+  const [currentStage, setCurrentStageRaw] = useState<Stage>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlStage = params.get('stage') as Stage;
+      if (['spec', 'request', 'invoice', 'estimate'].includes(urlStage)) return urlStage;
+      
+      const saved = localStorage.getItem('docok_currentStage');
+      if (saved && ['spec', 'request', 'invoice', 'estimate'].includes(saved)) return saved as Stage;
+    }
+    return 'spec';
+  });
+
+  const setCurrentStage = useCallback((stage: Stage) => {
+    setCurrentStageRaw(stage);
+    localStorage.setItem('docok_currentStage', stage);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('stage', stage);
+      window.history.replaceState({}, '', url.toString());
+    }
+    setSelectedIds([]); // Сбрасываем выборку при смене вкладок
+    setIsOnlySelectedView(false); // Отключаем фильтр фокуса
+  }, []);
 
   const [categories, setCategories] = useState<Category[]>(() => {
     try {
@@ -477,6 +519,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  // --- URL & State Synchronization ---
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const params = new URLSearchParams(window.location.search);
+    
+    if (viewContext === 'dashboard') {
+      params.delete('project');
+      params.delete('stage');
+    } else {
+      if (activeProjectId) params.set('project', activeProjectId);
+      if (currentStage) params.set('stage', currentStage);
+    }
+    
+    const newRelativePathQuery = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    window.history.replaceState(null, '', newRelativePathQuery);
+  }, [viewContext, activeProjectId, currentStage]);
 
   // Sync projects to backend when they change (handled by explicit actions now)
 
@@ -648,17 +708,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>([]);
   const [estimateRows, setEstimateRows] = useState<EstimateRow[]>([]);
 
+  // Store previous project ID to avoid clearing rows on every list update
+  const prevProjectIdRef = useRef<string | null>(null);
+
   // Project-specific persistence
   useEffect(() => {
-    if (!activeProjectId) return;
+    if (!activeProjectId) {
+      prevProjectIdRef.current = null;
+      return;
+    }
     
-    // Cleanup workspace data before loading new
-    setSpecRows([]);
-    setRequestRows([]);
-    setInvoiceRows([]);
-    setEstimateRows([]);
-    setSelectedIds([]);
-    setActiveHeaderIds([]);
+    const projectChanged = prevProjectIdRef.current !== activeProjectId;
+    prevProjectIdRef.current = activeProjectId;
+
+    isInitializing.current = true;
+    
+    // ONLY clear rows if we actually switched projects
+    if (projectChanged) {
+      setSpecRows([]);
+      setRequestRows([]);
+      setInvoiceRows([]);
+      setEstimateRows([]);
+      setSelectedIds([]);
+      setActiveHeaderIds([]);
+    }
 
     const loadLocal = (key: string) => {
       try {
@@ -667,19 +740,42 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } catch (e) { return null; }
     };
 
-    const savedSpec = loadLocal('specRows');
-    if (savedSpec) setSpecRows(savedSpec);
+    // 1. Try SERVER data first (from pre-fetched projects list)
+    const project = projects.find(p => p.id === activeProjectId);
+    if (project) {
+      // If server has rows, use them. Otherwise fallback to local.
+      // We check length to avoid empty server data from overwriting local data if current project matches
+      if (project.specRows && project.specRows.length > 0) setSpecRows(project.specRows);
+      else if (!specRows.length) { const s = loadLocal('specRows'); if (s) setSpecRows(s); }
 
-    const savedReq = loadLocal('requestRows');
-    if (savedReq) setRequestRows(savedReq);
+      if (project.requestRows && project.requestRows.length > 0) setRequestRows(project.requestRows);
+      else if (!requestRows.length) { const s = loadLocal('requestRows'); if (s) setRequestRows(s); }
 
-    const savedInv = loadLocal('invoiceRows');
-    if (savedInv) setInvoiceRows(savedInv);
+      if (project.invoiceRows && project.invoiceRows.length > 0) setInvoiceRows(project.invoiceRows);
+      else if (!invoiceRows.length) { const s = loadLocal('invoiceRows'); if (s) setInvoiceRows(s); }
 
-    const savedEst = loadLocal('estimateRows');
-    if (savedEst) setEstimateRows(savedEst);
+      if (project.estimateRows && project.estimateRows.length > 0) setEstimateRows(project.estimateRows);
+      else if (!estimateRows.length) { const s = loadLocal('estimateRows'); if (s) setEstimateRows(s); }
+    } else {
+      // 2. Fallback to LocalStorage if project not yet in memory (e.g. brand new or still loading list)
+      const savedSpec = loadLocal('specRows');
+      if (savedSpec) setSpecRows(savedSpec);
 
-  }, [activeProjectId]);
+      const savedReq = loadLocal('requestRows');
+      if (savedReq) setRequestRows(savedReq);
+
+      const savedInv = loadLocal('invoiceRows');
+      if (savedInv) setInvoiceRows(savedInv);
+
+      const savedEst = loadLocal('estimateRows');
+      if (savedEst) setEstimateRows(savedEst);
+    }
+
+    // End initialization block after state updates are scheduled
+    const timer = setTimeout(() => { isInitializing.current = false; }, 200);
+    return () => clearTimeout(timer);
+
+  }, [activeProjectId, projects]);
 
   const fetchHistory = useCallback((type: 'text' | 'xlsx') => {
     if (!activeProjectId) return;
@@ -690,7 +786,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [activeProjectId]);
 
   const saveTableData = useCallback(async () => {
-    if (!activeProjectId) return;
+    if (!activeProjectId || isInitializing.current) return;
     
     // Local persistence
     localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
@@ -702,9 +798,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const project = projects.find(p => p.id === activeProjectId);
     if (!project) return;
     
-    const updated = {
+    const updated: Project = {
       ...project,
       lastModified: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + ' | ' + new Date().toLocaleDateString('ru-RU'),
+      specRows,
+      requestRows,
+      invoiceRows,
+      estimateRows
     };
     
     try {
@@ -746,25 +846,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // Sync rows to local storage whenever they change
   useEffect(() => {
-    if (activeProjectId) {
+    if (activeProjectId && !isInitializing.current) {
       localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
     }
   }, [specRows, activeProjectId]);
 
   useEffect(() => {
-    if (activeProjectId) {
+    if (activeProjectId && !isInitializing.current) {
       localStorage.setItem(`docok_p_${activeProjectId}_requestRows`, JSON.stringify(requestRows));
     }
   }, [requestRows, activeProjectId]);
 
   useEffect(() => {
-    if (activeProjectId) {
+    if (activeProjectId && !isInitializing.current) {
       localStorage.setItem(`docok_p_${activeProjectId}_invoiceRows`, JSON.stringify(invoiceRows));
     }
   }, [invoiceRows, activeProjectId]);
 
   useEffect(() => {
-    if (activeProjectId) {
+    if (activeProjectId && !isInitializing.current) {
       localStorage.setItem(`docok_p_${activeProjectId}_estimateRows`, JSON.stringify(estimateRows));
     }
   }, [estimateRows, activeProjectId]);
@@ -818,12 +918,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 
 
-  const [currentStage, setCurrentStageRaw] = useState<Stage>('spec');
-  const setCurrentStage = useCallback((stage: Stage) => {
-    setCurrentStageRaw(stage);
-    setSelectedIds([]); // Сбрасываем выборку при смене вкладок
-    setIsOnlySelectedView(false); // Отключаем фильтр фокуса
-  }, []);
 
   const [viewMode, setViewModeRaw] = useState<'original' | 'supplier' | 'merged'>('original');
   const setViewMode = useCallback((mode: 'original' | 'supplier' | 'merged') => {
@@ -2133,45 +2227,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // handleFile will call updateFileStatusOnServer(fileName, 'ok') on success
   }, [filesMap, removeFile, handleFile]);
 
-  const handleRowChange = useCallback(async (stage: Stage, rowId: string, field: string, value: any) => {
-    // Helper to find the original row for fileId reference
-    const findRow = (rows: any[]) => rows.find(r => r.id === rowId);
-
+  const handleRowChange = useCallback((stage: Stage, rowId: string, field: string, value: any) => {
     if (stage === 'spec') {
-      const target = findRow(specRows);
       setSpecRows(prev => prev.map(row => {
         if (row.id !== rowId) return row;
         return { ...row, [field]: value };
       }));
-      
-      // IMMEDIATE SYNC for structural changes
-      if (field === 'row_type' && target?.fileId && activeProjectId) {
-         try {
-           fetch(`http://localhost:8000/api/projects/${activeProjectId}/files/${target.fileId}/rows/${rowId}`, {
-             method: 'PATCH',
-             headers: { 'Content-Type': 'application/json' },
-             body: JSON.stringify({ [field]: value })
-           })
-           .then(res => res.json())
-           .then(data => {
-              if (data.status === 'success' && data.items) {
-                 // Update specRows with recalculated parental links
-                 setSpecRows(prev => {
-                    // Create a map for faster lookup of new items
-                    const newItemsMap = new Map(data.items.map((it: any) => [String(it.id), it]));
-                    return prev.map(row => {
-                       const updated = newItemsMap.get(String(row.id));
-                       // If we found an updated row from the same file, merge its new properties (like parentId)
-                       if (updated && (updated as any).fileId === (target as any)?.fileId) {
-                          return { ...row, ...updated };
-                       }
-                       return row;
-                    });
-                 });
-              }
-           });
-         } catch (e) { console.error('Failed to patch row type:', e); }
-      }
     } else if (stage === 'invoice') {
       setInvoiceRows(prev => prev.map(row => {
         if (row.id !== rowId) return row;
@@ -2431,41 +2492,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return grouped.map((r: any) => ({ id: r.id, name: r.name, row_type: 'SUPPLIER', children: [] as any[] }));
     }
 
-    // 1. Create nodes and a map for O(1) lookup
-    const nodesMap = new Map<string, any>();
     const tree: any[] = [];
+    let currentL0: any = null;
+    let currentL1: any = null;
 
-    // Filter FIRST: only structural headers
-    const headerRows = baseRows.filter(r => r.row_type === 'LOCATION' || r.row_type === 'GROUP' || r.row_type === 'WORK_TYPE');
+    baseRows.forEach(r => {
+      // Use row_type as primary signal — robust regardless of is_header value in cached data
+      const type = r.row_type;
+      if (!type || type === 'ITEM') return;
+      // Skip rows with empty or blank names
+      if (!r.name || !r.name.trim()) return;
 
-    headerRows.forEach(r => {
-      if (!r.id || !r.name?.trim()) return;
-      const node = { 
-        id: String(r.id), 
-        name: r.name.trim(), 
-        row_type: r.row_type, 
-        parentId: r.parentId ? String(r.parentId) : null,
-        children: [] as any[] 
-      };
-      nodesMap.set(node.id, node);
-    });
-
-    // 2. Build the hierarchy using parentId
-    headerRows.forEach(r => {
-      const id = String(r.id);
-      const node = nodesMap.get(id);
-      if (!node) return;
-
-      if (node.parentId && nodesMap.has(node.parentId)) {
-        nodesMap.get(node.parentId).children.push(node);
-      } else {
-        // Roots are nodes with no parent OR parent not in the header set
+      const node = { id: r.id, name: r.name.trim(), row_type: type, children: [] as any[] };
+      if (type === 'WORK_TYPE') {
+        currentL0 = node;
+        currentL1 = null;
         tree.push(node);
+      } else if (type === 'LOCATION') {
+        currentL1 = node;
+        if (currentL0) currentL0.children.push(node);
+        else tree.push(node);
+      } else if (type === 'GROUP') {
+        if (currentL1) currentL1.children.push(node);
+        else if (currentL0) currentL0.children.push(node);
+        else tree.push(node);
       }
     });
-
-    return tree;
-
     return tree;
   }, [currentStage, viewMode, specRows, requestRows, invoiceRows, estimateRows, getSupplierRows]);
 
