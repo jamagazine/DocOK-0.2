@@ -33,7 +33,7 @@ def slugify_translit(text: str) -> str:
 from parser_utils import (
     normalize_for_match, calculate_uncertainty, 
     transliterate, secure_filename, sanitize_dataframe, 
-    convert_df_to_items, extract_text_from_pdf
+    convert_df_to_items, extract_text_from_pdf, extract_specification_summary
 )
 from ai_service import (
     ocr_yandex, gpt_yandex, get_token_count, 
@@ -480,11 +480,34 @@ async def process_invoice(
                             all_items = gen_items
 
             final_struct = calculate_uncertainty({"document": main_doc or {"name": original_name}, "items": all_items}, has_low_confidence)
+            
+            # --- SPECS: Extract General Summary (Stamp/Footer) ---
+            summary_md = ""
+            if doc_type == "spec":
+                try:
+                    summary_md = extract_specification_summary(df, all_items)
+                except Exception as e:
+                    print(f"Error extracting summary: {e}")
+                    summary_md = "### Общая сводка\n\nНе удалось извлечь данные (ошибка парсера)."
+            
             rate = 1.2 if p_method == "ocr_table" else 0.2
             cost = round((total_tokens * rate) / 1000 + (num_pages * 1.22 if p_method == "ocr_table" else 0), 2)
-            final_struct.update({"cost": cost, "method": p_method, "usage": {"total_tokens": total_tokens}})
+            final_struct.update({
+                "cost": cost, 
+                "method": p_method, 
+                "usage": {"total_tokens": total_tokens},
+                "summary_md": summary_md
+            })
             
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
+            
+            # Update manifest
+            manifest = _load_manifest(projectId)
+            if disk_name in manifest:
+                manifest[disk_name]["summary_md"] = summary_md
+                manifest[disk_name]["cost"] = cost
+                _save_manifest(manifest, projectId)
+
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
         except Exception as e:

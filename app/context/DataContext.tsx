@@ -1020,6 +1020,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               estimated_tokens: f.estimated_tokens || 0,
               model: f.model || '',
               method: f.method || '',
+              summary_md: f.summary_md || '',
             };
           });
           setUploadStatuses(restoredStatuses);
@@ -1389,7 +1390,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       cost,
                       model: data.model || '',
                       method: data.method || '',
-                      chunks_report: data.chunks_report || []
+                      chunks_report: data.chunks_report || [],
+                      summary_md: data.summary_md || ''
                     }
                   }));
                   setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));

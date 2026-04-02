@@ -28,6 +28,7 @@ export interface UploadStatus {
   processed_count?: number;
   total_chunks?: number;
   current_step?: 'prep' | 'ai' | 'final';
+  summary_md?: string;
 }
 
 export interface UploadedFile {

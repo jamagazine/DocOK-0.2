@@ -1,12 +1,12 @@
 {
-    "Shablon_spetsifikatsii_GOST_21.110-2013.xls": {
-        "originalName": "Шаблон спецификации ГОСТ 21.110-2013.xls",
+    "1058-25-OV_S_1.xls": {
+        "originalName": "1058-25-OV_S_1.xls",
         "status": "READY_MD",
         "cost": 0,
         "tokens": 0,
         "model": "",
         "method": "",
-        "estimated_cost": 2.39,
-        "estimated_tokens": 11933
+        "estimated_cost": 4.45,
+        "estimated_tokens": 22260
     }
 }

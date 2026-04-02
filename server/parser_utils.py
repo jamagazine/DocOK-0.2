@@ -286,3 +286,91 @@ def extract_text_from_pdf(path: str) -> str:
             if t:
                 ext_text += "\n".join([re.sub(r'\s{2,}', ' | ', l) for l in t.split('\n')]) + "\n"
     return ext_text
+
+def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
+    """
+    Extracts metadata from the 'stamp' and footer of a specification.
+    Analyzes rows below the main table and looks for Cipher (Шифр), Project Name (Назначение), and Notes.
+    """
+    # 1. Statistics (Items count and Unique Suppliers)
+    items = [r for r in parsed_rows if r.get("row_type") == "ITEM" and not r.get("is_header")]
+    total_positions = len(items)
+    
+    # Unique suppliers from column index 4 (Provider)
+    # We use parsed_rows because they are already normalized
+    suppliers = sorted(list(set([str(r.get("supplier", "")).strip() for r in items if r.get("supplier")])))
+    suppliers_str = ", ".join(suppliers) if suppliers else "Не определено"
+    
+    # 2. Slice bottom part (last 30 rows) for Stamp and Notes
+    bottom_df = df.iloc[-30:].fillna("")
+    
+    # Cipher regex: e.g. 1058-25-OB.C or 000-00-11.2
+    cipher_regex = r'\d{4,}-\d{2,}-[A-ZА-ЯЁ\.\d-]+'
+    cipher = "Не определено"
+    
+    # Stamp detection (GOST keywords)
+    stamp_start_idx = -1
+    stamp_keywords = ["изм.", "лист", "стади", "подп", "дата", "№ док"]
+    
+    # Find the end of table to know where Notes start
+    last_item_idx = -1
+    for r in reversed(parsed_rows):
+        if r.get("row_type") == "ITEM" and r.get("id", "").startswith("idx_"):
+            try:
+                last_item_idx = int(r.get("id")[4:])
+                break
+            except: continue
+
+    project_parts = []
+    
+    # Search for Cipher and Stamp Start in the bottom part
+    for i, row in df.iterrows():
+        if i < len(df) - 30: continue
+        
+        row_values = [str(v).strip() for v in row.values if v and str(v).strip() != "nan"]
+        full_row_text = " ".join(row_values)
+        
+        # Cipher extraction
+        if cipher == "Не определено":
+            m_c = re.search(cipher_regex, full_row_text)
+            if m_c:
+                cipher = m_c.group(0)
+        
+        # Detection of the Stamp area
+        if stamp_start_idx == -1:
+            if any(k in full_row_text.lower() for k in stamp_keywords):
+                stamp_start_idx = i
+                
+        # "Destination" extraction (large text blocks in the stamp area)
+        if stamp_start_idx != -1 and i >= stamp_start_idx:
+            for v in row_values:
+                # Filter out numbers, names (usually short or CamelCase), and common labels
+                if len(v) > 12 and not any(k in v.lower() for k in ["спецификац", "изм.", ". .", "дата", "архив", "инв."]):
+                    if v not in project_parts and not re.search(cipher_regex, v):
+                        project_parts.append(v)
+
+    destination = " | ".join(project_parts) if project_parts else "Не определено"
+    
+    # Notes extraction (everything from last ITEM to Stamp Start)
+    notes_parts = []
+    if last_item_idx != -1:
+        # If we didn't find the stamp start, assume it's near the end
+        search_limit = stamp_start_idx if stamp_start_idx != -1 else len(df)
+        for idx in range(last_item_idx + 1, search_limit):
+            if idx in df.index:
+                r_vals = [str(v).strip() for v in df.iloc[idx].values if v and str(v).strip() != "nan"]
+                r_text = " ".join(r_vals)
+                if r_text:
+                    notes_parts.append(r_text)
+    
+    notes_str = "\n".join(notes_parts) if notes_parts else "Отсутствуют"
+
+    # Assemble Markdown
+    summary_md = f"### Общая сводка\n\n" \
+                 f"**Номер (Шифр):** {cipher}\n" \
+                 f"**Назначение:** {destination}\n" \
+                 f"**Поставщики:** {suppliers_str}\n" \
+                 f"**Общее кол-во позиций:** {total_positions}\n\n" \
+                 f"**Примечания:**\n{notes_str}"
+    
+    return summary_md

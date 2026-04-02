@@ -184,7 +184,8 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen,
     matchInvoiceToSpec, getCurrentRows, projectName,
     activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
-    keepSelectedRows, undo, redo, canUndo, canRedo
+    keepSelectedRows, undo, redo, canUndo, canRedo,
+    uploadStatuses
   } = useData();
 
   const [spyId, setSpyId] = React.useState<string | null>(null);
@@ -526,27 +527,47 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
             {expanded ? (
               <>
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Общая сводка</div>
-                <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col gap-4 text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 font-medium">{getStageLabel(currentStage)}:</span>
-                    <span className="font-bold text-slate-900 tabular-nums">{currentCount()}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-500 font-medium">Загружено файлов:</span>
-                    <span className="font-bold text-slate-900 tabular-nums">
-                      {currentStage === 'invoice'
-                        ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length
-                        : currentStage === 'estimate'
-                          ? new Set(estimateRows.map(r => r.fileId)).size
-                          : Object.keys(filesMap || {}).length
-                      }
-                    </span>
-                  </div>
-                  <div className="h-px w-full bg-slate-200" />
-                  <div className="flex flex-col gap-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">Итого по этапу</span>
-                    <span className="font-extrabold text-indigo-700 text-xl tabular-nums">{getIntermediateTotal()} ₽</span>
-                  </div>
+                <div className="flex flex-col gap-4">
+                  {/* Metadata from Stamp (summary_md) */}
+                  {(() => {
+                    // Try to find the summary from any file in the current stage
+                    const activeSummary = Object.values(uploadStatuses || {}).find(s => s.summary_md)?.summary_md;
+                    
+                    if (activeSummary) {
+                      return (
+                        <div className="bg-white p-5 rounded-xl border border-slate-200 text-slate-700 text-xs leading-relaxed shadow-sm">
+                          <div className="prose prose-sm max-w-none whitespace-pre-wrap">
+                            {activeSummary.replace(/### Общая сводка\n\n/, '')}
+                          </div>
+                        </div>
+                      );
+                    }
+                    
+                    return (
+                      <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col gap-4 text-sm">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500 font-medium">{getStageLabel(currentStage)}:</span>
+                          <span className="font-bold text-slate-900 tabular-nums">{currentCount()}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500 font-medium">Загружено файлов:</span>
+                          <span className="font-bold text-slate-900 tabular-nums">
+                            {currentStage === 'invoice'
+                              ? Array.from(new Set(invoiceRows.map((i: InvoiceRow) => i.documentName))).length
+                              : currentStage === 'estimate'
+                                ? new Set(estimateRows.map(r => r.fileId)).size
+                                : Object.keys(filesMap || {}).length
+                            }
+                          </span>
+                        </div>
+                        <div className="h-px w-full bg-slate-200" />
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-tight">Итого по этапу</span>
+                          <span className="font-extrabold text-indigo-700 text-xl tabular-nums">{getIntermediateTotal()} ₽</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {currentStage === 'invoice' && invoiceRows.length > 0 && (
