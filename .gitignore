@@ -50,8 +50,9 @@ server/storage/
 # --- Данные пользователя ---
 server/projects/
 !server/projects/.gitkeep
-# Игнорируем архивы, которые будут создаваться при скачивании
+# Игнорируем архивы и временные папки импорта
 server/*.zip
+server/temp_import/
 
 # --- Логи и отладка ---
 logs

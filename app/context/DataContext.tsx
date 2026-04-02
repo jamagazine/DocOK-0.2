@@ -371,6 +371,7 @@ interface DataContextType {
   syncProjectName: (id: string, newTitle: string) => void;
   moveProject: (id: string, categoryId: string) => void;
   deleteProject: (id: string) => void;
+  importProject: (file: File) => Promise<Project | null>;
 
   // Active category for filtering
   activeCategory: string;
@@ -587,6 +588,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
       toast.error('Ошибка при удалении проекта');
     }
   }, [projects]);
+
+  const importProject = useCallback(async (file: File): Promise<Project | null> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('http://localhost:8000/api/projects/import', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const newProject = await res.json();
+        // Since the backend returns the full project state, we can add it to our list
+        setProjects(prev => [...prev, newProject]);
+        toast.success(`Проект "${newProject.title}" импортирован`);
+        return newProject;
+      } else {
+        const err = await res.json();
+        toast.error(`Ошибка импорта: ${err.detail || 'Неизвестная ошибка'}`);
+      }
+    } catch (e) {
+      console.error('Import failed:', e);
+      toast.error('Ошибка при отправке архива на сервер');
+    }
+    return null;
+  }, []);
 
   // Dynamic counts for categories
   const categoriesWithCounts = React.useMemo(() => {
@@ -2496,6 +2524,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         syncProjectName,
         moveProject,
         deleteProject,
+        importProject,
         activeCategory,
         setActiveCategory
       }}

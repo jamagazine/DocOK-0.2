@@ -13,6 +13,8 @@ from urllib.parse import quote
 import rapidfuzz
 import uuid
 import re
+import zipfile
+import tempfile
 
 def slugify_translit(text: str) -> str:
     # 1. Transliterate using the existing helper
@@ -56,6 +58,60 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 PROJECTS_DIR = os.path.join(os.path.dirname(__file__), "projects")
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 
+def migrate_legacy_storage():
+    """Safety migration for old 'server/storage' data to the new Project-based system."""
+    old_storage = os.path.join(os.path.dirname(__file__), "storage")
+    if not os.path.exists(old_storage):
+        return
+
+    # Check if storage has any real files (excluding hidden files)
+    legacy_files = [f for f in os.listdir(old_storage) if os.path.isfile(os.path.join(old_storage, f)) and not f.startswith('.')]
+    
+    if legacy_files:
+        print(f"!!! ALERT: Found {len(legacy_files)} legacy files in storage/ - Migrating to Legacy_Archive project...")
+        
+        # 1. Create a dedicated Legacy project folder
+        legacy_uuid = "legacy-archive-0000" # Static-ish UUID for the archive
+        legacy_folder_name = "legacy-archive"
+        legacy_path = os.path.join(PROJECTS_DIR, legacy_folder_name)
+        legacy_files_dir = os.path.join(legacy_path, "files")
+        os.makedirs(legacy_files_dir, exist_ok=True)
+        
+        # 2. Move files
+        for f in legacy_files:
+            src = os.path.join(old_storage, f)
+            dest = os.path.join(legacy_files_dir, f)
+            shutil.move(src, dest)
+            
+        # 3. Create project state
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        state = {
+            "id": legacy_uuid,
+            "title": "Legacy Archive (Авто-миграция)",
+            "categoryId": "archive",
+            "filesCount": len(legacy_files),
+            "lastModified": "Сейчас",
+            "createdAt": now,
+            "updatedAt": now,
+            "status": "active",
+            "version": "1.0",
+            "files": []
+        }
+        with open(os.path.join(legacy_path, "project_state.json"), "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
+            
+        print(f"Legacy migration complete. Data is now in projects/{legacy_folder_name}")
+
+    # Final Deletion
+    try:
+        shutil.rmtree(old_storage)
+        print("Cleaned up legacy server/storage directory.")
+    except Exception as e:
+        print(f"Warning: Could not remove old storage folder: {e}")
+
+# Run migration on startup
+migrate_legacy_storage()
+
 def get_project_dir(project_id: str):
     if not project_id:
         raise HTTPException(status_code=400, detail="Missing project_id")
@@ -96,14 +152,42 @@ def get_manifest_path(project_id: str):
 def get_history_path(project_id: str):
     return os.path.join(get_project_dir(project_id), "history.json")
 
+def get_file_path(project_id: str, filename: str, suffix: str = ""):
+    """Dynamically resolves the path to a file inside the project directory."""
+    # Ensure we use ONLY the basename for security and portability
+    base_name = os.path.basename(filename)
+    files_dir = get_files_dir(project_id)
+    return os.path.join(files_dir, base_name + suffix)
+
 def _load_manifest(project_id: str):
     manifest_file = get_manifest_path(project_id)
     if not os.path.exists(manifest_file):
         return {}
     try:
         with open(manifest_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
+            data = json.load(f)
+            
+        # --- Migration: Convert absolute path keys to relative filenames ---
+        migrated = {}
+        has_changes = False
+        for k, v in data.items():
+            if os.path.isabs(k) or "/" in k or "\\" in k:
+                rel_key = os.path.basename(k)
+                if rel_key not in migrated: # Avoid overwriting if relative key already exists
+                    migrated[rel_key] = v
+                    has_changes = True
+                else:
+                    # Merge if both exist (rare but possible during migration)
+                    migrated[rel_key].update(v)
+                    has_changes = True
+            else:
+                migrated[k] = v
+        
+        if has_changes:
+            _save_manifest(migrated, project_id) # Persist cleanup
+            
+        return migrated
+    except Exception:
         return {}
 
 def _save_manifest(manifest, project_id: str):
@@ -126,6 +210,10 @@ def append_history(action_data: dict, project_id: str):
             
     if "timestamp" not in action_data:
         action_data["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+    # Ensure relative filename in history
+    if "fileName" in action_data:
+        action_data["fileName"] = os.path.basename(action_data["fileName"])
         
     history.append(action_data)
     
@@ -302,9 +390,8 @@ async def process_invoice(
         raise HTTPException(status_code=400, detail="Require file or file_id")
 
     filename = original_name.lower()
-    files_dir = get_files_dir(projectId)
-    temp_path = os.path.join(files_dir, disk_name)
-    cache_path = os.path.join(files_dir, f"{disk_name}.json")
+    temp_path = get_file_path(projectId, disk_name)
+    cache_path = get_file_path(projectId, disk_name, ".json")
     is_spreadsheet = filename.endswith((".xlsx", ".xls", ".csv"))
 
     if file and not os.path.exists(temp_path):
@@ -366,7 +453,8 @@ async def process_invoice(
                 
                 # Debug prompt
                 try:
-                    with open(os.path.join(get_project_dir(project_id), "last_prompt.txt"), "w", encoding="utf-8") as f:
+                    p_dir = get_project_dir(projectId)
+                    with open(os.path.join(p_dir, "last_prompt.txt"), "w", encoding="utf-8") as f:
                         f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== TEXT ===\n{extracted_text[:1000]}...")
                 except: pass
 
@@ -397,7 +485,7 @@ async def process_invoice(
             final_struct.update({"cost": cost, "method": p_method, "usage": {"total_tokens": total_tokens}})
             
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
-            append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, project_id)
+            append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
         except Exception as e:
             import traceback
@@ -426,7 +514,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     original_filename = file.filename
     transliterated_name = transliterate(original_filename)
     secured_name = secure_filename(transliterated_name)
-    dest_path = os.path.join(get_files_dir(projectId), secured_name)
+    dest_path = get_file_path(projectId, secured_name)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
         
@@ -521,9 +609,8 @@ async def storage_delete(name: str, projectId: str, nuclear: bool = False):
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
     if not dk: dk = secure_filename(name)
-    files_dir = get_files_dir(projectId)
     for ext in ["", ".json", ".md"]:
-        p = os.path.join(files_dir, dk + ext)
+        p = get_file_path(projectId, dk, ext)
         if os.path.exists(p): os.remove(p)
     if dk in m: del m[dk]; _save_manifest(m, projectId)
     return {"status": "success"}
@@ -534,7 +621,7 @@ async def storage_get(name: str, projectId: str):
     dk = None
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
-    p = os.path.join(get_files_dir(projectId), dk or secure_filename(name))
+    p = get_file_path(projectId, dk or secure_filename(name))
     if os.path.exists(p): return FileResponse(p)
     raise HTTPException(status_code=404)
 
@@ -556,6 +643,9 @@ async def list_projects():
         try:
             with open(state_file, "r", encoding="utf-8") as f:
                 state = json.load(f)
+            
+            # 0. Versioning: Update to 1.1
+            state["version"] = "1.1"
             
             # 1. Dynamic Files Count Sync (Using direct local path)
             f_dir = os.path.join(p_path, "files")
@@ -593,7 +683,7 @@ async def save_project(state: dict = Body(...)):
     p_path = get_project_dir(pid)
     
     state["updatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    state["version"] = "1.0"
+    state["version"] = "1.1"
     if "createdAt" not in state:
         state["createdAt"] = state["updatedAt"]
         
@@ -647,7 +737,7 @@ async def create_project(data: dict):
         "updatedAt": now,
         "progress": 0,
         "status": "active",
-        "version": "1.0",
+        "version": "1.1",
         "files": []
     }
     
@@ -771,6 +861,108 @@ async def duplicate_project(data: dict):
             json.dump(state, f, ensure_ascii=False, indent=4)
             
     return {"status": "success", "id": new_uuid}
+
+@app.post("/api/projects/import")
+async def import_project(file: UploadFile = File(...)):
+    if not file.filename.endswith('.zip'):
+        raise HTTPException(status_code=400, detail="Only ZIP files are supported")
+        
+    # 1. Create a unique folder for the imported project
+    import_uuid = str(uuid.uuid4())
+    temp_slug = f"import_{import_uuid[:8]}"
+    temp_import_root = os.path.join(os.path.dirname(__file__), "temp_import")
+    import_path = os.path.join(temp_import_root, temp_slug)
+    os.makedirs(import_path, exist_ok=True)
+    
+    # 2. Save and Extract
+    temp_zip = os.path.join(tempfile.gettempdir(), f"import_{import_uuid}.zip")
+    try:
+        with open(temp_zip, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
+            zip_ref.extractall(import_path)
+            
+        # 3. Validate
+        state_file = os.path.join(import_path, "project_state.json")
+        if not os.path.exists(state_file):
+            shutil.rmtree(import_path) # Cleanup
+            raise HTTPException(status_code=400, detail="Invalid project archive: project_state.json missing")
+            
+        # 4. Read state and UPDATE identity/title if needed
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+            
+        incoming_id = state.get("id")
+        original_title = state.get("title", "Новый проект")
+        new_title = original_title
+        new_project_uuid = incoming_id
+
+        # CHECK FOR UUID DUPLICATE
+        uuid_exists = False
+        try:
+            get_project_dir(incoming_id)
+            uuid_exists = True
+        except: pass
+
+        if uuid_exists or not incoming_id:
+             new_project_uuid = str(uuid.uuid4())
+             new_title = f"Импорт - {original_title}"
+             state["id"] = new_project_uuid
+             state["title"] = new_title
+        
+        # 5. Hierarchy Fix & Validation (Auto-Healing)
+        # Standard DocOK project structure:
+        # [ROOT]/project_state.json
+        # [ROOT]/files/ (all PDFs, XLSX etc and .json results)
+        
+        final_files_dir = os.path.join(import_path, "files")
+        os.makedirs(final_files_dir, exist_ok=True)
+        
+        # Move document files AND results (.json, .md) from root to /files/ folder if flat ZIP
+        data_extensions = (".pdf", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg", ".json", ".md")
+        system_files = ("project_state.json", "manifest.json", "history.json")
+        
+        for f in os.listdir(import_path):
+            if f in system_files: continue
+            if f.lower().endswith(data_extensions):
+                shutil.move(os.path.join(import_path, f), os.path.join(final_files_dir, f))
+        
+        # 6. Recalculate file count for the state
+        actual_files = [f for f in os.listdir(final_files_dir) if os.path.isfile(os.path.join(final_files_dir, f))]
+        state["filesCount"] = len(actual_files)
+        
+        # 7. Finalize folder name (Slugify title + "-import")
+        base_slug = slugify_translit(original_title) # Use original for slug base
+        final_folder_name = f"{base_slug}-import"
+        final_path = os.path.join(PROJECTS_DIR, final_folder_name)
+        
+        # Handle folder collisions (e.g. if we import same project twice)
+        if os.path.exists(final_path):
+             extra_suffix = str(uuid.uuid4())[:4]
+             final_folder_name = f"{base_slug}-import-{extra_suffix}"
+             final_path = os.path.join(PROJECTS_DIR, final_folder_name)
+             
+        # Update dates
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        state["updatedAt"] = now
+        if uuid_exists: state["createdAt"] = now # Mark as new if it's a "copy" via import
+        
+        # Move temp files to final destination
+        os.rename(import_path, final_path)
+        
+        # Save updated state
+        new_state_file = os.path.join(final_path, "project_state.json")
+        with open(new_state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
+            
+        return state # Return the full project object
+        
+    except Exception as e:
+        if os.path.exists(import_path): shutil.rmtree(import_path)
+        raise HTTPException(status_code=500, detail=f"Import failed: {e}")
+    finally:
+        if os.path.exists(temp_zip): os.remove(temp_zip)
 
 @app.delete("/api/projects/delete/{project_id}")
 async def delete_project_endpoint(project_id: str):

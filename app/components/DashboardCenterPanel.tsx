@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   Search,
@@ -269,7 +269,15 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
 // ─── Hybrid Action Card ────────────────────────────────────────────────────────
 
 function HybridActionCard() {
-  const { addProject, activeCategory, setViewContext, setProjectName, setActiveProjectId } = useData();
+  const { 
+    addProject, 
+    activeCategory, 
+    setViewContext, 
+    setProjectName, 
+    setActiveProjectId,
+    importProject 
+  } = useData();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCreate = async () => {
     const newProj = await addProject('', activeCategory);
@@ -277,6 +285,28 @@ function HybridActionCard() {
       setActiveProjectId(newProj.id);
       setProjectName(newProj.title);
       setViewContext('workspace');
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const toastId = toast.loading("Импорт проекта...");
+    try {
+      const newProj = await importProject(file);
+      if (newProj) {
+        toast.success(`Проект "${newProj.title}" успешно импортирован`, { id: toastId });
+        // Optionally switch to the new project immediately
+        // setActiveProjectId(newProj.id);
+        // setProjectName(newProj.title);
+        // setViewContext('workspace');
+      }
+    } catch (err) {
+      toast.error("Ошибка при импорте", { id: toastId });
+    } finally {
+      // Clear input
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -298,13 +328,19 @@ function HybridActionCard() {
 
       {/* Bottom (30%): Import Project */}
       <div 
-        className="flex-[3] flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 cursor-pointer transition-colors"
+        className="flex-[3] flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 cursor-pointer transition-colors relative"
         onClick={(e) => { 
           e.stopPropagation(); 
-          // Placeholder for Import Logic (Stage 14)
-          toast.info("Функция импорта будет доступна в следующей версии"); 
+          fileInputRef.current?.click();
         }}
       >
+        <input 
+          type="file" 
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept=".zip"
+          className="hidden"
+        />
         <FolderInput className="size-4 text-slate-400" />
         <span className="text-xs font-semibold text-slate-600">Импортировать проект...</span>
       </div>
