@@ -383,13 +383,12 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
                 for ri in range(slice_top, slice_bot):
                     row_cells = []
                     for ci in range(stamp_sheet.ncols):
-                        # Filter to right half of stamp area (columns 10+)
-                        if ci < 8: continue
+                        # Ensure we see at least up to Column 20
+                        if ci > 20: continue
                         val = str(stamp_sheet.cell_value(ri, ci)).strip()
                         if val == "nan": val = ""
-                        # Reconstruct merged cells into visual gaps or same values
                         row_cells.append(val or " ")
-                    debug_lines.append(f"| {' | '.join(row_cells)} |")
+                    debug_lines.append(f"R{ri:03d} | {' | '.join(row_cells)} |")
 
             # ── CIPHER: Look for merged cells in columns 13+ with cipher pattern ──
             cipher_regex = r'(\d{2,}-\d{2,}-[А-Яа-яA-Za-z\.\d/_-]+)'
@@ -489,65 +488,76 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
                 cells = " | ".join(str(v).strip()[:40] for v in df.iloc[ri].values)
                 debug_lines.append(f"R{ri:03d} | {cells} |")
 
-    # --- 3. NOTES RECOGNITION (10 rows above stamp) ---
+    # --- Step 4: Extract general notes for the whole specification ---
     notes_parts = []
-    stamp_anchor_idx = -1
-    # Look for "Разраб." or first horizontal line in the name column or anywhere in the df
-    for i in range(len(df)):
-        row_str = " ".join(df.iloc[i].astype(str)).lower()
-        if "разраб." in row_str or "пров." in row_str or "инв. №" in row_str:
-            stamp_anchor_idx = i
-            break
-            
-    # Fallback to the end of ITEMs if no anchor found
-    if stamp_anchor_idx == -1:
-        last_item_idx = -1
-        for r in reversed(parsed_rows or []):
-            if r.get("row_type") == "ITEM" and r.get("id", "").startswith("idx_"):
-                try: last_item_idx = int(r["id"][4:]); break
-                except: pass
-        if last_item_idx != -1:
-            # We assume stamp usually starts some rows after items
-            for idx in range(last_item_idx + 1, min(last_item_idx + 15, len(df))):
-                row_str = " ".join(df.iloc[idx].astype(str)).lower()
-                if any(x in row_str for x in ["разраб", "пров", "утв.", "листов"]):
-                    stamp_anchor_idx = idx
+    extraction_log = "Init"
+    if file_path and file_path.lower().endswith(".xls"):
+        try:
+            import xlrd
+            wb_notes = xlrd.open_workbook(file_path, formatting_info=False)
+            target_sheet = None
+            for s in wb_notes.sheets():
+                if "специф" in s.name.lower():
+                    target_sheet = s
                     break
+            if not target_sheet:
+                target_sheet = wb_notes.sheet_by_index(min(1, wb_notes.nsheets - 1))
 
-    if stamp_anchor_idx != -1:
-        # Scan 10 rows ABOVE the anchor
-        scan_start = max(0, stamp_anchor_idx - 12)
-        for idx in range(scan_start, stamp_anchor_idx + 1): # Include anchor row itself for notes if needed
-            # Try to get text from the name column, or any relevant column if name is empty
-            note_val = str(df.iloc[idx, c_n]).strip()
-            if not note_val or note_val.lower() in ("nan", "0", "0.0", "none"):
-                # Fallback: check columns 2-5 if name column is empty (often notes are merged/shifted)
-                for alt_c in range(2, min(6, len(df.columns))):
-                    alt_val = str(df.iloc[idx, alt_c]).strip()
-                    if alt_val and alt_val.lower() not in ("nan", "0", "0.0", "none"):
-                        # If it's a signature name like "Иванов", skip it
-                        if any(x in alt_val.lower() for x in ["разраб", "пров", "утв.", "н.контр", "листов"]):
-                            continue
-                        note_val = alt_val
+            if target_sheet:
+                # 1. Identify "The Stamp Envelope" vertically
+                # We use the row where the Cipher or Stamp Anchor was found
+                stamp_top = -1
+                stamp_bot = -1
+                
+                for r in range(target_sheet.nrows):
+                    row_vals = [str(target_sheet.cell_value(r, c)).strip().lower() for c in range(target_sheet.ncols)]
+                    row_str = " ".join(row_vals)
+                    
+                    # Top boundary: The Project Cipher or Name usually starts the stamp
+                    if cipher and cipher.lower() in row_str:
+                        if stamp_top == -1: stamp_top = r
+                    
+                    # Bottom boundary: Anchor "Листов" usually signals the end
+                    if "листов" in row_str:
+                        stamp_bot = r
+                        if stamp_top == -1: stamp_top = max(0, r - 6) # Fallback if cipher not found
                         break
+                
+                if stamp_top != -1 and stamp_bot != -1:
+                    extraction_log = f"Stamp range: R{stamp_top} to R{stamp_bot}"
+                    # 2. Collect everything to the LEFT of signatures ONLY inside this envelope
+                    # Scan from Cipher down to Stamp Bottom
+                    for ri in range(stamp_top, stamp_bot + 2):
+                        if ri >= target_sheet.nrows: break
+                        row_vals = [str(target_sheet.cell_value(ri, ci)).strip() for ci in range(target_sheet.ncols)]
+                        # Ignore columns where signatures usually reside (I-M)
+                        left_zone = row_vals[:8]
+                        for val in left_zone:
+                            if len(val) > 15 or "примечание" in val.lower():
+                                if val not in notes_parts:
+                                    notes_parts.append(val)
+                else:
+                    extraction_log = f"Could not define stamp envelope (Top:{stamp_top}, Bot:{stamp_bot})"
+        except Exception as e:
+            extraction_log = f"Notes Error: {e}"
 
-            if note_val and note_val.lower() not in ("nan", "0", "0.0", "none", ""):
-                # Clean position numbers (e.g. "1. ", "2. ") or fragments like "Взамен"
-                if any(nw in note_val.lower() for nw in ["взамен", "инв.", "арх.", "№"]):
-                    continue
-                # Remove leading numbers like "12. "
-                note_val = re.sub(r'^(\d+\.?)+', '', note_val).strip()
-                if len(note_val) > 2:
-                    if note_val not in notes_parts:
-                        notes_parts.append(note_val)
+    # Concat into one sentence
+    notes_str = " ".join(notes_parts) if notes_parts else "Отсутствуют"
+    notes_str = re.sub(r'\s+', ' ', notes_str).strip()
 
-    notes_str = "\n".join(notes_parts) if notes_parts else "Отсутствуют"
-
-    # ── 4. ASSEMBLE ──────────────────────────────────────────────────────────
-    destination = " — ".join(destination_parts) if destination_parts else ""
-    final_cipher = cipher or "Не найдено в сетке (проверьте debug.md)"
-    final_dest = destination or "Не найдено в сетке (проверьте debug.md)"
+    # ── 5. ASSEMBLE ──────────────────────────────────────────────────────────
+    final_cipher = cipher or "В штампе не найден"
+    final_dest = " — ".join(destination_parts) if destination_parts else "В штампе не найден"
     debug_grid = "\n".join(debug_lines)
+    
+    # Final debug report for user
+    extraction_debug = f"\n\n=== NOTES EXTRACTION DEBUG ===\n"
+    extraction_debug += f"Target Sheet: {target_sheet.name if 'target_sheet' in locals() and target_sheet else 'None'}\n"
+    extraction_debug += f"Anchor Row: {anchor_row if 'anchor_row' in locals() else 'None'}\n"
+    extraction_debug += f"Sig Start Column: {sig_col_idx if 'sig_col_idx' in locals() else 'None'}\n"
+    extraction_debug += f"Raw fragments found: {notes_parts}\n"
+    extraction_debug += f"Final string: {notes_str}\n"
+    debug_grid += extraction_debug
 
     summary_md = f"### Общая сводка\n\n" \
                  f"**Номер спецификации:** {final_cipher}\n\n" \
