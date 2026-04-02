@@ -500,12 +500,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         if (data && Array.isArray(data)) {
           setProjects(data);
-          
-          // --- Validation: Reset if ID from localStorage no longer exists on server ---
-          if (activeProjectId && !data.some((p: any) => p.id === activeProjectId)) {
-            setActiveProjectId(null);
-            setViewContext('dashboard');
-          }
         }
       }
     } catch (e) {
@@ -513,12 +507,29 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoadingProjects(false);
     }
-  }, [activeProjectId, setViewContext]);
+  }, []); // No deps — stable function reference
 
   // Initial fetch
   useEffect(() => {
     fetchProjects();
   }, [fetchProjects]);
+
+  // Separate effect: reset stale activeProjectId only when the projects list is loaded and stable
+  // Only resets if the project was previously known (existed in state before this update)
+  const isProjectListLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!projects.length) return;
+    // Mark as loaded after first non-empty fetch
+    if (!isProjectListLoadedRef.current) {
+      isProjectListLoadedRef.current = true;
+      return; // skip validation on first load to avoid false resets
+    }
+    // If activeProjectId is set but no longer in the fetched list, reset to dashboard
+    if (activeProjectId && !projects.some(p => p.id === activeProjectId)) {
+      setActiveProjectId(null);
+      setViewContext('dashboard');
+    }
+  }, [projects, activeProjectId, setViewContext]);
 
   // --- URL & State Synchronization ---
   useEffect(() => {
@@ -740,42 +751,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } catch (e) { return null; }
     };
 
-    // 1. Try SERVER data first (from pre-fetched projects list)
-    const project = projects.find(p => p.id === activeProjectId);
-    if (project) {
-      // If server has rows, use them. Otherwise fallback to local.
-      // We check length to avoid empty server data from overwriting local data if current project matches
-      if (project.specRows && project.specRows.length > 0) setSpecRows(project.specRows);
-      else if (!specRows.length) { const s = loadLocal('specRows'); if (s) setSpecRows(s); }
+    // Fallback to LocalStorage for rows
+    const savedSpec = loadLocal('specRows');
+    if (savedSpec) setSpecRows(savedSpec);
 
-      if (project.requestRows && project.requestRows.length > 0) setRequestRows(project.requestRows);
-      else if (!requestRows.length) { const s = loadLocal('requestRows'); if (s) setRequestRows(s); }
+    const savedReq = loadLocal('requestRows');
+    if (savedReq) setRequestRows(savedReq);
 
-      if (project.invoiceRows && project.invoiceRows.length > 0) setInvoiceRows(project.invoiceRows);
-      else if (!invoiceRows.length) { const s = loadLocal('invoiceRows'); if (s) setInvoiceRows(s); }
+    const savedInv = loadLocal('invoiceRows');
+    if (savedInv) setInvoiceRows(savedInv);
 
-      if (project.estimateRows && project.estimateRows.length > 0) setEstimateRows(project.estimateRows);
-      else if (!estimateRows.length) { const s = loadLocal('estimateRows'); if (s) setEstimateRows(s); }
-    } else {
-      // 2. Fallback to LocalStorage if project not yet in memory (e.g. brand new or still loading list)
-      const savedSpec = loadLocal('specRows');
-      if (savedSpec) setSpecRows(savedSpec);
-
-      const savedReq = loadLocal('requestRows');
-      if (savedReq) setRequestRows(savedReq);
-
-      const savedInv = loadLocal('invoiceRows');
-      if (savedInv) setInvoiceRows(savedInv);
-
-      const savedEst = loadLocal('estimateRows');
-      if (savedEst) setEstimateRows(savedEst);
-    }
+    const savedEst = loadLocal('estimateRows');
+    if (savedEst) setEstimateRows(savedEst);
 
     // End initialization block after state updates are scheduled
     const timer = setTimeout(() => { isInitializing.current = false; }, 200);
     return () => clearTimeout(timer);
 
-  }, [activeProjectId, projects]);
+  }, [activeProjectId]);
 
   const fetchHistory = useCallback((type: 'text' | 'xlsx') => {
     if (!activeProjectId) return;
@@ -1792,11 +1785,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
           let mStr = String(child.mass);
           if (Number(mStr) > 0) mStr = Number(mStr).toFixed(2);
 
+          const mainNum = posCounter++;
+          const childPos = String(mainNum);
+
+          // Иерархическая нумерация для вложенных строк (как в сводной таблице)
+          if (child.children && child.children.length > 1) {
+            child.children.forEach((sub: any, sIdx: number) => {
+              sub.pos = `${childPos}.${sIdx + 1}`;
+            });
+          }
+
           return {
             ...child,
             quantity: qStr,
             mass: mStr,
-            pos: String(posCounter++),
+            pos: childPos,
             is_header: false,
             row_type: 'ITEM'
           };

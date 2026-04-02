@@ -393,7 +393,7 @@ function SpecTable() {
     displayRows, viewMode, isOnlySelectedView, searchQuery, setSearchQuery
   } = useData();
   const [expandedRows, setExpandedRows] = React.useState<Record<string, boolean>>({});
-  const [collapsedIds, setCollapsedIds] = React.useState<Record<string, boolean>>({});
+  const [expandedHeaderIds, setExpandedHeaderIds] = React.useState<Record<string, boolean>>({});
   const { handleCellUpdate } = useTableEditor('spec');
   const { handleKeyDown } = useTableNavigation();
 
@@ -402,7 +402,7 @@ function SpecTable() {
   }, []);
 
   const toggleCollapse = React.useCallback((id: string) => {
-    setCollapsedIds(prev => ({ ...prev, [id]: !prev[id] }));
+    setExpandedHeaderIds(prev => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
   const columns: Column[] = [
@@ -444,13 +444,19 @@ function SpecTable() {
       res.push(renderedRow);
       
       // ШАГ 3: Если включен фильтр «Только выделенные», игнорируем схлопывание
-      if (collapsedIds[row.id] && !isOnlySelectedView) {
+      // ПО УМОЛЧАНИЮ ВСЁ СКРЫТО (кроме поставщиков и оригинала), если ID нет в expandedHeaderIds
+      const isRowSupplier = String(row.id).startsWith('supplier_header_');
+      const isExpanded = expandedHeaderIds[row.id] !== undefined 
+        ? expandedHeaderIds[row.id] 
+        : (isRowSupplier || viewMode === 'original'); // Поставщики и Оригинал развернуты по умолчанию
+
+      if (row.is_header && !isExpanded && !isOnlySelectedView) {
         hideUntilLevel = level;
       }
     }
 
     return res;
-  }, [displayRows, collapsedIds, viewMode, isOnlySelectedView]);
+  }, [displayRows, expandedHeaderIds, viewMode, isOnlySelectedView]);
 
   const isActiveSearch = searchQuery.trim().length > 0;
 
@@ -487,7 +493,13 @@ function SpecTable() {
                 viewMode={viewMode}
                 isExpanded={!!expandedRows[row.id]}
                 toggleExpand={toggleExpand}
-                isCollapsed={!!collapsedIds[row.id]}
+                isCollapsed={(() => {
+                  const isRowSupplier = String(row.id).startsWith('supplier_header_');
+                  // В режиме Оригинал и для Поставщиков по умолчанию FALSE (развернуто)
+                  // Для Сводной (merged) по умолчанию TRUE (свернуто)
+                  if (expandedHeaderIds[row.id] !== undefined) return !expandedHeaderIds[row.id];
+                  return !(viewMode === 'original' || isRowSupplier);
+                })()}
                 toggleCollapse={toggleCollapse}
                 onKeyDown={handleKeyDown}
               />

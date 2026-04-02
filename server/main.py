@@ -55,7 +55,7 @@ app.add_middleware(
 )
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-PROJECTS_DIR = os.path.join(os.path.dirname(__file__), "projects")
+PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "projects")
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 
 def migrate_legacy_storage():
