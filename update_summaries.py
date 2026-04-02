@@ -34,7 +34,13 @@ for disk_name, entry in manifest.items():
                 items = convert_df_to_items(df)
                 summary = extract_specification_summary(df, items)
                 entry['summary_md'] = summary
-                print(f"Summary for {disk_name} updated.")
+                
+                # Create physical .md file
+                summary_path = f'data/projects/{project_id}/files/{disk_name}_summary.md'
+                with open(summary_path, 'w', encoding='utf-8') as fs:
+                    fs.write(summary)
+                    
+                print(f"Summary and MD for {disk_name} updated.")
             except Exception as e:
                 print(f"Error processing {disk_name}: {e}")
 

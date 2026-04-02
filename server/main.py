@@ -506,6 +506,13 @@ async def process_invoice(
             if disk_name in manifest:
                 manifest[disk_name]["summary_md"] = summary_md
                 manifest[disk_name]["cost"] = cost
+                
+                # Save physical MD for summary
+                if summary_md:
+                    summary_p = get_file_path(projectId, disk_name, "_summary.md")
+                    with open(summary_p, "w", encoding="utf-8") as fs:
+                        fs.write(summary_md)
+                
                 _save_manifest(manifest, projectId)
 
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
@@ -569,6 +576,10 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                 # We can do a quick pass to get basic stats
                 pre_items = convert_df_to_items(df)
                 summary_md = extract_specification_summary(df, pre_items)
+                if summary_md:
+                    summary_p = get_file_path(projectId, secured_name, "_summary.md")
+                    with open(summary_p, "w", encoding="utf-8") as f:
+                        f.write(summary_md)
             except Exception as e_sum:
                 print(f"Pre-summary error: {e_sum}")
                 summary_md = ""
