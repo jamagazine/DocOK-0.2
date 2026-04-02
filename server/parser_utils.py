@@ -287,100 +287,284 @@ def extract_text_from_pdf(path: str) -> str:
                 ext_text += "\n".join([re.sub(r'\s{2,}', ' | ', l) for l in t.split('\n')]) + "\n"
     return ext_text
 
-def extract_specification_summary(df: pd.DataFrame, parsed_rows: list) -> str:
+def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path: str = "") -> dict:
     """
-    Extracts metadata from the 'stamp' and footer of a specification.
-    Analyzes rows below the main table and looks for Cipher (Шифр), Project Name (Назначение), and Notes.
+    Extracts metadata from the GOST stamp using xlrd merged cells.
+    The stamp data (Cipher, Destination) is stored in merged cells on the
+    'Спецификация' sheet, which pandas does not read by default.
+    Statistics (positions, suppliers) come from the parsed table data.
     """
-    # 1. Statistics (Items count and Unique Suppliers)
-    # We always prioritize ITEMs from parsed_rows if available
-    items = [r for r in (parsed_rows or []) if r.get("row_type") == "ITEM" and not r.get("is_header")]
+    # ── 1. STATISTICS from parsed_rows (ITEMs only) ──────────────────────────
+    items = [r for r in (parsed_rows or []) if r.get("row_type") == "ITEM"]
     total_positions = len(items)
-    
-    # Unique suppliers from column index 4 (normalized)
-    suppliers = sorted(list(set([str(r.get("supplier", "")).strip() for r in items if r.get("supplier")])))
-    suppliers_str = ", ".join(suppliers) if suppliers else "Не определено"
-    
-    # 2. Slice bottom part (last 40 rows) for Stamp and Notes
-    bottom_df = df.iloc[-40:].fillna("")
-    
-    # Cipher regex: refined to catch more patterns
-    cipher_regex = r'(\d+-\d+-[А-Яа-яA-Za-z\.\d-]+)|(\d+-[А-Яа-я\.\d-]+)|([А-ЯA-Z]{2,}-\d+-[\w\d-]+)'
-    cipher = "Не определено"
-    
-    # Stamp detection (GOST keywords)
-    stamp_start_idx = -1
-    stamp_keywords = ["изм.", "лист", "стади", "подп", "дата", "№ док", "утв.", "разраб.", "пров.", "н.контр."]
-    
-    # Find the end of table to know where Notes start
-    last_item_idx = -1
-    if parsed_rows:
-        for r in reversed(parsed_rows):
-            if r.get("row_type") == "ITEM":
-                row_id = str(r.get("id", ""))
-                if row_id.startswith("idx_"):
-                    try:
-                        idx_val = int(row_id[4:])
-                        if idx_val > last_item_idx: last_item_idx = idx_val
-                    except: continue
 
-    project_parts = []
+    # Suppliers: Find the supplier column dynamically
+    c_s = -1
+    for i, c in enumerate(df.columns):
+        cl = str(c).lower()
+        if "поставщик" in cl or "изготовитель" in cl:
+            c_s = i
+            break
     
-    # Search for Cipher and Stamp Start in the bottom part
-    for i, row in df.iterrows():
-        if i < len(df) - 40: continue
-        
-        row_values = [str(v).strip() for v in row.values if v and str(v).strip() != "nan" and str(v).strip() != "0"]
-        full_row_text = " ".join(row_values)
-        
-        # Cipher extraction
-        m_c = re.search(cipher_regex, full_row_text)
-        if m_c:
-            found_cipher = m_c.group(0)
-            if cipher == "Не определено" or len(found_cipher) > len(cipher):
-                cipher = found_cipher
-        
-        # Detection of the Stamp area
-        if stamp_start_idx == -1:
-            if any(k in full_row_text.lower() for k in stamp_keywords):
-                stamp_start_idx = i
-                
-        # "Destination" extraction
-        is_near_end = i >= len(df) - 15
-        if (stamp_start_idx != -1 and i >= stamp_start_idx) or is_near_end:
-            for v in row_values:
-                clean_v = v.strip()
-                # More aggressive filter to avoid capturing component names
-                if len(clean_v) > 15 and not any(k in clean_v.lower() for k in ["спецификац", "изм.", ". .", "дата", "архив", "инв.", "формат", "копировал", "лист", "стади", "решетка", "воздуховод", "клапан", "отвод"]):
-                    if clean_v not in project_parts and not re.search(r'^\d+$', clean_v) and not re.search(cipher_regex, clean_v):
-                        project_parts.append(clean_v)
+    if c_s == -1 and 4 < len(df.columns):
+        c_s = 4 # Fallback to column 4 if not found but exists
 
-    destination = " — ".join(project_parts) if project_parts else "Не определено"
-    
-    # Notes extraction (everything from last ITEM to Stamp Start)
+    suppliers_map = {} # Case-insensitive map to preserve one of the casings
+    for r in items:
+        rid = r.get("id", "")
+        if rid.startswith("idx_"):
+            try:
+                row_idx = int(rid[4:])
+                if row_idx < len(df) and c_s != -1:
+                    val = str(df.iloc[row_idx, c_s]).strip()
+                    if val and val.lower() not in ("", "0", "0.0", "nan", "none"):
+                        suppliers_map[val.lower()] = val
+            except (ValueError, IndexError):
+                pass
+    suppliers_str = ", ".join(sorted(suppliers_map.values())) if suppliers_map else "Не определено"
+
+    # ── 2. STAMP EXTRACTION via xlrd (merged cells) ──────────────────────────
+    cipher = ""
+    destination_parts = []
+    debug_lines = []
+    anchor_note = ""
+
+    if file_path and file_path.lower().endswith(".xls"):
+        try:
+            import xlrd
+            wb = xlrd.open_workbook(file_path, formatting_info=True)
+
+            # Try to find the sheet with the stamp (prefer "Спецификация", fallback to any)
+            stamp_sheet = None
+            for sn in wb.sheet_names():
+                if "специф" in sn.lower():
+                    stamp_sheet = wb.sheet_by_name(sn)
+                    break
+            if not stamp_sheet and wb.nsheets > 1:
+                stamp_sheet = wb.sheet_by_index(1)  # try second sheet
+            if not stamp_sheet:
+                stamp_sheet = wb.sheet_by_index(0)
+
+            debug_lines.append(f"Sheet: '{stamp_sheet.name}', Rows: {stamp_sheet.nrows}, Merged: {len(stamp_sheet.merged_cells)}")
+
+            # Scan merged cells for stamp data
+            # Pattern: Cipher is in merged cells spanning columns 13-19 in the first 60 rows
+            # Destination is in adjacent merged cells below the cipher
+            stamp_merges = []
+            for mc in stamp_sheet.merged_cells:
+                r_lo, r_hi, c_lo, c_hi = mc
+                if r_lo < 60:  # Only first page
+                    val = stamp_sheet.cell_value(r_lo, c_lo)
+                    if val:
+                        val_str = str(val).strip()
+                        stamp_merges.append({
+                            "r_lo": r_lo, "r_hi": r_hi - 1,
+                            "c_lo": c_lo, "c_hi": c_hi - 1,
+                            "val": val_str
+                        })
+
+            # Sort by row for readability
+            stamp_merges.sort(key=lambda x: (x["r_lo"], x["c_lo"]))
+
+            # Visual Grid: Recreate the document slice around the anchor
+            anchor_idx = -1
+            for i in range(stamp_sheet.nrows):
+                for j in range(stamp_sheet.ncols):
+                    if "листов" in str(stamp_sheet.cell_value(i, j)).lower():
+                        anchor_idx = i
+                        break
+                if anchor_idx != -1: break
+
+            if anchor_idx != -1:
+                debug_lines.append("")
+                debug_lines.append("=== VISUAL GRID AROUND 'ЛИСТОВ' (STAMP AREA) ===")
+                slice_top = max(0, anchor_idx - 15)
+                slice_bot = min(stamp_sheet.nrows, anchor_idx + 5)
+                for ri in range(slice_top, slice_bot):
+                    row_cells = []
+                    for ci in range(stamp_sheet.ncols):
+                        # Filter to right half of stamp area (columns 10+)
+                        if ci < 8: continue
+                        val = str(stamp_sheet.cell_value(ri, ci)).strip()
+                        if val == "nan": val = ""
+                        # Reconstruct merged cells into visual gaps or same values
+                        row_cells.append(val or " ")
+                    debug_lines.append(f"| {' | '.join(row_cells)} |")
+
+            # ── CIPHER: Look for merged cells in columns 13+ with cipher pattern ──
+            cipher_regex = r'(\d{2,}-\d{2,}-[А-Яа-яA-Za-z\.\d/_-]+)'
+            for sm in stamp_merges:
+                if sm["c_lo"] >= 13 and sm["r_lo"] < 60:
+                    m = re.search(cipher_regex, sm["val"])
+                    if m:
+                        found = m.group(0)
+                        if len(found) > len(cipher):
+                            cipher = found
+
+            # ── DESTINATION: Collect text from merged cells near cipher ──
+            # Look for large text blocks in columns 13+ that are NOT the cipher
+            noise_words = ["спецификац", "изм.", "лист", "стади", "архив", "инв.",
+                           "формат", "дата", "подп", "разраб", "пров.", "н.контр",
+                           "утв.", "копировал", "взам.", "№ док", "поз.", "наименован",
+                           "код продукц", "поставщик", "ед. измер", "масса", "примечан",
+                           "кол.", "взамен", "инв. №", "арх. №", "подпись", "дата", "инв.№"]
+            for sm in stamp_merges:
+                if sm["c_lo"] >= 13 and sm["r_lo"] < 60:
+                    val = sm["val"]
+                    if val == cipher:
+                        continue
+                    if len(val) < 6:
+                        continue
+                    if re.match(r'^[\d\.\,\s]+$', val):
+                        continue
+                    if any(nw in val.lower() for nw in noise_words):
+                        continue
+                    if val not in destination_parts:
+                        destination_parts.append(val)
+
+        except Exception as e:
+            anchor_note = f"⚠ Ошибка чтения xlrd: {e}\n"
+            debug_lines.append(anchor_note)
+
+    elif file_path and file_path.lower().endswith(".xlsx"):
+        # For .xlsx files, try openpyxl merged cells
+        try:
+            import openpyxl
+            wbx = openpyxl.load_workbook(file_path, data_only=True)
+
+            stamp_ws = None
+            for sn in wbx.sheetnames:
+                if "специф" in sn.lower():
+                    stamp_ws = wbx[sn]
+                    break
+            if not stamp_ws and len(wbx.sheetnames) > 1:
+                stamp_ws = wbx.worksheets[1]
+            if not stamp_ws:
+                stamp_ws = wbx.active
+
+            debug_lines.append(f"Sheet: '{stamp_ws.title}', Merged: {len(stamp_ws.merged_cells.ranges)}")
+
+            # Read merged cell ranges
+            cipher_regex = r'(\d{2,}-\d{2,}-[А-Яа-яA-Za-z\.\d/_-]+)'
+            for mr in stamp_ws.merged_cells.ranges:
+                r_lo = mr.min_row - 1  # Convert to 0-indexed
+                c_lo = mr.min_col - 1
+                if r_lo < 60:
+                    cell = stamp_ws.cell(mr.min_row, mr.min_col)
+                    if cell.value:
+                        val = str(cell.value).strip()
+                        if c_lo >= 13:
+                            m = re.search(cipher_regex, val)
+                            if m and len(m.group(0)) > len(cipher):
+                                cipher = m.group(0)
+                            elif len(val) >= 6 and val != cipher:
+                                if not re.match(r'^[\d\.\,\s]+$', val):
+                                    if val not in destination_parts:
+                                        destination_parts.append(val)
+                        debug_lines.append(f"  R{r_lo:03d} C{c_lo:02d}: '{val[:70]}'")
+        except Exception as e:
+            anchor_note = f"⚠ Ошибка чтения openpyxl: {e}\n"
+            debug_lines.append(anchor_note)
+
+    else:
+        # Fallback: no file path or unsupported format
+        anchor_note = "⚠ Путь к файлу не указан или формат не поддерживается.\n"
+        debug_lines.append(anchor_note)
+
+        # Try anchor-based search in the pandas df as last resort
+        anchor_idx = -1
+        for i in range(min(len(df), 100)):
+            for col_idx in range(len(df.columns)):
+                cell = str(df.iloc[i, col_idx]).strip().lower()
+                if "листов" in cell or "изм." in cell:
+                    anchor_idx = i
+                    break
+            if anchor_idx != -1:
+                break
+
+        if anchor_idx != -1:
+            slice_top = max(0, anchor_idx - 10)
+            slice_bot = min(len(df), anchor_idx + 4)
+            for ri in range(slice_top, slice_bot):
+                cells = " | ".join(str(v).strip()[:40] for v in df.iloc[ri].values)
+                debug_lines.append(f"R{ri:03d} | {cells} |")
+
+    # --- 3. NOTES RECOGNITION (10 rows above stamp) ---
     notes_parts = []
-    if last_item_idx != -1:
-        # Search between table and stamp
-        search_start = last_item_idx + 1
-        search_limit = stamp_start_idx if stamp_start_idx != -1 else len(df) - 10
-        
-        if search_start < search_limit:
-            for idx in range(search_start, search_limit):
-                if idx in df.index:
-                    r_vals = [str(v).strip() for v in df.iloc[idx].values if v and str(v).strip() != "nan" and str(v).strip() != "0"]
-                    r_text = " ".join(r_vals)
-                    # Filter out short noise or numeric fragments
-                    if len(r_text) > 5 and not re.search(r'^\d+$', r_text):
-                        notes_parts.append(r_text)
-    
+    stamp_anchor_idx = -1
+    # Look for "Разраб." or first horizontal line in the name column or anywhere in the df
+    for i in range(len(df)):
+        row_str = " ".join(df.iloc[i].astype(str)).lower()
+        if "разраб." in row_str or "пров." in row_str or "инв. №" in row_str:
+            stamp_anchor_idx = i
+            break
+            
+    # Fallback to the end of ITEMs if no anchor found
+    if stamp_anchor_idx == -1:
+        last_item_idx = -1
+        for r in reversed(parsed_rows or []):
+            if r.get("row_type") == "ITEM" and r.get("id", "").startswith("idx_"):
+                try: last_item_idx = int(r["id"][4:]); break
+                except: pass
+        if last_item_idx != -1:
+            # We assume stamp usually starts some rows after items
+            for idx in range(last_item_idx + 1, min(last_item_idx + 15, len(df))):
+                row_str = " ".join(df.iloc[idx].astype(str)).lower()
+                if any(x in row_str for x in ["разраб", "пров", "утв.", "листов"]):
+                    stamp_anchor_idx = idx
+                    break
+
+    if stamp_anchor_idx != -1:
+        # Scan 10 rows ABOVE the anchor
+        scan_start = max(0, stamp_anchor_idx - 12)
+        for idx in range(scan_start, stamp_anchor_idx + 1): # Include anchor row itself for notes if needed
+            # Try to get text from the name column, or any relevant column if name is empty
+            note_val = str(df.iloc[idx, c_n]).strip()
+            if not note_val or note_val.lower() in ("nan", "0", "0.0", "none"):
+                # Fallback: check columns 2-5 if name column is empty (often notes are merged/shifted)
+                for alt_c in range(2, min(6, len(df.columns))):
+                    alt_val = str(df.iloc[idx, alt_c]).strip()
+                    if alt_val and alt_val.lower() not in ("nan", "0", "0.0", "none"):
+                        # If it's a signature name like "Иванов", skip it
+                        if any(x in alt_val.lower() for x in ["разраб", "пров", "утв.", "н.контр", "листов"]):
+                            continue
+                        note_val = alt_val
+                        break
+
+            if note_val and note_val.lower() not in ("nan", "0", "0.0", "none", ""):
+                # Clean position numbers (e.g. "1. ", "2. ") or fragments like "Взамен"
+                if any(nw in note_val.lower() for nw in ["взамен", "инв.", "арх.", "№"]):
+                    continue
+                # Remove leading numbers like "12. "
+                note_val = re.sub(r'^(\d+\.?)+', '', note_val).strip()
+                if len(note_val) > 2:
+                    if note_val not in notes_parts:
+                        notes_parts.append(note_val)
+
     notes_str = "\n".join(notes_parts) if notes_parts else "Отсутствуют"
 
-    # Assemble Markdown according to the refined TZ
+    # ── 4. ASSEMBLE ──────────────────────────────────────────────────────────
+    destination = " — ".join(destination_parts) if destination_parts else ""
+    final_cipher = cipher or "Не найдено в сетке (проверьте debug.md)"
+    final_dest = destination or "Не найдено в сетке (проверьте debug.md)"
+    debug_grid = "\n".join(debug_lines)
+
     summary_md = f"### Общая сводка\n\n" \
-                 f"**Номер спецификации:** {cipher}\n\n" \
-                 f"**Назначение:** {destination}\n\n" \
-                 f"**Позиций всего (объединенных):** {total_positions} шт.\n\n" \
+                 f"**Номер спецификации:** {final_cipher}\n\n" \
+                 f"**Назначение:** {final_dest}\n\n" \
+                 f"**Позиций всего (объединённых):** {total_positions} шт.\n\n" \
                  f"**Поставщики в документе:** {suppliers_str}\n\n" \
                  f"**Примечания:**\n{notes_str}"
-    
-    return summary_md
+
+    return {
+        "summary_md": summary_md,
+        "debug_grid": debug_grid,
+        "fields": {
+            "cipher": final_cipher,
+            "destination": final_dest,
+            "total_positions": total_positions,
+            "suppliers": suppliers_str,
+            "notes": notes_str
+        }
+    }
+

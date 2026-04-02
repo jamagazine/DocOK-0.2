@@ -32,15 +32,22 @@ for disk_name, entry in manifest.items():
                 
                 df = df.dropna(how='all').fillna("")
                 items = convert_df_to_items(df)
-                summary = extract_specification_summary(df, items)
+                sum_res = extract_specification_summary(df, items, file_path)
+                summary = sum_res["summary_md"]
+                debug_grid = sum_res["debug_grid"]
                 entry['summary_md'] = summary
                 
                 # Create physical .md file
                 summary_path = f'data/projects/{project_id}/files/{disk_name}_summary.md'
                 with open(summary_path, 'w', encoding='utf-8') as fs:
                     fs.write(summary)
+                
+                # Create debug grid file
+                debug_path = f'data/projects/{project_id}/files/{disk_name}_debug.md'
+                with open(debug_path, 'w', encoding='utf-8') as fsd:
+                    fsd.write(f"### DEBUG GRID FOR {disk_name}\n\n" + summary + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
                     
-                print(f"Summary and MD for {disk_name} updated.")
+                print(f"Summary and DEBUG MD for {disk_name} updated.")
             except Exception as e:
                 print(f"Error processing {disk_name}: {e}")
 

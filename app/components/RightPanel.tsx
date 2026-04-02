@@ -548,33 +548,65 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                     };
 
                     if (activeSummary) {
+                      const lines = activeSummary.split('\n').filter(l => l.trim() !== "");
+                      
                       return (
                         <div className="flex flex-col gap-4">
-                          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                            <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap font-medium">
-                              {activeSummary}
-                            </div>
+                          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
                             
-                            <div className="h-px bg-slate-100 my-4" />
+                            {lines.map((line, idx) => {
+                               if (line.startsWith('###')) {
+                                 return <h3 key={idx} className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.15em] mb-4">{line.replace('###', '').trim()}</h3>;
+                               }
+                               if (line.includes(':**')) {
+                                  const parts = line.split(':**');
+                                  const label = parts[0].replace(/\*/g, '').trim();
+                                  const content = parts[1]?.trim() || "";
+                                  const isMissing = content.includes('Не найдено в сетке');
+                                  
+                                  return (
+                                    <div key={idx} className="mb-4 last:mb-0 flex flex-col gap-1">
+                                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{label}</span>
+                                      <span className={cn(
+                                        "text-[13px] leading-relaxed",
+                                        isMissing ? "text-red-400 italic font-medium" : "text-slate-800 font-semibold"
+                                      )}>
+                                        {content}
+                                      </span>
+                                    </div>
+                                  );
+                               }
+                               if (line.trim() === "Примечания:") return null;
+                               return (
+                                 <p key={idx} className="text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-100 mt-2 italic font-medium leading-relaxed">
+                                   {line}
+                                 </p>
+                               );
+                            })}
                             
-                            <div className="flex flex-col gap-2.5">
+                            <div className="h-px bg-slate-100 my-5" />
+                            
+                            <div className="flex flex-col gap-3">
                                <div className="flex justify-between items-center text-xs">
-                                  <span className="text-slate-500 font-semibold uppercase tracking-wider">Всего позиций:</span>
-                                  <span className="text-indigo-700 font-bold bg-indigo-50 px-2 py-1 rounded min-w-[3rem] text-center">{getRealItemCount()} шт.</span>
+                                  <span className="text-slate-400 font-bold uppercase tracking-tighter">Всего позиций:</span>
+                                  <span className="text-indigo-700 font-black bg-indigo-50 px-2.5 py-1 rounded-lg text-sm">{getRealItemCount()} шт.</span>
                                </div>
                                {currentStage !== 'spec' && (
                                  <div className="flex justify-between items-center text-xs">
-                                    <span className="text-slate-500 font-semibold uppercase tracking-wider">Сумма этапа:</span>
-                                    <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-1 rounded">{getIntermediateTotal()} ₽</span>
+                                    <span className="text-slate-400 font-bold uppercase tracking-tighter">Сумма этапа:</span>
+                                    <span className="text-emerald-700 font-black bg-emerald-50 px-2.5 py-1 rounded-lg text-sm">{getIntermediateTotal()} ₽</span>
                                  </div>
-                               )}
+                                )}
                             </div>
                           </div>
                           
-                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-start gap-2.5">
-                             <Info className="w-3.5 h-3.5 text-slate-400 mt-0.5" />
-                             <p className="text-[10px] text-slate-500 leading-normal">
-                               Данные извлечены из «штампа» и подвала документа. Выберите другой файл в списке файлов слева, чтобы переключить информацию.
+                          <div className="bg-slate-900/5 p-4 rounded-xl flex items-start gap-3 border border-slate-200/50">
+                             <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-sm border border-slate-100 shrink-0">
+                                <Info className="w-4 h-4 text-indigo-500" />
+                             </div>
+                             <p className="text-[10px] text-slate-500 leading-normal font-medium">
+                               Данные извлечены методом «Координатного среза» штампа. Сетка поиска доступна в файле <span className="text-slate-800 underline decoration-indigo-200">_debug.md</span> в папке проекта.
                              </p>
                           </div>
                         </div>
