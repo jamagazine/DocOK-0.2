@@ -28,6 +28,7 @@ export interface Project {
   title: string;
   filesCount: number;
   lastModified: string;
+  createdAt: string;
   progress: number;
   status: ProjectStatus;
   categoryId: string;

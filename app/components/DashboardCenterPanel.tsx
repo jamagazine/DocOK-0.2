@@ -13,6 +13,9 @@ import {
   Plus,
   FolderInput,
   Download,
+  ArrowUpDown,
+  Check,
+  SortAsc,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -332,7 +335,16 @@ export function DashboardCenterPanel() {
   } = useData();
   
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [isSortOpen, setIsSortOpen] = React.useState(false);
+  const [sortOrder, setSortOrder] = React.useState<'newest' | 'oldest'>(() => {
+    try {
+      const saved = localStorage.getItem('docok_projects_sort');
+      return (saved as 'newest' | 'oldest') || 'newest';
+    } catch (e) { return 'newest'; }
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('docok_projects_sort', sortOrder);
+  }, [sortOrder]);
 
   const filteredProjects = projects.filter(p => {
     // Search
@@ -346,6 +358,16 @@ export function DashboardCenterPanel() {
     
     return p.categoryId === activeCategory;
   });
+
+  const sortedProjects = React.useMemo(() => {
+    return [...filteredProjects].sort((a, b) => {
+      const dateA = new Date(a.createdAt || 0).getTime();
+      const dateB = new Date(b.createdAt || 0).getTime();
+      
+      if (sortOrder === 'newest') return dateB - dateA;
+      return dateA - dateB;
+    });
+  }, [filteredProjects, sortOrder]);
 
   const openProject = (project: Project) => {
     setActiveProjectId(project.id);
@@ -379,17 +401,42 @@ export function DashboardCenterPanel() {
 
           {/* Right: Sort button */}
           <div className="flex-1 flex justify-end items-center gap-4 min-w-0">
-            <button
-              onClick={() => setIsSortOpen(!isSortOpen)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm border border-slate-200 hover:border-indigo-300',
-                isSortOpen ? 'bg-indigo-50 text-indigo-700' : 'bg-white text-slate-700 hover:bg-slate-50'
-              )}
-              title="Сортировка"
-            >
-              <ArrowUpDown className="w-4 h-4" />
-              <span>Сортировка</span>
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className={cn(
+                    'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm border border-slate-200 outline-none',
+                    'bg-white/80 backdrop-blur-md text-slate-700 hover:border-indigo-300 hover:bg-slate-50 active:scale-95'
+                  )}
+                  title="Сортировка"
+                >
+                  <ArrowUpDown className="w-4 h-4 text-indigo-500" />
+                  <span>Сортировка</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 p-1.5 backdrop-blur-xl bg-white/90 border-slate-200/50 shadow-2xl animate-in fade-in zoom-in duration-100">
+                <DropdownMenuItem 
+                  onClick={() => setSortOrder('newest')}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-md hover:bg-indigo-50/50 group transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <SortAsc className="size-4 text-slate-400 group-hover:text-indigo-500" />
+                    <span className={cn("text-sm", sortOrder === 'newest' ? "font-bold text-indigo-600" : "text-slate-600")}>Сначала новые</span>
+                  </div>
+                  {sortOrder === 'newest' && <Check className="size-4 text-indigo-600" />}
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={() => setSortOrder('oldest')}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-md hover:bg-indigo-50/50 group transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <Clock className="size-4 text-slate-400 group-hover:text-indigo-500" />
+                    <span className={cn("text-sm", sortOrder === 'oldest' ? "font-bold text-indigo-600" : "text-slate-600")}>Сначала старые</span>
+                  </div>
+                  {sortOrder === 'oldest' && <Check className="size-4 text-indigo-600" />}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -399,7 +446,7 @@ export function DashboardCenterPanel() {
               {/* Hybrid Action Card first - always visible */}
               <HybridActionCard />
               
-              {filteredProjects.map(p => (
+              {sortedProjects.map(p => (
                 <ProjectCard
                   key={p.id}
                   project={p}
@@ -416,25 +463,3 @@ export function DashboardCenterPanel() {
   );
 }
 
-// Re-using local icon because it was used in original
-function ArrowUpDown(props: any) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="m21 16-4 4-4-4" />
-      <path d="M17 20V4" />
-      <path d="m3 8 4-4 4 4" />
-      <path d="M7 4v16" />
-    </svg>
-  )
-}
