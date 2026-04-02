@@ -532,7 +532,6 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
           <div className="flex flex-col gap-6">
             {expanded ? (
               <>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">Паспорт спецификации</div>
                 <div className="flex flex-col gap-4">
                   {(() => {
                     let activeFileData = activeFileId ? uploadStatuses[activeFileId] : undefined;
@@ -545,10 +544,16 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                     const isLoading = status.includes("Анализ") || status.includes("Старт");
                     
                     const getRealItemCount = () => {
-                      if (currentStage === 'spec') return specRows.filter(r => r.row_type === 'ITEM').length;
-                      if (currentStage === 'invoice') return invoiceRows.length;
-                      if (currentStage === 'estimate') return estimateRows.length;
-                      return 0;
+                      let baseRows: any[] = [];
+                      if (currentStage === 'spec') baseRows = specRows;
+                      else if (currentStage === 'invoice') baseRows = invoiceRows;
+                      else if (currentStage === 'estimate') baseRows = estimateRows;
+                      
+                      const items = baseRows.filter(r => r.row_type === 'ITEM' || (!r.is_header && r.name));
+                      const uniqueKeys = new Set(items.map(r => 
+                        `${(r.name || '').trim().toLowerCase()}|${(r.brand || '').trim().toLowerCase()}|${(r.code || '').trim().toLowerCase()}`
+                      ));
+                      return uniqueKeys.size;
                     };
 
                     const getSupplierCount = () => {
@@ -588,18 +593,12 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden flex flex-col gap-5">
                             <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
                             
-                            {/* Cipher */}
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex items-center gap-2 text-indigo-600">
-                                <Hash className="w-4 h-4" />
-                                <span className="text-[10px] font-black uppercase tracking-wider">Шифр проекта</span>
-                              </div>
-                              <div className="text-sm font-bold text-slate-900 leading-tight">
+                            {/* Cipher / Header */}
+                            <div className="flex flex-col">
+                              <div className="text-xl font-black text-slate-900 tracking-tight leading-none">
                                 {cipher}
                               </div>
                             </div>
-
-                            <Separator className="bg-slate-100" />
 
                             {/* Destination */}
                             <div className="flex flex-col gap-2">
@@ -614,31 +613,23 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
                             {/* Notes */}
                             {notes !== "---" && (
-                              <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-100 flex flex-col gap-2">
-                                <div className="flex items-center gap-2 text-slate-400">
-                                  <FileText className="w-3.5 h-3.5" />
-                                  <span className="text-[9px] font-bold uppercase">Общие примечания</span>
-                                </div>
+                              <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50 flex flex-col gap-1.5">
                                 <div className="text-[11px] text-slate-600 italic leading-snug">
                                   {notes}
                                 </div>
                               </div>
                             )}
 
-                            <Separator className="bg-slate-100" />
-
                             {/* Stats Bar */}
-                            <div className="flex flex-wrap gap-2 pt-1">
-                               <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-100 px-2.5 py-1 flex items-center gap-1.5 hover:bg-indigo-100 transition-colors">
-                                  <Package className="w-3.5 h-3.5" />
-                                  <span className="font-bold">{getRealItemCount()}</span>
-                                  <span className="opacity-60 font-medium">поз.</span>
-                               </Badge>
-                               <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-100 px-2.5 py-1 flex items-center gap-1.5 hover:bg-emerald-100 transition-colors">
-                                  <Truck className="w-3.5 h-3.5" />
-                                  <span className="font-bold">{getSupplierCount()}</span>
-                                  <span className="opacity-60 font-medium">пост.</span>
-                               </Badge>
+                            <div className="flex flex-col gap-1.5 pt-1">
+                               <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Позиции</span>
+                                  <span className="text-sm font-black text-indigo-600 tracking-tight">{getRealItemCount()}</span>
+                               </div>
+                               <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Поставщики</span>
+                                  <span className="text-sm font-black text-emerald-600 tracking-tight">{getSupplierCount()}</span>
+                               </div>
                             </div>
                           </div>
                           
