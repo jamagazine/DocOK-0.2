@@ -42,7 +42,7 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
     projectName,
     setProjectName,
     activeProjectId,
-    renameProject
+    syncProjectName
   } = useData();
 
   const [isEditingName, setIsEditingName] = React.useState(false);
@@ -66,7 +66,7 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
   const handleRename = () => {
     setIsEditingName(false);
     if (activeProjectId) {
-      renameProject(activeProjectId, projectName);
+      syncProjectName(activeProjectId, projectName);
     }
   };
 

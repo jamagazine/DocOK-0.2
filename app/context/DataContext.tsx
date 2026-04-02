@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
@@ -367,6 +367,7 @@ interface DataContextType {
   downloadProject: (id: string) => void;
   duplicateProject: (id: string) => void;
   renameProject: (id: string, newTitle: string) => void;
+  syncProjectName: (id: string, newTitle: string) => void;
   moveProject: (id: string, categoryId: string) => void;
   deleteProject: (id: string) => void;
 
@@ -382,13 +383,6 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [projectName, setProjectName] = useState(() => {
-    try {
-      const saved = localStorage.getItem('docok_projectName');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return 'Новый проект';
-  });
   const [viewContext, setViewContext] = useState<'dashboard' | 'workspace'>('dashboard');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
     try {
@@ -397,6 +391,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } catch (e) {}
     return null;
   });
+
+  const [projects, setProjects] = useState<Project[]>([]);
+  
+  const activeProject = projects.find(p => p.id === activeProjectId);
+  const projectName = activeProject?.title || 'Новый проект';
+  const setProjectName = (name: string) => {
+    if (activeProjectId) {
+      setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, title: name } : p));
+    }
+  };
 
   useEffect(() => {
     if (activeProjectId) {
@@ -443,28 +447,34 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
 
-  // Fetch projects from backend
-  useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        const res = await fetch('http://localhost:8000/api/projects');
-        if (res.ok) {
-          const data = await res.json();
-          if (data && Array.isArray(data)) {
-            setProjects(data);
+  const fetchProjects = useCallback(async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/projects');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data)) {
+          setProjects(data);
+          
+          // --- Validation: Reset if ID from localStorage no longer exists on server ---
+          if (activeProjectId && !data.some((p: any) => p.id === activeProjectId)) {
+            setActiveProjectId(null);
+            setViewContext('dashboard');
           }
         }
-      } catch (e) {
-        console.error('Failed to fetch projects:', e);
-      } finally {
-        setIsLoadingProjects(false);
       }
-    };
+    } catch (e) {
+      console.error('Failed to fetch projects:', e);
+    } finally {
+      setIsLoadingProjects(false);
+    }
+  }, [activeProjectId, setViewContext]);
+
+  // Initial fetch
+  useEffect(() => {
     fetchProjects();
-  }, []); // Only on mount
+  }, [fetchProjects]);
 
   // Sync projects to backend when they change (handled by explicit actions now)
 
@@ -478,7 +488,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const newProject = await res.json();
         setProjects(prev => [...prev, newProject]);
-        toast.success(`Проект "${title}" создан`);
+        toast.success(`Проект "${newProject.title}" создан`);
         return newProject;
       }
     } catch (e) {
@@ -517,7 +527,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, [projects]);
 
-  const renameProject = useCallback(async (id: string, newTitle: string) => {
+  const syncProjectName = useCallback(async (id: string, newTitle: string) => {
     try {
       const res = await fetch(`http://localhost:8000/api/projects/${id}`, {
         method: 'PATCH',
@@ -526,15 +536,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       });
       if (res.ok) {
         setProjects(prev => prev.map(p => p.id === id ? { ...p, title: newTitle } : p));
-        if (id === activeProjectId) {
-          setProjectName(newTitle);
-        }
         toast.success(`Проект переименован в "${newTitle}"`);
       }
     } catch (e) {
       toast.error('Ошибка при переименовании');
     }
-  }, [activeProjectId, setProjectName]);
+  }, []);
+
+  const renameProject = useCallback(async (id: string, newTitle: string) => {
+    return await syncProjectName(id, newTitle);
+  }, [syncProjectName]);
 
   const moveProject = useCallback(async (id: string, categoryId: string) => {
     const project = projects.find(p => p.id === id);
@@ -598,9 +609,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const [activeCategory, setActiveCategory] = useState('all');
 
+  // Remove redundant storage of projectName - it's in the projects array!
   useEffect(() => {
-    localStorage.setItem('docok_projectName', JSON.stringify(projectName));
-  }, [projectName]);
+    // No-op
+  }, []);
 
   const [specRows, setSpecRows] = useState<SpecRow[]>([]);
   const [requestRows, setRequestRows] = useState<SpecRow[]>([]);
@@ -667,14 +679,41 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
     
     try {
+      // Quiet save (No loading toast/spinner)
       await fetch('http://localhost:8000/api/projects/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
       });
+      // Update local projects list to reflect real sync
       setProjects(prev => prev.map(p => p.id === activeProjectId ? updated : p));
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Quiet save failed:', e);
+    }
   }, [activeProjectId, specRows, requestRows, invoiceRows, estimateRows, projects]);
+
+  // --- Hybrid Saving UX ---
+  
+  // 1. Debounced Auto-Save (5s)
+  useEffect(() => {
+    if (!activeProjectId || viewContext !== 'workspace') return;
+    
+    const timer = setTimeout(() => {
+      saveTableData();
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [specRows, requestRows, invoiceRows, estimateRows, activeProjectId, viewContext, saveTableData]);
+
+  // 2. Mandatory Save on Exit (Workspace -> Dashboard)
+  const lastViewContext = useRef(viewContext);
+  useEffect(() => {
+    if (lastViewContext.current === 'workspace' && viewContext === 'dashboard') {
+      saveTableData();
+      fetchProjects(); // Refresh project list to update file counters on Dashboard
+    }
+    lastViewContext.current = viewContext;
+  }, [viewContext, saveTableData, fetchProjects]);
 
   // Sync rows to local storage whenever they change
   useEffect(() => {
@@ -1961,8 +2000,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Helper: parse quantity to float
   const parseQtyNum = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
 
-  const removeFile = useCallback((fileName: string, nuclear: boolean = false) => {
-    // 1. Remove from uploadStatuses and filesMap
+  const removeFile = useCallback(async (fileName: string, nuclear: boolean = false) => {
+    if (!activeProjectId) return;
+
+    // 1. Delete from physical storage on server (Waiting for real deletion)
+    try {
+      const res = await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}?projectId=${activeProjectId}&nuclear=${nuclear}`, { 
+        method: 'DELETE' 
+      });
+      if (!res.ok) {
+        toast.error(`Файл ${fileName} не был удален на сервере`);
+        return;
+      }
+    } catch (e) {
+      console.error('Failed to delete file from storage:', e);
+      toast.error('Ошибка сети при удалении файла');
+      return;
+    }
+
+    // 2. Remove from uploadStatuses and filesMap (Local state)
     setUploadStatuses(prev => {
       const next = { ...prev };
       delete next[fileName];
@@ -1974,11 +2030,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return next;
     });
 
-    // Delete from physical storage
-    fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}?nuclear=${nuclear}`, { method: 'DELETE' })
-      .catch(e => console.error('Failed to delete file from storage:', e));
-
-    // 2. Remove specRows (including cascade in merged groups)
+    // 3. Remove specRows (including cascade in merged groups)
     setSpecRows(prev => {
       const filtered: SpecRow[] = [];
       for (const row of prev) {
@@ -2004,15 +2056,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return filtered;
     });
 
-    // 3. Remove requestRows
+    // 4. Remove other stage rows
     setRequestRows(prev => prev.filter((r: SpecRow) => r.fileId !== fileName));
-
-    // 4. Remove invoiceRows
     setInvoiceRows(prev => prev.filter((r: InvoiceRow) => r.fileId !== fileName));
-
-    // 5. Remove estimateRows
     setEstimateRows(prev => prev.filter((r: EstimateRow) => r.fileId !== fileName));
-  }, [setUploadStatuses, setFilesMap, setSpecRows, setRequestRows, setInvoiceRows, setEstimateRows]);
+
+    // 5. Final Sync: Update project state and Dashboard counters
+    await syncProjectFilesCount();
+    toast.success(`Файл ${fileName} удален`);
+  }, [activeProjectId, syncProjectFilesCount, setUploadStatuses, setFilesMap, setSpecRows, setRequestRows, setInvoiceRows, setEstimateRows]);
 
   const resetFileData = useCallback((fileName: string) => {
     // 1. Убираем сроки только из активной вкладки
@@ -2440,6 +2492,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         downloadProject,
         duplicateProject,
         renameProject,
+        syncProjectName,
         moveProject,
         deleteProject,
         activeCategory,

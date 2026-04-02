@@ -12,6 +12,20 @@ import datetime
 from urllib.parse import quote
 import rapidfuzz
 import uuid
+import re
+
+def slugify_translit(text: str) -> str:
+    # 1. Transliterate using the existing helper
+    from parser_utils import transliterate
+    t = transliterate(text)
+    # 2. To lower
+    t = t.lower()
+    # 3. Replace anything not alphanumeric/hyphen with hyphen
+    t = re.sub(r'[^a-z0-9]', '-', t)
+    # 4. Collapse multiple hyphens
+    t = re.sub(r'-+', '-', t)
+    # 5. Trim hyphens from start/end
+    return t.strip('-')
 
 # Import modularized logic
 from parser_utils import (
@@ -45,9 +59,31 @@ os.makedirs(PROJECTS_DIR, exist_ok=True)
 def get_project_dir(project_id: str):
     if not project_id:
         raise HTTPException(status_code=400, detail="Missing project_id")
+    
+    # 1. Try direct path first (for transition or if ID is the slug)
     p_path = os.path.join(PROJECTS_DIR, project_id)
-    os.makedirs(p_path, exist_ok=True)
-    return p_path
+    state_file_direct = os.path.join(p_path, "project_state.json")
+    if os.path.exists(state_file_direct):
+         try:
+             with open(state_file_direct, "r", encoding="utf-8") as f:
+                 if json.load(f).get("id") == project_id:
+                     return p_path
+         except: pass
+
+    # 2. Scanning all project folders to find the matching UUID
+    if os.path.exists(PROJECTS_DIR):
+        for d in os.listdir(PROJECTS_DIR):
+            folder_path = os.path.join(PROJECTS_DIR, d)
+            if not os.path.isdir(folder_path): continue
+            sf = os.path.join(folder_path, "project_state.json")
+            if os.path.exists(sf):
+                try:
+                    with open(sf, "r", encoding="utf-8") as f:
+                        if json.load(f).get("id") == project_id:
+                            return folder_path
+                except: continue
+                
+    raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
 
 def get_files_dir(project_id: str):
     f_path = os.path.join(get_project_dir(project_id), "files")
@@ -124,6 +160,7 @@ def load_prompt(name: str) -> str:
 
 @app.get("/api/storage/history/export")
 async def export_history(projectId: str):
+    p_path = get_project_dir(projectId)
     history_file = get_history_path(projectId)
     if not os.path.exists(history_file):
         return PlainTextResponse("История пуста")
@@ -149,6 +186,7 @@ async def export_history(projectId: str):
 
 @app.get("/api/storage/history/export_xlsx")
 async def export_history_xlsx(projectId: str):
+    p_path = get_project_dir(projectId)
     history_file = get_history_path(projectId)
     if not os.path.exists(history_file):
         return PlainTextResponse("История пуста")
@@ -519,15 +557,14 @@ async def list_projects():
             with open(state_file, "r", encoding="utf-8") as f:
                 state = json.load(f)
             
-            # 1. Dynamic Files Count
-            f_dir = get_files_dir(pid)
+            # 1. Dynamic Files Count Sync (Using direct local path)
+            f_dir = os.path.join(p_path, "files")
             if os.path.exists(f_dir):
                 state["filesCount"] = len([f for f in os.listdir(f_dir) if os.path.isfile(os.path.join(f_dir, f))])
             else:
                 state["filesCount"] = 0
             
             # 2. Dynamic Last Modified Time
-            # Scan critical project files and /files/ to find the real latest change
             mtimes = [os.path.getmtime(state_file)]
             for meta_file in ["manifest.json", "history.json"]:
                 mp = os.path.join(p_path, meta_file)
@@ -541,10 +578,6 @@ async def list_projects():
             dt = datetime.datetime.fromtimestamp(max_mtime)
             state["lastModified"] = dt.strftime("%H:%M | %d.%m.%y")
             
-            # Reflect changes into project_state.json
-            with open(state_file, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=4)
-                
             projects_list.append(state)
         except Exception as e:
             print(f"Error syncing project {pid}: {e}")
@@ -557,8 +590,7 @@ async def save_project(state: dict = Body(...)):
     if not pid:
         raise HTTPException(status_code=400, detail="Missing project id")
         
-    p_path = os.path.join(PROJECTS_DIR, pid)
-    os.makedirs(p_path, exist_ok=True)
+    p_path = get_project_dir(pid)
     
     state["updatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     state["version"] = "1.0"
@@ -575,15 +607,35 @@ async def save_project(state: dict = Body(...)):
 
 @app.post("/api/projects/create")
 async def create_project(data: dict):
-    name = data.get("name", "Новый проект")
+    # 1. Count current project folders for N+1
+    n = 0
+    if os.path.exists(PROJECTS_DIR):
+        n = sum(1 for d in os.listdir(PROJECTS_DIR) if os.path.isdir(os.path.join(PROJECTS_DIR, d)))
+    
+    date_str = datetime.datetime.now().strftime("%d.%m.%Y")
+    default_name = f"Новый проект №{n+1} [{date_str}]"
+    
+    # 2. Determine title and base slug
+    name = data.get("name") or default_name
     category_id = data.get("categoryId", "all")
     
-    # Use slug-like unique ID
-    project_id = str(uuid.uuid4())[:12]
-    p_path = os.path.join(PROJECTS_DIR, project_id)
+    base_slug = slugify_translit(name)
+    if not base_slug:
+        base_slug = "project"
+        
+    # 3. Ensure folder uniqueness (Collision check)
+    folder_name = base_slug
+    p_path = os.path.join(PROJECTS_DIR, folder_name)
+    if os.path.exists(p_path):
+        # Add a small random suffix if collision
+        folder_name = f"{base_slug}-{str(uuid.uuid4())[:8]}"
+        p_path = os.path.join(PROJECTS_DIR, folder_name)
+    
     os.makedirs(p_path, exist_ok=True)
     os.makedirs(os.path.join(p_path, "files"), exist_ok=True)
     
+    # 4. Generate stable UUID
+    project_id = str(uuid.uuid4())
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     state = {
         "id": project_id,
@@ -645,7 +697,7 @@ async def rename_project_alias(project_id: str, data: dict):
 
 @app.get("/api/projects/{project_id}/download")
 async def download_project(project_id: str, background_tasks: BackgroundTasks):
-    p_path = os.path.join(PROJECTS_DIR, project_id)
+    p_path = get_project_dir(project_id)
     if not os.path.exists(p_path):
         raise HTTPException(status_code=404, detail="Project not found")
         
@@ -675,32 +727,54 @@ async def download_project(project_id: str, background_tasks: BackgroundTasks):
 @app.post("/api/projects/duplicate")
 async def duplicate_project(data: dict):
     old_id = data.get("id")
-    new_id = f"copy_{old_id}_{int(datetime.datetime.now().timestamp())}"
+    old_path = get_project_dir(old_id)
     
-    old_path = os.path.join(PROJECTS_DIR, old_id)
-    new_path = os.path.join(PROJECTS_DIR, new_id)
+    if not os.path.exists(old_path):
+         raise HTTPException(status_code=404, detail="Project not found")
+         
+    # 1. Get old state to determine new title
+    state_file_old = os.path.join(old_path, "project_state.json")
+    old_title = "Project"
+    if os.path.exists(state_file_old):
+        with open(state_file_old, "r", encoding="utf-8") as f:
+            old_title = json.load(f).get("title", "Project")
     
-    if os.path.exists(old_path):
-        shutil.copytree(old_path, new_path)
+    new_title = f"{old_title} — Копия"
+    
+    # 2. Generate new safe folder ID (slug)
+    base_slug = slugify_translit(new_title)
+    new_folder_name = base_slug
+    new_path = os.path.join(PROJECTS_DIR, new_folder_name)
+    
+    # Handle collisions for copies
+    if os.path.exists(new_path):
+        suffix = int(datetime.datetime.now().timestamp())
+        new_folder_name = f"{base_slug}-{suffix}"
+        new_path = os.path.join(PROJECTS_DIR, new_folder_name)
         
-        # Update the id in project_state.json
-        state_file = os.path.join(new_path, "project_state.json")
-        if os.path.exists(state_file):
-            with open(state_file, "r", encoding="utf-8") as f:
-                state = json.load(f)
-            state["id"] = new_id
-            state["title"] = f"{state.get('title', 'Project')} — Копия"
-            state["createdAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(state_file, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=4)
-                
-        return {"status": "success", "id": new_id}
+    shutil.copytree(old_path, new_path)
     
-    raise HTTPException(status_code=404, detail="Project not found")
+    # 3. Generate NEW stable UUID for the copy
+    new_uuid = str(uuid.uuid4())
+    
+    # Update state in the copy
+    state_file = os.path.join(new_path, "project_state.json")
+    if os.path.exists(state_file):
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        state["id"] = new_uuid
+        state["title"] = new_title
+        state["lastModified"] = "Сегодня"
+        state["createdAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        state["updatedAt"] = state["createdAt"]
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
+            
+    return {"status": "success", "id": new_uuid}
 
 @app.delete("/api/projects/delete/{project_id}")
 async def delete_project_endpoint(project_id: str):
-    p_path = os.path.join(PROJECTS_DIR, project_id)
+    p_path = get_project_dir(project_id)
     if os.path.exists(p_path):
         shutil.rmtree(p_path)
         return {"status": "success"}

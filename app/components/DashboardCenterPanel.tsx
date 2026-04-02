@@ -269,7 +269,7 @@ function HybridActionCard() {
   const { addProject, activeCategory, setViewContext, setProjectName, setActiveProjectId } = useData();
 
   const handleCreate = async () => {
-    const newProj = await addProject('Новый проект', activeCategory);
+    const newProj = await addProject('', activeCategory);
     if (newProj) {
       setActiveProjectId(newProj.id);
       setProjectName(newProj.title);

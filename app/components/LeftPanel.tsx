@@ -20,6 +20,12 @@ import type { Stage, StageInfo } from '../types';
 import { useData } from '../context/DataContext';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { 
+  Tooltip, 
+  TooltipContent, 
+  TooltipProvider, 
+  TooltipTrigger 
+} from './ui/tooltip';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -52,7 +58,9 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
     uploadStatuses,
     estimateTotal,
     viewContext,
-    setViewContext
+    setViewContext,
+    activeProjectId,
+    projects
   } = useData();
   const [showSettings, setShowSettings] = useState(false);
   const [isServerAvailable, setIsServerAvailable] = useState(true);
@@ -136,33 +144,61 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
           <Menu className="size-5" />
         </button>
 
-        <button 
-          onClick={() => setViewContext('dashboard')}
-          className={cn(
-            "rounded-lg transition-all flex items-center justify-center",
-            expanded ? "w-9 h-9" : "w-12 h-12",
-            viewContext === 'dashboard' 
-              ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
-              : "text-slate-600 hover:bg-slate-100"
-          )}
-          title="Список проектов"
-        >
-          <FolderOpen className="size-5" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button 
+                onClick={() => setViewContext('dashboard')}
+                className={cn(
+                  "rounded-lg transition-all flex items-center justify-center",
+                  expanded ? "w-9 h-9" : "w-12 h-12",
+                  viewContext === 'dashboard' 
+                    ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
+                    : "text-slate-600 hover:bg-slate-100"
+                )}
+              >
+                <FolderOpen className="size-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={12}>
+              <p>Список проектов</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
-        <button 
-          onClick={() => setViewContext('workspace')}
-          className={cn(
-            "rounded-lg transition-all flex items-center justify-center",
-            expanded ? "w-9 h-9" : "w-12 h-12",
-            viewContext === 'workspace' 
-              ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
-              : "text-slate-600 hover:bg-slate-100"
-          )}
-          title="Рабочее пространство"
-        >
-          <Briefcase className="size-5" />
-        </button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button 
+                onClick={() => {
+                  if (activeProjectId && projects.some(p => p.id === activeProjectId)) {
+                    setViewContext('workspace');
+                  }
+                }}
+                disabled={!activeProjectId || !projects.some(p => p.id === activeProjectId)}
+                className={cn(
+                  "rounded-lg transition-all flex items-center justify-center",
+                  expanded ? "w-9 h-9" : "w-12 h-12",
+                  viewContext === 'workspace' 
+                    ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
+                    : "text-slate-600 hover:bg-slate-100",
+                  (!activeProjectId || !projects.some(p => p.id === activeProjectId)) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <Briefcase className="size-5" />
+              </button>
+            </TooltipTrigger>
+            {(!activeProjectId || !projects.some(p => p.id === activeProjectId)) ? (
+              <TooltipContent side="right" sideOffset={12}>
+                <p>Сначала выберите или создайте проект на главной странице</p>
+              </TooltipContent>
+            ) : (
+              <TooltipContent side="right" sideOffset={12}>
+                <p>Рабочая область</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
         
         {/* Phantom 4th slot */}
         {!expanded && <div className="w-12 h-12" aria-hidden="true" />}
