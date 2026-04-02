@@ -11,6 +11,7 @@ import pandas as pd, io
 import datetime
 from urllib.parse import quote
 import rapidfuzz
+import uuid
 
 # Import modularized logic
 from parser_utils import (
@@ -512,6 +513,7 @@ async def save_project(state: dict = Body(...)):
     os.makedirs(p_path, exist_ok=True)
     
     state["updatedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state["version"] = "1.0"
     if "createdAt" not in state:
         state["createdAt"] = state["updatedAt"]
         
@@ -522,6 +524,67 @@ async def save_project(state: dict = Body(...)):
         return {"status": "success", "id": pid}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save project: {e}")
+
+@app.post("/api/projects/create")
+async def create_project(data: dict):
+    name = data.get("name", "Новый проект")
+    category_id = data.get("categoryId", "all")
+    
+    # Use slug-like unique ID
+    project_id = str(uuid.uuid4())[:12]
+    p_path = os.path.join(PROJECTS_DIR, project_id)
+    os.makedirs(p_path, exist_ok=True)
+    os.makedirs(os.path.join(p_path, "files"), exist_ok=True)
+    
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state = {
+        "id": project_id,
+        "title": name,
+        "categoryId": category_id,
+        "filesCount": 0,
+        "lastModified": "Сегодня", # For frontend display consistency
+        "createdAt": now,
+        "updatedAt": now,
+        "progress": 0,
+        "status": "active",
+        "version": "1.0",
+        "files": []
+    }
+    
+    state_file = os.path.join(p_path, "project_state.json")
+    with open(state_file, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=4)
+        
+    return state
+
+@app.get("/api/projects/{project_id}/download")
+async def download_project(project_id: str, background_tasks: BackgroundTasks):
+    p_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(p_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    # Get project title for filename
+    state_file = os.path.join(p_path, "project_state.json")
+    project_title = "project"
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+                project_title = state.get("title", project_id)
+        except: pass
+
+    # Create zip
+    zip_base = os.path.join(os.path.dirname(__file__), f"export_{project_id}")
+    zip_path = shutil.make_archive(zip_base, 'zip', p_path)
+    
+    background_tasks.add_task(os.remove, zip_path)
+    
+    safe_filename = quote(f"{project_title}.zip")
+    return FileResponse(
+        zip_path, 
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}"}
+    )
 
 @app.post("/api/projects/duplicate")
 async def duplicate_project(data: dict):

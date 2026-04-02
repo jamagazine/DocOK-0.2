@@ -12,6 +12,7 @@ import {
   Trash2,
   Plus,
   FolderInput,
+  Download,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -72,7 +73,8 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
     renameProject, 
     moveProject, 
     deleteProject, 
-    categories 
+    categories,
+    downloadProject 
   } = useData();
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
@@ -137,6 +139,10 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
                       ))}
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
+
+                  <DropdownMenuItem onClick={(e) => { e.stopPropagation(); downloadProject(id); }} className="gap-2">
+                    <Download className="size-3.5" /> Скачать проект (.zip)
+                  </DropdownMenuItem>
 
                   <DropdownMenuItem 
                     variant="destructive" 
@@ -260,13 +266,23 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
 // ─── Hybrid Action Card ────────────────────────────────────────────────────────
 
 function HybridActionCard() {
-  const { addProject } = useData();
+  const { addProject, activeCategory, setViewContext, setProjectName } = useData();
+
+  const handleCreate = async () => {
+    const newProj = await addProject('Новый проект', activeCategory);
+    if (newProj) {
+      // In a real app we'd load the project data here.
+      // For now, we update the global project name and enter workspace.
+      setProjectName(newProj.title);
+      setViewContext('workspace');
+    }
+  };
 
   return (
     <div className="group flex flex-col h-[200px] bg-white rounded-2xl border border-slate-200 overflow-hidden transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 hover:border-indigo-200">
       {/* Top (70%): Create New Project */}
       <div 
-        onClick={(e) => { e.stopPropagation(); addProject('Новый проект'); }}
+        onClick={(e) => { e.stopPropagation(); handleCreate(); }}
         className="flex-[7] flex flex-col items-center justify-center gap-3 bg-slate-50/50 hover:bg-indigo-50/50 cursor-pointer transition-colors border-b border-slate-100"
       >
         <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-indigo-500 group-hover:scale-110 group-hover:bg-indigo-500 group-hover:text-white transition-all shadow-sm">
@@ -281,7 +297,11 @@ function HybridActionCard() {
       {/* Bottom (30%): Import Project */}
       <div 
         className="flex-[3] flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 cursor-pointer transition-colors"
-        onClick={(e) => { e.stopPropagation(); toast.info("Функция импорта будет доступна в следующей версии"); }}
+        onClick={(e) => { 
+          e.stopPropagation(); 
+          // Placeholder for Import Logic (Stage 14)
+          toast.info("Функция импорта будет доступна в следующей версии"); 
+        }}
       >
         <FolderInput className="size-4 text-slate-400" />
         <span className="text-xs font-semibold text-slate-600">Импортировать проект...</span>
@@ -368,27 +388,19 @@ export function DashboardCenterPanel() {
           </div>
         </div>
 
-        {/* ── Content ── */}
         <div className="flex-1 overflow-auto relative bg-slate-50">
           <div className="p-6">
-            <div className={cn(
-              "grid gap-4",
-              filteredProjects.length > 0 ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3" : "flex flex-col items-center justify-center h-[50vh]"
-            )}>
-              {/* Hybrid Action Card first */}
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {/* Hybrid Action Card first - always visible */}
               <HybridActionCard />
               
-              {filteredProjects.length > 0 ? (
-                filteredProjects.map(p => (
-                  <ProjectCard
-                    key={p.id}
-                    project={p}
-                    onClick={openProject}
-                  />
-                ))
-              ) : (
-                null
-              )}
+              {filteredProjects.map(p => (
+                <ProjectCard
+                  key={p.id}
+                  project={p}
+                  onClick={openProject}
+                />
+              ))}
             </div>
           </div>
         </div>

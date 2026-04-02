@@ -47,6 +47,11 @@ pids
 *.pid.lock
 _legacy/
 server/storage/
+# --- Данные пользователя ---
+server/projects/
+!server/projects/.gitkeep
+# Игнорируем архивы, которые будут создаваться при скачивании
+server/*.zip
 
 # --- Логи и отладка ---
 logs

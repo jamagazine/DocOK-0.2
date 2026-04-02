@@ -31,6 +31,7 @@ export interface Project {
   progress: number;
   status: ProjectStatus;
   categoryId: string;
+  version?: string;
 }
 
 export function genId(): string {
@@ -360,7 +361,8 @@ interface DataContextType {
 
   // Project management
   projects: Project[];
-  addProject: (title: string) => void;
+  addProject: (title: string, categoryId?: string) => Promise<Project | null>;
+  downloadProject: (id: string) => void;
   duplicateProject: (id: string) => void;
   renameProject: (id: string, newTitle: string) => void;
   moveProject: (id: string, categoryId: string) => void;
@@ -435,7 +437,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           } else {
             // Default if none exists
             setProjects([
-              { id: 'live-main', title: projectName, filesCount: 1, lastModified: 'Сегодня', progress: 50, status: 'current', categoryId: 'active' }
+              { id: 'live-main', title: projectName, filesCount: 1, lastModified: 'Сегодня', progress: 50, status: 'current', categoryId: 'active', version: "1.0" }
             ]);
           }
         }
@@ -450,28 +452,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // Sync projects to backend when they change (handled by explicit actions now)
 
-  const addProject = useCallback(async (title: string) => {
-    const newProject: Project = {
-      id: genId(),
-      title,
-      filesCount: 0,
-      lastModified: new Date().toLocaleString('ru-RU'),
-      progress: 0,
-      status: 'active',
-      categoryId: 'all'
-    };
-    
+  const addProject = useCallback(async (title: string, categoryId?: string): Promise<Project | null> => {
     try {
-      await fetch('http://localhost:8000/api/projects/save', {
+      const res = await fetch('http://localhost:8000/api/projects/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProject)
+        body: JSON.stringify({ name: title, categoryId: categoryId || 'all' })
       });
-      setProjects(prev => [...prev, newProject]);
-      toast.success(`Проект "${title}" создан`);
+      if (res.ok) {
+        const newProject = await res.json();
+        setProjects(prev => [...prev, newProject]);
+        toast.success(`Проект "${title}" создан`);
+        return newProject;
+      }
     } catch (e) {
-      toast.error('Ошибка сохранения проекта на сервере');
+      toast.error('Ошибка создания проекта на сервере');
     }
+    return null;
+  }, []);
+
+  const downloadProject = useCallback((id: string) => {
+    window.location.href = `http://localhost:8000/api/projects/${id}/download`;
   }, []);
 
   const duplicateProject = useCallback(async (id: string) => {
@@ -2317,6 +2318,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         deleteCategory,
         projects,
         addProject,
+        downloadProject,
         duplicateProject,
         renameProject,
         moveProject,
