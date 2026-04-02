@@ -75,26 +75,6 @@ export const EditableCell = React.memo(({
   onClick,
   onKeyDown
 }: EditableCellProps) => {
-  const commonClasses = cn(
-    colKey === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
-    colKey === 'workType' && "text-slate-500 text-xs",
-    align === 'center' ? "text-center" : align === 'right' ? "text-right" : "text-left",
-    isHeader && "italic text-amber-700",
-    "min-h-[1.5rem] antialiased px-1",
-    className
-  );
-
-  if (isReadOnly) {
-    return (
-      <div 
-        className={cn(commonClasses, "cursor-pointer select-none truncate w-full")}
-        onClick={onClick}
-      >
-        {value}
-      </div>
-    );
-  }
-
   return (
     <AutoResizingTextarea
       value={value}
@@ -103,7 +83,13 @@ export const EditableCell = React.memo(({
       onChange={(e) => onChange(e.target.value)}
       onClick={onClick}
       onKeyDown={(e) => onKeyDown?.(e, rowId, colKey)}
-      className={commonClasses}
+      className={cn(
+        colKey === 'name' ? "text-slate-900 font-medium" : "text-slate-600",
+        colKey === 'workType' && "text-slate-500 text-xs",
+        align === 'center' ? "text-center" : align === 'right' ? "text-right" : "text-left",
+        isHeader && "italic text-amber-700",
+        className
+      )}
     />
   );
 });

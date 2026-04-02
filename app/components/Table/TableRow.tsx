@@ -112,7 +112,6 @@ export const TableRow = React.memo(({
     ),
 
     stage === 'spec' && !isSummaryRow && hasChildren && !isHeader && "bg-slate-50/30",
-    stage === 'spec' && (isHeader || isSummaryRow) && "select-none",
     stage === 'spec' && !isRibbonRow && "hover:bg-slate-50/80 cursor-pointer"
   );
 
@@ -120,10 +119,7 @@ export const TableRow = React.memo(({
     <Fragment>
       <div
         id={`row-${row.id}`}
-        onMouseDown={(e) => {
-          // Только левая кнопка мыши (button 0)
-          if (e.button !== 0) return;
-
+        onClick={() => {
           if (stage === 'spec' && isHeader) {
             toggleCollapse?.(row.id);
             return;
@@ -133,8 +129,6 @@ export const TableRow = React.memo(({
             else setLocalExpanded(!localExpanded);
             return;
           }
-          // Для обычных строк — клик всё еще выделяет (можно оставить onClick, но для единообразия ставим здесь)
-          toggleRowSelection(row.id, false);
         }}
         className={baseRowClasses}
       >
@@ -143,10 +137,10 @@ export const TableRow = React.memo(({
           <div className="flex w-full items-center select-none group/ribbon relative">
             {/* Позиция и Иконка */}
             <div 
-              className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent group/poscell cursor-pointer"
-              onMouseDown={(e) => {
+              className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent group/poscell"
+              onClick={(e) => {
                 e.stopPropagation();
-                if (e.button === 0) toggleRowSelection(row.id, true);
+                toggleRowSelection(row.id, true);
               }}
             >
               <div className="relative w-full h-full flex items-center justify-center">
@@ -209,7 +203,12 @@ export const TableRow = React.memo(({
               <span className="truncate flex-grow mr-4">{row.name}</span>
               
               {(toggleCollapse || isActuallyMerged || (isSupplierRow && hasChildren)) && (
-                <div
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (toggleCollapse) toggleCollapse(row.id);
+                    else if (isActuallyMerged || isSupplierRow) setLocalExpanded(!localExpanded);
+                  }}
                   className={cn(
                     "p-1 rounded transition-colors flex-shrink-0 ml-auto flex items-center justify-center",
                     (row.level || 0) >= 2 ? "text-indigo-200 hover:bg-white/10 hover:text-white" : 
@@ -219,7 +218,7 @@ export const TableRow = React.memo(({
                   )}
                 >
                   {(( (isActuallyMerged || isSupplierRow) && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                </div>
+                </button>
               )}
             </div>
           </div>
@@ -296,8 +295,16 @@ export const TableRow = React.memo(({
                   )}
                 </div>
               ) : col.key === 'name' && (stage === 'spec' && (isHeader || isActuallyMerged)) ? (
+
                 <div 
                   className="flex justify-between items-center gap-2 w-full overflow-hidden"
+                  onClick={(e) => {
+                    if (isActuallyMerged && row.children?.length > 1) {
+                      e.stopPropagation();
+                      if (toggleCollapse) toggleCollapse(row.id);
+                      else setLocalExpanded(!localExpanded);
+                    }
+                  }}
                 >
                   <div className="flex flex-col gap-0.5 min-w-0">
                     <span className={cn(
@@ -310,6 +317,7 @@ export const TableRow = React.memo(({
                       {String(row.name || '')}
                     </span>
                   </div>
+
                   {(isActuallyMerged && row.children?.length > 1) && (
                     <div className="p-1 rounded bg-emerald-100/80 text-emerald-600 hover:bg-emerald-200 transition-colors shrink-0">
                       {((isSummaryRow && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
