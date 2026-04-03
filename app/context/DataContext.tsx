@@ -781,16 +781,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setFilesMap({});
     }
 
-    const fetchProjectFiles = async () => {
+    const fetchStorageFiles = async () => {
       try {
         const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
         if (res.ok) {
           const files = await res.json();
           const statuses: Record<string, UploadStatus> = {};
           files.forEach((f: any) => {
-            statuses[f.disk_name] = {
+            statuses[f.name] = {
               status: f.status,
-              time: 'Загружено', // Fallback
+              time: f.time || 'Загружено',
+              size: f.size || 0,
               cost: f.cost,
               tokens: f.tokens,
               estimated_cost: f.estimated_cost,
@@ -798,17 +799,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
               model: f.model,
               method: f.method,
               summary_md: f.summary_md,
-              summary_fields: f.summary_fields
+              summary_fields: f.summary_fields,
+              pages_count: f.pages_count,
+              is_scan: f.is_scan,
+              pdf_type: f.pdf_type
             };
           });
           setUploadStatuses(statuses);
         }
       } catch (e) {
-        console.error('Failed to fetch project files:', e);
+        console.error('Failed to fetch storage files:', e);
       }
     };
 
-    fetchProjectFiles();
+    fetchStorageFiles();
 
     const loadLocal = (key: string) => {
       try {
@@ -1041,43 +1045,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Load files from storage when project changes
-  useEffect(() => {
-    const fetchStorageFiles = async () => {
-      if (!activeProjectId) return;
-      try {
-        const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
-        if (res.ok) {
-          const files = await res.json();
-          const restoredStatuses: Record<string, UploadStatus> = {};
-          files.forEach((f: any) => {
-            restoredStatuses[f.name] = {
-              status: f.status === 'reset' ? 'reset' : 'Готово (Хранилище)',
-              time: f.time,
-              size: f.size,
-              cost: f.cost || 0,
-              tokens: f.tokens || 0,
-              estimated_cost: f.estimated_cost || 0,
-              estimated_tokens: f.estimated_tokens || 0,
-              model: f.model || '',
-              method: f.method || '',
-              summary_md: f.summary_md || '',
-              summary_fields: f.summary_fields || null
-            };
-          });
-          setUploadStatuses((prev: any) => ({ ...prev, ...restoredStatuses }));
-          // Set active file if not set
-          if (files.length > 0) {
-            const firstFile = files.find((f: any) => f.status !== 'reset') || files[0];
-            setActiveFileId(firstFile.name); // Using originalName consistently
-          }
-        }
-      } catch (e) {
-        console.error('Failed to fetch storage files:', e);
-      }
-    };
-    fetchStorageFiles();
-  }, [activeProjectId]);
+  // Redundant effect removed. Consolidated in the main project initialization effect.
 
   // Reset pagination and selection on stage change
   useEffect(() => {

@@ -130,11 +130,12 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     header_block = "\n".join(lines[:2]) if len(lines) >= 2 else (lines[0] if lines else "")
     data_lines = lines[2:] if len(lines) >= 2 else []
     
-    CHUNK_SIZE = 30
+    CHUNK_SIZE = 1000
     all_items = []
     all_fixes = []
     total_tokens = 0
     main_doc = {}
+    footer_data = {}
 
     chunks = [data_lines[i:i + CHUNK_SIZE] for i in range(0, len(data_lines), CHUNK_SIZE)]
     sem = asyncio.Semaphore(5)
@@ -170,12 +171,25 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
             elif isinstance(parsed, dict):
                 fixes_to_add = parsed.get('fixes', [])
                 items_to_add = parsed.get('items', [])
+                
+                # Check for header/footer/document
+                if not main_doc:
+                    main_doc = parsed.get('header', parsed.get('document', {}))
+                
+                if not footer_data:
+                    footer_data = parsed.get('footer', {})
+            
             all_fixes.extend(fixes_to_add)
             all_items.extend(items_to_add)
-            
-            if not main_doc and isinstance(parsed, dict) and parsed.get('document'):
-                main_doc = parsed.get('document', {})
         else:
             all_items.append({"pos": "ERR", "name": f"Ошибка чанка {i+1}", "note": err_msg, "is_error_chunk": True})
             
-    yield {"type": "result", "items": all_items, "fixes": all_fixes, "tokens": total_tokens, "main_doc": main_doc, "chunks_report": []}
+    yield {
+        "type": "result", 
+        "items": all_items, 
+        "fixes": all_fixes, 
+        "tokens": total_tokens, 
+        "main_doc": main_doc, 
+        "footer": footer_data,
+        "chunks_report": []
+    }

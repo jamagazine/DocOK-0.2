@@ -854,3 +854,72 @@ def ocr_to_grid_markdown(words: list) -> str:
     
     return "\n".join(output)
 
+
+def clean_empty_columns(md_text: str) -> str:
+    """
+    Analyzes a Markdown table and removes columns that are empty across ALL rows.
+    Supports tables starting/ending with | and also handles non-table text around it.
+    """
+    if not md_text or "|" not in md_text:
+        return md_text
+
+    lines = md_text.split("\n")
+    table_lines = []
+    other_lines_before = []
+    other_lines_after = []
+    
+    in_table = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            in_table = True
+            table_lines.append(line)
+        else:
+            if not in_table:
+                other_lines_before.append(line)
+            else:
+                other_lines_after.append(line)
+
+    if not table_lines:
+        return md_text
+
+    # Split into cells (ignoring leading/trailing empty strings from split)
+    raw_rows = []
+    for line in table_lines:
+        cells = line.strip().strip("|").split("|")
+        raw_rows.append([c.strip() for c in cells])
+
+    if not raw_rows:
+        return md_text
+
+    # Skip the separator line (usually index 1) for emptiness check
+    # But we need its column count
+    num_cols = len(raw_rows[0])
+    
+    # Indices of columns that have at least one non-empty value
+    # We skip rows that look like separators (all - or :)
+    valid_cols = []
+    for col_idx in range(num_cols):
+        has_content = False
+        for row_idx, row in enumerate(raw_rows):
+            # Skip separator row (index 1 is standard for MD, or check for ---)
+            if row_idx == 1 or all(c in "-: " for c in "".join(row)):
+                continue
+            if col_idx < len(row) and row[col_idx].strip():
+                has_content = True
+                break
+        if has_content:
+            valid_cols.append(col_idx)
+
+    if not valid_cols:
+        return md_text # No non-empty columns? Keep original.
+
+    # Reconstruct the table
+    cleaned_table = []
+    for row in raw_rows:
+        new_row = [row[idx] if idx < len(row) else "" for idx in valid_cols]
+        cleaned_table.append("| " + " | ".join(new_row) + " |")
+
+    # Combine back
+    return "\n".join(other_lines_before + cleaned_table + other_lines_after)
+

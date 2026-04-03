@@ -455,21 +455,31 @@ async def process_invoice(
                 
                 p_method = "excel_ai"
             else: # Images
-                from parser_utils import ocr_to_grid_markdown
+                from parser_utils import ocr_to_grid_markdown, clean_empty_columns
                 p_method = "ocr_table"
                 with open(temp_path, "rb") as f:
                     txt, low, words = await ocr_yandex(base64.b64encode(f.read()).decode('utf-8'), api_key, folder_id)
                 extracted_text = ocr_to_grid_markdown(words)
                 has_low_confidence = low
+                
+                # Clean the grid!
+                extracted_text = clean_empty_columns(extracted_text)
+                
                 # Save the Grid MD
                 grid_p = get_file_path(projectId, disk_name, "_invoice.md")
                 with open(grid_p, "w", encoding="utf-8") as f:
+                    f.write(extracted_text)
+                
+                # Save Cleaned MD for debugging
+                cleaned_p = get_file_path(projectId, disk_name, "_invoice_cleaned.md")
+                with open(cleaned_p, "w", encoding="utf-8") as f:
                     f.write(extracted_text)
 
             if is_spreadsheet and p_method == "auto":
                 all_items = convert_df_to_items(df)
                 total_tokens = 0
                 main_doc = {"name": original_name}
+                footer_data = {}
             else:
                 model_type = "pro" if p_method == "ocr_table" else "lite"
                 system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
@@ -483,12 +493,14 @@ async def process_invoice(
                         f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== TEXT ===\n{extracted_text[:1000]}...")
                 except: pass
 
+                footer_data = {}
                 async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model_type):
                     if ev["type"] == "progress":
                         yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
                     elif ev["type"] == "result":
                         total_tokens = ev["tokens"]
                         main_doc = ev["main_doc"]
+                        footer_data = ev.get("footer", {})
                         fixes = ev.get("fixes", [])
                         gen_items = ev.get("items", [])
                         
@@ -506,6 +518,10 @@ async def process_invoice(
 
             final_struct = calculate_uncertainty({"document": main_doc or {"name": original_name}, "items": all_items}, has_low_confidence)
             
+            # Add footer to final structure
+            if footer_data:
+                final_struct["footer"] = footer_data
+
             # --- SPECS: Extract General Summary (Stamp/Footer) ---
             summary_md = ""
             if doc_type == "spec":
@@ -516,6 +532,19 @@ async def process_invoice(
                     print(f"Error extracting summary: {e}")
                     summary_md = "### Общая сводка\n\nНе удалось извлечь данные (ошибка парсера)."
             
+            # --- Invoices: If we have footer data, build summary from it ---
+            if doc_type == "invoice" and footer_data:
+                sum_lines = ["### Информация из счета\n"]
+                if footer_data.get("delivery_terms"):
+                    sum_lines.append(f"**Доставка:** {footer_data['delivery_terms']}")
+                if footer_data.get("payment_terms"):
+                    sum_lines.append(f"**Оплата:** {footer_data['payment_terms']}")
+                if footer_data.get("additional_notes"):
+                    sum_lines.append(f"**Примечания:** {footer_data['additional_notes']}")
+                if footer_data.get("total_amount"):
+                    sum_lines.append(f"**Итоговая сумма:** {footer_data['total_amount']} руб.")
+                summary_md = "\n".join(sum_lines)
+
             rate = 0.6 if p_method == "ocr_table" else 0.2
             cost = round((total_tokens * rate) / 1000 + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)
             final_struct.update({
@@ -629,7 +658,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
 
             ext_text = md_text
             estimated_tokens = int((len(ext_text) / 4) * 2.0)
-            estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+            estimated_cost = 0
 
             # --- AUTO-EXTRACT SUMMARY (Pre-AI) - ONLY FOR SPECS ---
             if stage == "spec":
@@ -676,7 +705,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                         
                         tokens = await get_token_count(ext_text, "pro", api_key, folder_id)
                         estimated_tokens = tokens
-                        estimated_cost = round((tokens * 0.6) / 1000, 2)
+                        estimated_cost = 0
                         
                 if not ext_text:
                     import pdfplumber
@@ -774,6 +803,8 @@ async def storage_list(projectId: str):
                 "name": entry.get("originalName", f), 
                 "disk_name": f, 
                 "status": entry.get("status", "ok"), 
+                "time": entry.get("time", ""),
+                "size": entry.get("size", 0),
                 "cost": entry.get("cost", 0),
                 "tokens": entry.get("tokens", 0),
                 "estimated_cost": entry.get("estimated_cost", 0),
@@ -781,7 +812,10 @@ async def storage_list(projectId: str):
                 "model": entry.get("model", ""),
                 "method": entry.get("method", ""),
                 "summary_md": entry.get("summary_md", ""),
-                "summary_fields": entry.get("summary_fields", None)
+                "summary_fields": entry.get("summary_fields", None),
+                "pages_count": entry.get("pages_count", 0),
+                "is_scan": entry.get("is_scan", False),
+                "pdf_type": entry.get("pdf_type", "UNKNOWN")
             })
     return files
 

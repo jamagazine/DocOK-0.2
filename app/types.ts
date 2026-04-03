@@ -36,6 +36,9 @@ export interface UploadStatus {
     total_positions?: number;
     suppliers?: string;
   };
+  pages_count?: number;
+  is_scan?: boolean;
+  pdf_type?: string;
 }
 
 export interface UploadedFile {
