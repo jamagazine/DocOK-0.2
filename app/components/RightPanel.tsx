@@ -192,7 +192,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     matchInvoiceToSpec, getCurrentRows, projectName,
     activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
     keepSelectedRows, undo, redo, canUndo, canRedo,
-    uploadStatuses, activeFileId, setActiveFileId
+    uploadStatuses, activeFileId, setActiveFileId, reprocessAi
   } = useData();
 
   const [spyId, setSpyId] = React.useState<string | null>(null);
@@ -646,8 +646,15 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                         </div>
                         <div className="flex flex-col gap-1">
                           <span className="text-slate-600 font-bold text-sm">Паспорт не сформирован</span>
-                          <span className="text-[11px] text-slate-400 max-w-[180px]">Загрузите спецификацию (XLS) для мгновенного анализа данных штампа.</span>
+                          <span className="text-[11px] text-slate-400 max-w-[180px]">Запустите ИИ-анализ для извлечения реквизитов и сводных данных.</span>
                         </div>
+                        <button 
+                          onClick={() => activeFileId && reprocessAi(activeFileId)}
+                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all shadow-sm shadow-indigo-200"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Запустить ИИ-анализ
+                        </button>
                       </div>
                     );
                   })()}

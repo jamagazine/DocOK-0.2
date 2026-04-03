@@ -580,6 +580,75 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
 
 
 
+def pdf_to_grid_markdown(file_path: str) -> str:
+    """
+    Converts a digital PDF invoice to Markdown using the Full Grid Method.
+    Uses pdfplumber to extract tables and preserves document layout.
+    """
+    import pdfplumber
+    rows_data = []
+    max_w = 0
+
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                # Use extract_table with flexible settings for digital text alignment
+                # Extracting all tables, joining them if they have consistent width
+                tables = page.extract_tables({
+                    "vertical_strategy": "text", 
+                    "horizontal_strategy": "text",
+                    "snap_tolerance": 3,
+                    "join_tolerance": 3
+                })
+                
+                if not tables:
+                    # Fallback to simple line-based extraction if text-strategy found nothing
+                    tables = page.extract_tables()
+                
+                for table in tables:
+                    if not table: continue
+                    page_max_w = len(table[0])
+                    if page_max_w > max_w:
+                        max_w = page_max_w
+                        
+                    for row in table:
+                        clean_row = []
+                        for cell in row:
+                            if cell is None:
+                                clean_row.append("")
+                            else:
+                                # Merge multi-line text into a single line with spaces
+                                text = str(cell).replace("\r", " ").replace("\n", " ").strip()
+                                clean_row.append(text)
+                        
+                        # Only add non-empty rows
+                        if any(c for c in clean_row):
+                            rows_data.append(clean_row)
+                            
+    except Exception as e:
+        return f"Error reading PDF: {e}"
+
+    if not rows_data:
+        return ""
+
+    # Format as Markdown Grid
+    md_lines = []
+    
+    # Header
+    header_row = [f"Col {i+1}" for i in range(max_w)]
+    md_lines.append("| " + " | ".join(header_row) + " |")
+    md_lines.append("| " + " | ".join(["---"] * max_w) + " |")
+    
+    # Content
+    for r in rows_data:
+        # Pad row to max_w if needed
+        full_row = r + [""] * (max_w - len(r))
+        row_str = [str(c).replace("|", "\\|") for c in full_row]
+        md_lines.append("| " + " | ".join(row_str) + " |")
+        
+    return "\n".join(md_lines)
+
+
 def excel_to_grid_markdown(file_path: str) -> str:
     """
     Converts an Excel invoice to Markdown using the Full Grid Method.

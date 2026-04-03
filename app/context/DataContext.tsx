@@ -1308,8 +1308,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         console.error('Failed to upload file to storage:', e);
       }
 
-      const isPdfOrImage = !!file.name.match(/\.(pdf|png|jpe?g)$/i);
-      const useAi = forceAI || isPdfOrImage;
+      // TK v2.5: Disable automatic AI for PDF/Images, make it manual via button
+      const useAi = forceAI;
 
       if (!useAi) {
         setUploadStatuses((prev: any) => ({

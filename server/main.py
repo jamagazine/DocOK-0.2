@@ -581,8 +581,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     api_key, folder_id = get_yandex_keys()
     ext_text = ""
     is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
-    ext_text = ""
     summary_md = ""
+    summary_fields = None
     
     if is_spreadsheet:
         try:
@@ -641,12 +641,32 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     elif api_key and folder_id:
         try:
             if original_filename.lower().endswith(".pdf"):
-                import pdfplumber
-                with pdfplumber.open(dest_path) as pdf:
-                    pages = len(pdf.pages)
-                    if pages > 0:
-                        estimated_cost = round(pages * 7.0, 2)
-                        estimated_tokens = pages * 5000
+                # --- PDF GRID METHOD for Invoices ---
+                if stage == "invoice":
+                    try:
+                        from .parser_utils import pdf_to_grid_markdown
+                    except ImportError:
+                        from parser_utils import pdf_to_grid_markdown
+                        
+                    md_text = pdf_to_grid_markdown(dest_path)
+                    if md_text and not md_text.startswith("Error"):
+                        ext_text = md_text
+                        # Save physical grid MD
+                        grid_p = get_file_path(projectId, secured_name, "_invoice.md")
+                        with open(grid_p, "w", encoding="utf-8") as f:
+                            f.write(md_text)
+                        
+                        estimated_tokens = int((len(ext_text) / 4) * 1.5)
+                        estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+                
+                # If it's not an invoice or Grid Method failed, use default PDF estimates
+                if not ext_text:
+                    import pdfplumber
+                    with pdfplumber.open(dest_path) as pdf:
+                        pages = len(pdf.pages)
+                        if pages > 0:
+                            estimated_cost = round(pages * 7.0, 2)
+                            estimated_tokens = pages * 5000
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 estimated_tokens = 5000
                 estimated_cost = 7.0
@@ -664,8 +684,9 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "method": existing.get("method", "") if isinstance(existing, dict) else "",
         "estimated_cost": estimated_cost,
         "estimated_tokens": estimated_tokens,
-        "summary_md": summary_md if is_spreadsheet else "",
-        "summary_fields": summary_fields if is_spreadsheet else None
+        "raw_markdown": ext_text,
+        "summary_md": summary_md,
+        "summary_fields": summary_fields
     }
     _save_manifest(manifest, projectId)
     
@@ -678,9 +699,9 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "filename": secured_name, 
         "estimated_cost": estimated_cost, 
         "estimated_tokens": estimated_tokens, 
-        "raw_markdown": ext_text if is_spreadsheet else None,
-        "summary_md": summary_md if is_spreadsheet else "",
-        "summary_fields": summary_fields if is_spreadsheet else None
+        "raw_markdown": ext_text,
+        "summary_md": summary_md,
+        "summary_fields": summary_fields
     }
 
 @app.get("/api/storage/files")

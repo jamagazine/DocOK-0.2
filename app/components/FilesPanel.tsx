@@ -128,7 +128,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 {displayName}
               </span>
               <span className="text-[11px] text-slate-500 mt-0.5">
-                {isReset ? 'Данные сброшены' : (isReadyMD ? 'Ожидает анализа' : (isProcessed ? 'Готово (ИИ)' : statusStr))}
+                {isReset ? 'Данные сброшены' : (isReadyMD ? 'Готово (Сетка)' : (isProcessed ? 'Готово (ИИ)' : statusStr))}
                 {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
                   <span className="ml-2 text-[10px] text-slate-400 font-medium">
                     ~{data?.estimated_cost || 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (прогноз)
