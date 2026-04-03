@@ -415,19 +415,30 @@ async def process_invoice(
         
         try:
             if filename.endswith(".pdf"):
+                from .parser_utils import extract_text_from_pdf, ocr_to_grid_markdown
                 extracted_text = extract_text_from_pdf(temp_path)
-                if extracted_text.strip(): p_method = "direct_text"
+                # If digital text is sufficient, use it directly
+                if extracted_text.strip() and len(extracted_text.strip()) > 50:
+                    p_method = "direct_text"
                 else:
                     p_method = "ocr_table"
                     import pdfplumber
                     with pdfplumber.open(temp_path) as pdf:
                         num_pages = len(pdf.pages)
+                        all_ocr_text = ""
                         for i, pg in enumerate(pdf.pages):
                             img = io.BytesIO()
                             pg.to_image(resolution=150).original.save(img, format='PNG')
-                            txt, low = await ocr_yandex(base64.b64encode(img.getvalue()).decode('utf-8'), api_key, folder_id)
-                            extracted_text += f"\n--- Page {i+1} ---\n | " + " | ".join(txt.split("\n"))
+                            txt, low, words = await ocr_yandex(base64.b64encode(img.getvalue()).decode('utf-8'), api_key, folder_id)
+                            page_md = ocr_to_grid_markdown(words)
+                            all_ocr_text += f"\n--- Page {i+1} ---\n{page_md}"
                             if low: has_low_confidence = True
+                        extracted_text = all_ocr_text
+                        
+                        # Save the Grid MD
+                        grid_p = get_file_path(projectId, disk_name, "_invoice.md")
+                        with open(grid_p, "w", encoding="utf-8") as f:
+                            f.write(extracted_text)
             elif filename.endswith((".xlsx", ".xls", ".csv")):
                 df = pd.read_csv(temp_path, dtype=str) if filename.endswith(".csv") else pd.read_excel(temp_path, dtype=str)
                 df = sanitize_dataframe(df.fillna(""))
@@ -443,12 +454,17 @@ async def process_invoice(
                     extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
                 
                 p_method = "excel_ai"
-            else:
+            else: # Images
+                from .parser_utils import ocr_to_grid_markdown
                 p_method = "ocr_table"
                 with open(temp_path, "rb") as f:
-                    txt, low = await ocr_yandex(base64.b64encode(f.read()).decode('utf-8'), api_key, folder_id)
-                extracted_text = " | " + " | ".join(txt.split("\n"))
+                    txt, low, words = await ocr_yandex(base64.b64encode(f.read()).decode('utf-8'), api_key, folder_id)
+                extracted_text = ocr_to_grid_markdown(words)
                 has_low_confidence = low
+                # Save the Grid MD
+                grid_p = get_file_path(projectId, disk_name, "_invoice.md")
+                with open(grid_p, "w", encoding="utf-8") as f:
+                    f.write(extracted_text)
 
             if is_spreadsheet and p_method == "auto":
                 all_items = convert_df_to_items(df)
@@ -541,6 +557,12 @@ async def process_invoice(
                     manifest[disk_name]["summary_md"] = ""
                 
                 manifest[disk_name]["cost"] = cost
+                # Update status based on method used
+                if p_method == "ocr_table":
+                    manifest[disk_name]["status"] = "READY_MD_OCR"
+                elif p_method in ["direct_text", "excel_ai"]:
+                    manifest[disk_name]["status"] = "READY_MD_LOCAL"
+                
                 _save_manifest(manifest, projectId)
 
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
@@ -641,25 +663,20 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     elif api_key and folder_id:
         try:
             if original_filename.lower().endswith(".pdf"):
-                # --- PDF GRID METHOD for Invoices ---
-                if stage == "invoice":
-                    try:
-                        from .parser_utils import pdf_to_grid_markdown
-                    except ImportError:
-                        from parser_utils import pdf_to_grid_markdown
-                        
+                from .parser_utils import detect_pdf_type, pdf_to_grid_markdown
+                pdf_type = detect_pdf_type(dest_path)
+                
+                if pdf_type == "TEXT_PDF" and stage == "invoice":
                     md_text = pdf_to_grid_markdown(dest_path)
                     if md_text and not md_text.startswith("Error"):
                         ext_text = md_text
-                        # Save physical grid MD
                         grid_p = get_file_path(projectId, secured_name, "_invoice.md")
                         with open(grid_p, "w", encoding="utf-8") as f:
                             f.write(md_text)
                         
                         estimated_tokens = int((len(ext_text) / 4) * 1.5)
                         estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
-                
-                # If it's not an invoice or Grid Method failed, use default PDF estimates
+                        
                 if not ext_text:
                     import pdfplumber
                     with pdfplumber.open(dest_path) as pdf:
@@ -673,11 +690,26 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         except Exception as e:
             print(f"Error estimating cost: {e}")
             
+    # Determine initial file status
+    final_status = "ok"
+    if is_spreadsheet:
+        final_status = "READY_MD_LOCAL"
+    elif original_filename.lower().endswith(".pdf"):
+        # We already called detect_pdf_type above
+        from .parser_utils import detect_pdf_type
+        pdf_type = detect_pdf_type(dest_path)
+        if pdf_type == "TEXT_PDF" and stage == "invoice":
+            final_status = "READY_MD_LOCAL"
+        else:
+            final_status = "NEED_OCR"
+    elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
+        final_status = "NEED_OCR"
+
     manifest = _load_manifest(projectId)
     existing = manifest.get(secured_name, {})
     manifest[secured_name] = {
         "originalName": original_filename,
-        "status": "READY_MD" if is_spreadsheet else "ok",
+        "status": final_status,
         "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
         "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
         "model": existing.get("model", "") if isinstance(existing, dict) else "",
@@ -701,7 +733,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "estimated_tokens": estimated_tokens, 
         "raw_markdown": ext_text,
         "summary_md": summary_md,
-        "summary_fields": summary_fields
+        "summary_fields": summary_fields,
+        "file_status": final_status
     }
 
 @app.get("/api/storage/files")

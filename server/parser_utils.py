@@ -759,3 +759,98 @@ def excel_to_grid_markdown(file_path: str) -> str:
         
     return "\n".join(md_lines)
 
+
+def detect_pdf_type(file_path: str) -> str:
+    """
+    Detects if a PDF is text-based or a scan by checking the first page.
+    """
+    import pdfplumber
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            if not pdf.pages:
+                return "SCAN_PDF"
+            text = pdf.pages[0].extract_text() or ""
+            # Threshold: more than 50 symbols of text = digital (TEXT_PDF)
+            if len(text.strip()) > 50:
+                return "TEXT_PDF"
+            return "SCAN_PDF"
+    except Exception as e:
+        print(f"PDF Type Detection error: {e}")
+        return "SCAN_PDF"
+
+
+def ocr_to_grid_markdown(words: list) -> str:
+    """
+    Groups words from OCR results with coordinates into a Markdown Grid table.
+    """
+    if not words:
+        return ""
+    
+    # 1. Group into rows by Y-coordinate proximity
+    words.sort(key=lambda w: w['y'])
+    rows_raw = []
+    if words:
+        current_row = [words[0]]
+        for i in range(1, len(words)):
+            # Tolerance: approx 70% of word height
+            if abs(words[i]['y'] - current_row[0]['y']) < (words[i]['h'] * 0.7):
+                current_row.append(words[i])
+            else:
+                rows_raw.append(current_row)
+                current_row = [words[i]]
+        rows_raw.append(current_row)
+
+    # 2. Determine column clusters based on global X starts
+    all_x = sorted([w['x'] for w in words])
+    col_clusters = []
+    if all_x:
+        curr = [all_x[0]]
+        for i in range(1, len(all_x)):
+            # Cluster threshold: 40 pixels
+            if all_x[i] - curr[-1] < 40:
+                curr.append(all_x[i])
+            else:
+                col_clusters.append(sum(curr)/len(curr))
+                curr = [all_x[i]]
+        col_clusters.append(sum(curr)/len(curr))
+
+    # 3. Map aligned rows to columns
+    md_rows = []
+    for row in rows_raw:
+        row.sort(key=lambda w: w['x'])
+        line_data = [""] * len(col_clusters)
+        for w in row:
+            # Find closest column cluster
+            best_idx = 0
+            min_dist = float('inf')
+            for idx, cx in enumerate(col_clusters):
+                d = abs(w['x'] - cx)
+                if d < min_dist:
+                    min_dist = d
+                    best_idx = idx
+            
+            if line_data[best_idx]:
+                line_data[best_idx] += " " + w['text']
+            else:
+                line_data[best_idx] = w['text']
+        md_rows.append(line_data)
+
+    # 4. Filter out columns that are empty across all rows
+    used_cols = [j for j in range(len(col_clusters)) if any(row[j] for row in md_rows)]
+    if not used_cols:
+        return ""
+        
+    final_rows = [[row[j] for j in used_cols] for row in md_rows]
+    num_cols = len(used_cols)
+    
+    # 5. Format as Markdown Grid
+    output = []
+    header = ["Col " + str(i+1) for i in range(num_cols)]
+    output.append("| " + " | ".join(header) + " |")
+    output.append("| " + " | ".join(["---"] * num_cols) + " |")
+    for r in final_rows:
+        row_str = [c.replace("|", "\\|").strip() for c in r]
+        output.append("| " + " | ".join(row_str) + " |")
+    
+    return "\n".join(output)
+

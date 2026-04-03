@@ -76,12 +76,14 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
   const renderFileItem = (fileName: string, data: any, isResetItem: boolean) => {
     const statusStr = data.status || '';
-    const isReadyMD = statusStr === 'READY_MD';
+    const isReadyMD = statusStr === 'READY_MD' || statusStr === 'READY_MD_LOCAL';
+    const isReadyOCR = statusStr === 'READY_MD_OCR';
+    const isNeedOCR = statusStr === 'NEED_OCR';
     const isProcessed = statusStr === 'PROCESSED';
     const isProcessing = statusStr === 'PROCESSING' || (statusStr.includes('Анализ') && !isProcessed);
-    const isOk = statusStr.includes('Готово') || isReadyMD || isProcessed;
+    const isOk = statusStr.includes('Готово') || isReadyMD || isReadyOCR || isProcessed;
     const isError = statusStr.includes('Ошибка');
-    const isLoading = !isOk && !isError && statusStr !== 'reset' && !isReadyMD && !isProcessed;
+    const isLoading = !isOk && !isError && statusStr !== 'reset' && !isReadyMD && !isReadyOCR && !isProcessed && !isNeedOCR;
     const isReset = statusStr === 'reset';
     const method = (statusStr.includes('ИИ') || isProcessed) ? 'AI' : 'Local';
     const isAiProcessed = method === 'AI';
@@ -128,7 +130,12 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 {displayName}
               </span>
               <span className="text-[11px] text-slate-500 mt-0.5">
-                {isReset ? 'Данные сброшены' : (isReadyMD ? 'Готово (Сетка)' : (isProcessed ? 'Готово (ИИ)' : statusStr))}
+                {isReset ? 'Данные сброшены' : (
+                  isReadyMD ? 'Готово (программный парсинг)' : 
+                  isReadyOCR ? 'Готово (Yandex OCR)' : 
+                  isNeedOCR ? 'Требуется OCR-анализ' :
+                  isProcessed ? 'Готово (ИИ)' : statusStr
+                )}
                 {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
                   <span className="ml-2 text-[10px] text-slate-400 font-medium">
                     ~{data?.estimated_cost || 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (прогноз)

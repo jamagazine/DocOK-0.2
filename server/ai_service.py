@@ -30,22 +30,40 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
         data = resp.json()
 
     text_parts = []
+    all_words = []  # List of {text, x, y, w, h}
     has_low_confidence = False
 
     for result in data.get('results', []):
         for res2 in result.get('results', []):
             text_detection = res2.get('textDetection', {})
             for page in text_detection.get('pages', []):
+                p_w = float(page.get('width', 1))
+                p_h = float(page.get('height', 1))
+                
                 for block in page.get('blocks', []):
                     for line in block.get('lines', []):
                         for word in line.get('words', []):
                             conf = word.get('confidence', 1.0)
                             if conf < 0.8:
                                 has_low_confidence = True
-                            text_parts.append(word.get('text', ''))
+                            
+                            w_text = word.get('text', '')
+                            text_parts.append(w_text)
+                            
+                            # Extract bounding box (normalized 0-1 usually, or pixels)
+                            poly = word.get('boundingBox', {}).get('vertices', [])
+                            if poly and len(poly) >= 4:
+                                x = min(v.get('x', 0) for v in poly)
+                                y = min(v.get('y', 0) for v in poly)
+                                w = max(v.get('x', 0) for v in poly) - x
+                                h = max(v.get('y', 0) for v in poly) - y
+                                all_words.append({
+                                    "text": w_text,
+                                    "x": x, "y": y, "w": w, "h": h
+                                })
                         text_parts.append('\n')
 
-    return "".join(text_parts), has_low_confidence
+    return "".join(text_parts), has_low_confidence, all_words
 
 async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
