@@ -481,9 +481,17 @@ async def process_invoice(
                 main_doc = {"name": original_name}
                 footer_data = {}
             else:
+                from ai_service import extract_invoice_metadata
                 model_type = "pro" if p_method == "ocr_table" else "lite"
-                system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
                 
+                # PHASE 1: Metadata Extraction
+                yield f"data: {json.dumps({'status': 'chunk', 'index': 0, 'total': 2, 'msg': 'Извлечение реквизитов...'}, ensure_ascii=False)}\n\n"
+                main_doc, meta_tokens = await extract_invoice_metadata(extracted_text, api_key, folder_id, model_type)
+                total_tokens = meta_tokens
+                if not main_doc: main_doc = {"name": original_name}
+                
+                # PHASE 2: Items Extraction
+                system_prompt = load_prompt("invoice_items" if doc_type == "invoice" else "specification")
                 base_items = convert_df_to_items(df) if is_spreadsheet else []
                 
                 # Debug prompt
@@ -494,12 +502,11 @@ async def process_invoice(
                 except: pass
 
                 footer_data = {}
-                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model_type):
+                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model_type, context=main_doc):
                     if ev["type"] == "progress":
                         yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
                     elif ev["type"] == "result":
-                        total_tokens = ev["tokens"]
-                        main_doc = ev["main_doc"]
+                        total_tokens += ev["tokens"]
                         footer_data = ev.get("footer", {})
                         fixes = ev.get("fixes", [])
                         gen_items = ev.get("items", [])
@@ -522,28 +529,17 @@ async def process_invoice(
             if footer_data:
                 final_struct["footer"] = footer_data
 
-            # --- SPECS: Extract General Summary (Stamp/Footer) ---
+            # --- Summary Generation (Python Based) ---
+            from parser_utils import generate_invoice_summary
             summary_md = ""
             if doc_type == "spec":
                 try:
                     sum_res = extract_specification_summary(df, all_items, temp_path)
                     summary_md = sum_res["summary_md"]
                 except Exception as e:
-                    print(f"Error extracting summary: {e}")
                     summary_md = "### Общая сводка\n\nНе удалось извлечь данные (ошибка парсера)."
-            
-            # --- Invoices: If we have footer data, build summary from it ---
-            if doc_type == "invoice" and footer_data:
-                sum_lines = ["### Информация из счета\n"]
-                if footer_data.get("delivery_terms"):
-                    sum_lines.append(f"**Доставка:** {footer_data['delivery_terms']}")
-                if footer_data.get("payment_terms"):
-                    sum_lines.append(f"**Оплата:** {footer_data['payment_terms']}")
-                if footer_data.get("additional_notes"):
-                    sum_lines.append(f"**Примечания:** {footer_data['additional_notes']}")
-                if footer_data.get("total_amount"):
-                    sum_lines.append(f"**Итоговая сумма:** {footer_data['total_amount']} руб.")
-                summary_md = "\n".join(sum_lines)
+            elif doc_type == "invoice":
+                summary_md = generate_invoice_summary(final_struct)
 
             rate = 0.6 if p_method == "ocr_table" else 0.2
             cost = round((total_tokens * rate) / 1000 + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)

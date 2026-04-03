@@ -923,3 +923,43 @@ def clean_empty_columns(md_text: str) -> str:
     # Combine back
     return "\n".join(other_lines_before + cleaned_table + other_lines_after)
 
+
+def generate_invoice_summary(data: dict) -> str:
+    """
+    Generates a clean Markdown summary for the invoice from JSON data.
+    """
+    doc = data.get("document", {}) or {}
+    items = data.get("items", []) or []
+    footer = data.get("footer", {}) or {}
+
+    s_name = doc.get("supplier_name", "Не определен")
+    s_inn = doc.get("supplier_inn", "")
+    inv_num = doc.get("invoice_number", "---")
+    inv_date = doc.get("date", "---")
+    
+    total_pos = len([i for i in items if i.get("name") and not i.get("is_header")])
+    total_sum = footer.get("total_amount", 0.0)
+    if not total_sum:
+        total_sum = sum(to_float(i.get("total", 0)) for i in items)
+
+    lines = []
+    lines.append(f"### Сводка по счету №{inv_num} от {inv_date}")
+    lines.append("")
+    lines.append(f"**Поставщик:** {s_name} (ИНН: {s_inn})" if s_inn else f"**Поставщик:** {s_name}")
+    lines.append(f"**Покупатель:** {doc.get('buyer_name', 'Не определен')}")
+    lines.append("")
+    lines.append(f"**Всего позиций:** {total_pos} шт.")
+    lines.append(f"**Сумма итого:** {total_sum:,.2f} руб.".replace(",", " "))
+    lines.append("")
+    
+    if footer:
+        lines.append("#### Условия и примечания")
+        if footer.get("delivery_terms"):
+            lines.append(f"- **Доставка:** {footer['delivery_terms']}")
+        if footer.get("payment_terms"):
+            lines.append(f"- **Оплата:** {footer['payment_terms']}")
+        if footer.get("additional_notes") and footer.get("additional_notes") != "null":
+            lines.append(f"- **Прочее:** {footer['additional_notes']}")
+            
+    return "\n".join(lines)
+

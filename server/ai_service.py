@@ -78,7 +78,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
     # We assume last_prompt.txt debug is handled or not needed here
     # If needed, it should be done in main.py or passed as a flag
 
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt-pro/5.1"
+    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt-pro/latest"
     payload = {
         "modelUri": model_uri,
         "completionOptions": {"stream": False, "temperature": 0.1, "maxTokens": "8000"},
@@ -125,11 +125,33 @@ def parse_gpt_json(text: str):
     except:
         return None
 
-async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite"):
+async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, model_type: str = "pro"):
+    """
+    Extracts only the invoice header (Metadata) using a specialized prompt.
+    Takes first ~60 lines of MD text.
+    """
+    from main import load_prompt
+    lines = text.split('\n')
+    header_slice = "\n".join(lines[:60])
+    system_prompt = load_prompt("invoice_header")
+    
+    try:
+        raw_res, tokens = await gpt_yandex(header_slice, api_key, folder_id, system_prompt, model_type)
+        return parse_gpt_json(raw_res), tokens
+    except Exception as e:
+        print(f"Metadata extraction error: {e}")
+        return None, 0
+
+async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite", context: dict = None):
     lines = full_text.split('\n')
+    # If context (supplier) is provided, we can skip hardcoded header_block or use it alongside
     header_block = "\n".join(lines[:2]) if len(lines) >= 2 else (lines[0] if lines else "")
     data_lines = lines[2:] if len(lines) >= 2 else []
     
+    # Inject context into system prompt if needed
+    if context and "{supplier_name}" in system_prompt:
+        system_prompt = system_prompt.replace("{supplier_name}", context.get("supplier_name", "Не указан"))
+
     CHUNK_SIZE = 1000
     all_items = []
     all_fixes = []
@@ -142,6 +164,8 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     
     async def process_single_chunk(i, chunk):
         async with sem:
+            # For data rows, we don't necessarily need the full original header, 
+            # but we need the table header (line 0, 1 of MD table)
             chunk_text = header_block + "\n" + "\n".join(chunk)
             try:
                 raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, system_prompt, model_type)
