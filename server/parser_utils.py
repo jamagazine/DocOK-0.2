@@ -779,80 +779,162 @@ def detect_pdf_type(file_path: str) -> str:
         return "SCAN_PDF"
 
 
-def ocr_to_grid_markdown(words: list) -> str:
+def ocr_to_grid_markdown(words: list) -> tuple:
     """
-    Groups words from OCR results with coordinates into a Markdown Grid table.
+    Intelligent Multi-Table Scanner - Pipeline v4.0 (Aseptic).
+    Identifies all table regions and returns (header_raw_text, tables_md).
+    Only tables are included in tables_md. Everything before first table is header_raw_text.
     """
-    if not words:
-        return ""
+    if not words: return "", ""
+
+    # 1. Pre-sanitization: Remove non-essential chars
+    words = [w for w in words if w.get('text') and len(w['text'].strip()) > 0]
+    for w in words:
+        t = re.sub(r'[^\x00-\x7fа-яёА-ЯЁ\s№.,-]', '', w['text']).strip()
+        w['text'] = t.replace("|", "").replace("\\", "")
     
-    # 1. Group into rows by Y-coordinate proximity
+    # Physical rows grouping by Y (tolerance 10px)
     words.sort(key=lambda w: w['y'])
     rows_raw = []
     if words:
         current_row = [words[0]]
         for i in range(1, len(words)):
-            # Tolerance: approx 70% of word height
-            if abs(words[i]['y'] - current_row[0]['y']) < (words[i]['h'] * 0.7):
+            if abs(words[i]['y'] - current_row[0]['y']) < 10:
                 current_row.append(words[i])
             else:
                 rows_raw.append(current_row)
                 current_row = [words[i]]
         rows_raw.append(current_row)
 
-    # 2. Determine column clusters based on global X starts
-    all_x = sorted([w['x'] for w in words])
-    col_clusters = []
-    if all_x:
-        curr = [all_x[0]]
-        for i in range(1, len(all_x)):
-            # Cluster threshold: 40 pixels
-            if all_x[i] - curr[-1] < 40:
-                curr.append(all_x[i])
-            else:
-                col_clusters.append(sum(curr)/len(curr))
-                curr = [all_x[i]]
-        col_clusters.append(sum(curr)/len(curr))
+    # 2. Multi-Table Segmentation
+    table_anchors = ["наименование", "товар", "услуга", "работа", "номенклатура"]
+    footer_words = ["итого", "всего", "сумма к оплате"]
+    
+    header_raw_lines = []
+    table_segments = []
+    current_segment = []
+    in_table = False
+    first_table_found = False
 
-    # 3. Map aligned rows to columns
-    md_rows = []
-    for row in rows_raw:
-        row.sort(key=lambda w: w['x'])
-        line_data = [""] * len(col_clusters)
-        for w in row:
-            # Find closest column cluster
-            best_idx = 0
-            min_dist = float('inf')
-            for idx, cx in enumerate(col_clusters):
-                d = abs(w['x'] - cx)
-                if d < min_dist:
-                    min_dist = d
-                    best_idx = idx
-            
-            if line_data[best_idx]:
-                line_data[best_idx] += " " + w['text']
-            else:
-                line_data[best_idx] = w['text']
-        md_rows.append(line_data)
-
-    # 4. Filter out columns that are empty across all rows
-    used_cols = [j for j in range(len(col_clusters)) if any(row[j] for row in md_rows)]
-    if not used_cols:
-        return ""
+    for idx, row in enumerate(rows_raw):
+        row_text = " ".join([w['text'].lower() for w in row])
+        # Start Table detected ONLY if anchors AND numeric markers exist
+        if not in_table and any(anchor in row_text for anchor in table_anchors):
+            has_numeric_marker = any(x in row_text for x in ["№", "цена", "кол", "сумм"])
+            if has_numeric_marker:
+                in_table = True
+                first_table_found = True
+                current_segment = [row] # Include header row
+                continue
         
-    final_rows = [[row[j] for j in used_cols] for row in md_rows]
-    num_cols = len(used_cols)
-    
-    # 5. Format as Markdown Grid
-    output = []
-    header = ["Col " + str(i+1) for i in range(num_cols)]
-    output.append("| " + " | ".join(header) + " |")
-    output.append("| " + " | ".join(["---"] * num_cols) + " |")
-    for r in final_rows:
-        row_str = [c.replace("|", "\\|").strip() for c in r]
-        output.append("| " + " | ".join(row_str) + " |")
-    
-    return "\n".join(output)
+        # End Table detected
+        if in_table and any(fw in row_text for fw in footer_words):
+            in_table = False
+            table_segments.append(current_segment)
+            current_segment = []
+            continue
+
+        if in_table:
+            current_segment.append(row)
+        elif not first_table_found:
+            line = " ".join([w['text'] for w in sorted(row, key=lambda x: x['x'])])
+            if line.strip(): header_raw_lines.append(line)
+
+    if in_table and current_segment:
+        table_segments.append(current_segment)
+
+    # 3. Process each table segment into MD
+    all_tables_md = []
+    def split_joined_sums(text: str) -> list:
+        parts = re.findall(r'(\d+[\s]*[.,][\s]*\d{2})', text)
+        return parts if parts else [text]
+
+    for segment in table_segments:
+        if not segment: continue
+        col_anchors = {"№": -1, "name": -1, "qty": -1, "unit": -1, "price": -1, "sum": -1}
+        h_row = segment[0]
+        for w in h_row:
+            txt = w['text'].lower()
+            if "№" in txt or "п/п" in txt: col_anchors["№"] = w['x']
+            elif any(x in txt for x in table_anchors): col_anchors["name"] = w['x']
+            elif "кол" in txt: col_anchors["qty"] = w['x']
+            elif "ед" in txt or "изм" in txt: col_anchors["unit"] = w['x']
+            elif "цена" in txt or "тариф" in txt: col_anchors["price"] = w['x']
+            elif "сумм" in txt or "всего" in txt: col_anchors["sum"] = w['x']
+
+        if col_anchors["name"] == -1: col_anchors["name"] = 150
+        if col_anchors["qty"] == -1: col_anchors["qty"] = 450
+        if col_anchors["price"] == -1: col_anchors["price"] = 650
+        if col_anchors["sum"] == -1: col_anchors["sum"] = 800
+
+        table_md = ["| Группа | № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+        processed_items = []
+        current_item = None
+
+        for r_idx in range(1, len(segment)):
+            r = segment[r_idx]
+            sorted_words = sorted(r, key=lambda x: x['x'])
+            row_data = {"№": "", "name": "", "qty": "", "unit": "", "price": "", "sum": "", "other": []}
+            for w in sorted_words:
+                wx = w['x']
+                distances = {k: abs(wx - v) for k, v in col_anchors.items() if v != -1}
+                closest_key = min(distances, key=distances.get) if distances else "name"
+                if row_data[closest_key]: row_data[closest_key] += " " + w['text']
+                else: row_data[closest_key] = w['text']
+
+            all_sums = split_joined_sums(row_data["sum"])
+            if len(all_sums) > 1:
+                row_data["sum"] = all_sums[-1]
+                if not row_data["price"]: row_data["price"] = all_sums[0]
+
+            has_price = any(c.isdigit() for c in row_data["price"])
+            has_sum = any(c.isdigit() for c in row_data["sum"])
+            is_index = re.match(r'^\d+[.]?$', row_data["№"].strip())
+            is_new_row = is_index or has_price or has_sum
+
+            if is_new_row or not current_item:
+                if current_item: processed_items.append(current_item)
+                group = ""
+                m = re.search(r'([А-ЯЁA-Zа-яёa-z]{1,3}[-]?\d+)', row_data["name"])
+                if m: group = m.group(1)
+                current_item = {"group": group, "№": row_data["№"], "name": row_data["name"], "qty": row_data["qty"], "unit": row_data["unit"], "price": row_data["price"], "sum": row_data["sum"]}
+            else:
+                add_txt = f"{row_data['№']} {row_data['name']} {row_data['qty']} {row_data['unit']} {row_data['price']} {row_data['sum']}".strip()
+                if add_txt: current_item["name"] += " " + add_txt
+
+        if current_item: processed_items.append(current_item)
+        
+        # VALIDATE: Does this segment contain at least one REAL item with Price/Sum (regex pattern)?
+        has_real_data = False
+        segment_table_md = []
+        # Pattern: digits followed by comma/dot and exactly two decimals (common for Russian currency)
+        currency_pattern = re.compile(r'\d+[\s]*[.,][\s]*\d{2}')
+        
+        for item in processed_items:
+            # Check price and sum buckets for actual money-like values
+            if currency_pattern.search(item['price']) or currency_pattern.search(item['sum']):
+                has_real_data = True
+            
+            r_c = [item['group'], item['№'], item['name'], item['qty'], item['unit'], item['price'], "", item['sum']]
+            r_c = [str(c).replace("|", "").strip() for c in r_c]
+            if not any(r_c): continue
+            segment_table_md.append("| " + " | ".join(r_c) + " |")
+        
+        if has_real_data:
+            all_tables_md.append("\n".join(table_md) + "\n" + "\n".join(segment_table_md))
+
+    # FINAL ASEPTIC FILTER: Strictly keep only lines starting and ending with |
+    final_sterile_md = []
+    for table_block in all_tables_md:
+        block_lines = []
+        for line in table_block.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("|") and stripped.endswith("|"):
+                block_lines.append(line)
+        if block_lines:
+            final_sterile_md.append("\n".join(block_lines))
+
+    return "\n\n".join(header_raw_lines), "\n\n".join(final_sterile_md)
 
 
 def clean_empty_columns(md_text: str) -> str:

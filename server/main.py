@@ -410,188 +410,142 @@ async def process_invoice(
             except: pass
     
         extracted_text = ""
+        full_header_text = ""
         has_low_confidence = False
         num_pages = 0
+        p_method = "ocr_table"
+        all_items = []
+        main_doc = None
+        total_tokens = 0
+        footer_data = {}
         
         try:
             if filename.endswith(".pdf"):
-                from parser_utils import extract_text_from_pdf, ocr_to_grid_markdown
-                extracted_text = extract_text_from_pdf(temp_path)
-                # If digital text is sufficient, use it directly
-                if extracted_text.strip() and len(extracted_text.strip()) > 50:
-                    p_method = "direct_text"
-                else:
-                    p_method = "ocr_table"
-                    import pdfplumber
-                    with pdfplumber.open(temp_path) as pdf:
-                        num_pages = len(pdf.pages)
-                        all_ocr_text = ""
-                        for i, pg in enumerate(pdf.pages):
-                            img = io.BytesIO()
-                            pg.to_image(resolution=150).original.save(img, format='PNG')
-                            txt, low, words = await ocr_yandex(base64.b64encode(img.getvalue()).decode('utf-8'), api_key, folder_id)
-                            page_md = ocr_to_grid_markdown(words)
-                            all_ocr_text += f"\n--- Page {i+1} ---\n{page_md}"
-                            if low: has_low_confidence = True
-                        extracted_text = all_ocr_text
+                from parser_utils import ocr_to_grid_markdown
+                import pdfplumber
+                all_ocr_text = ""
+                full_header_buffer = ""
+                with pdfplumber.open(temp_path) as pdf:
+                    num_pages = len(pdf.pages)
+                    for i, pg in enumerate(pdf.pages):
+                        img = io.BytesIO()
+                        pg.to_image(resolution=150).original.save(img, format='PNG')
+                        txt_res, low_res, words_res = await ocr_yandex(base64.b64encode(img.getvalue()).decode('utf-8'), api_key, folder_id)
                         
-                        # Save the Grid MD
-                        grid_p = get_file_path(projectId, disk_name, "_invoice.md")
-                        with open(grid_p, "w", encoding="utf-8") as f:
-                            f.write(extracted_text)
+                        h, t = ocr_to_grid_markdown(words_res)
+                        if h: full_header_buffer += f"\n{h}"
+                        if t: all_ocr_text += f"\n\n{t}"
+                        if low_res: has_low_confidence = True
+                
+                extracted_text = all_ocr_text.strip()
+                full_header_text = full_header_buffer.strip()
+                p_method = "ocr_table"
             elif filename.endswith((".xlsx", ".xls", ".csv")):
                 df = pd.read_csv(temp_path, dtype=str) if filename.endswith(".csv") else pd.read_excel(temp_path, dtype=str)
                 df = sanitize_dataframe(df.fillna(""))
                 unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
                 if unnamed_empty: df = df.drop(columns=unnamed_empty)
                 
-                # Try to use pre-generated GRID MD for invoices if available
-                grid_p = get_file_path(projectId, disk_name, "_invoice.md")
-                if doc_type == "invoice" and os.path.exists(grid_p):
-                    with open(grid_p, "r", encoding="utf-8") as f:
-                        extracted_text = f.read()
-                else:
-                    extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
-                
+                extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+                full_header_text = ""
                 p_method = "excel_ai"
             else: # Images
-                from parser_utils import ocr_to_grid_markdown, clean_empty_columns
+                from parser_utils import ocr_to_grid_markdown
                 p_method = "ocr_table"
                 with open(temp_path, "rb") as f:
-                    txt, low, words = await ocr_yandex(base64.b64encode(f.read()).decode('utf-8'), api_key, folder_id)
-                extracted_text = ocr_to_grid_markdown(words)
-                has_low_confidence = low
+                    txt_res, low_res, words_res = await ocr_yandex(base64.b64encode(f.read()).decode('utf-8'), api_key, folder_id)
                 
-                # Clean the grid!
-                extracted_text = clean_empty_columns(extracted_text)
-                
-                # Save the Grid MD
-                grid_p = get_file_path(projectId, disk_name, "_invoice.md")
-                with open(grid_p, "w", encoding="utf-8") as f:
-                    f.write(extracted_text)
-                
-                # Save Cleaned MD for debugging
-                cleaned_p = get_file_path(projectId, disk_name, "_invoice_cleaned.md")
-                with open(cleaned_p, "w", encoding="utf-8") as f:
-                    f.write(extracted_text)
+                h, t = ocr_to_grid_markdown(words_res)
+                extracted_text = t.strip()
+                full_header_text = h.strip()
+                if low_res: has_low_confidence = True
 
-            if is_spreadsheet and p_method == "auto":
-                all_items = convert_df_to_items(df)
-                total_tokens = 0
-                main_doc = {"name": original_name}
-                footer_data = {}
-            else:
-                from ai_service import extract_invoice_metadata
-                model_type = "pro" if p_method == "ocr_table" else "lite"
-                
-                # PHASE 1: Metadata Extraction
-                yield f"data: {json.dumps({'status': 'chunk', 'index': 0, 'total': 2, 'msg': 'Извлечение реквизитов...'}, ensure_ascii=False)}\n\n"
-                main_doc, meta_tokens = await extract_invoice_metadata(extracted_text, api_key, folder_id, model_type)
-                total_tokens = meta_tokens
-                if not main_doc: main_doc = {"name": original_name}
-                
-                # PHASE 2: Items Extraction
-                system_prompt = load_prompt("invoice_items" if doc_type == "invoice" else "specification")
-                base_items = convert_df_to_items(df) if is_spreadsheet else []
-                
-                # Debug prompt
-                try:
-                    p_dir = get_project_dir(projectId)
-                    with open(os.path.join(p_dir, "last_prompt.txt"), "w", encoding="utf-8") as f:
-                        f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== TEXT ===\n{extracted_text[:1000]}...")
-                except: pass
+            # Save sterile MD files
+            grid_p = get_file_path(projectId, disk_name, "_invoice.md")
+            with open(grid_p, "w", encoding="utf-8") as f:
+                f.write(extracted_text)
 
-                footer_data = {}
-                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model_type, context=main_doc):
-                    if ev["type"] == "progress":
-                        yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
-                    elif ev["type"] == "result":
-                        total_tokens += ev["tokens"]
-                        footer_data = ev.get("footer", {})
-                        fixes = ev.get("fixes", [])
-                        gen_items = ev.get("items", [])
-                        
-                        if is_spreadsheet:
-                            items_dict = {str(item["id"]): item for item in base_items}
-                            for fix in fixes:
-                                fid = str(fix.get("id"))
-                                field = fix.get("field")
-                                val = fix.get("value")
-                                if fid in items_dict and field:
-                                    items_dict[fid][field] = val
-                            all_items = [v for v in items_dict.values() if v.get("row_type") not in ["DELETE", "IGNORE"]]
-                        else:
-                            all_items = gen_items
+            final_p = get_file_path(projectId, disk_name, "_invoice_final.md")
+            with open(final_p, "w", encoding="utf-8") as f:
+                f.write(extracted_text)
 
-            final_struct = calculate_uncertainty({"document": main_doc or {"name": original_name}, "items": all_items}, has_low_confidence)
+            # PHASE 1: Metadata Extraction
+            system_prompt = load_prompt("invoice_items" if doc_type == "invoice" else "specification")
+            model_type = "pro" if p_method == "ocr_table" else "lite"
             
-            # Add footer to final structure
-            if footer_data:
-                final_struct["footer"] = footer_data
+            # Use header + bit of table for metadata if available
+            metadata_source = (full_header_text + "\n" + (extracted_text[:1000] if extracted_text else "")).strip()
+            if not metadata_source: metadata_source = "Empty Document"
 
-            # --- Summary Generation (Python Based) ---
+            yield f"data: {json.dumps({'status': 'chunk', 'index': 0, 'total': 2, 'msg': 'Извлечение реквизитов (Pro)...'}, ensure_ascii=False)}\n\n"
+            try:
+                from ai_service import extract_invoice_metadata
+                main_doc, mt = await extract_invoice_metadata(metadata_source, api_key, folder_id, model_type)
+                total_tokens += mt
+            except Exception as e:
+                print(f"Meta Error: {e}")
+                if model_type == "pro":
+                    yield f"data: {json.dumps({'status': 'chunk', 'index': 0, 'total': 2, 'msg': 'Ошибка реквизитов. Откат на Lite...'}, ensure_ascii=False)}\n\n"
+                    main_doc, mt = await extract_invoice_metadata(metadata_source, api_key, folder_id, "lite")
+                    total_tokens += mt
+
+            if not main_doc: main_doc = {"name": original_name}
+
+            # PHASE 2: Items Extraction
+            success_p2 = False
+            if extracted_text.strip():
+                try:
+                    async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model_type, context=main_doc):
+                        if ev["type"] == "progress":
+                            yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
+                        elif ev["type"] == "result":
+                            total_tokens += ev["tokens"]
+                            footer_data = ev.get("footer", {})
+                            all_items = ev.get("items", [])
+                            success_p2 = True
+                except Exception as e:
+                    print(f"Items Pro Error: {e}")
+                    success_p2 = False
+
+                if not success_p2 and model_type == "pro":
+                    yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 2, 'msg': 'Ошибка позиций. Откат на Lite...'}, ensure_ascii=False)}\n\n"
+                    async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, "lite", context=main_doc):
+                        if ev["type"] == "result":
+                            total_tokens += ev["tokens"]
+                            footer_data = ev.get("footer", {})
+                            all_items = ev.get("items", [])
+                            success_p2 = True
+
+            # Final Polish
+            final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)
+            if footer_data: final_struct["footer"] = footer_data
+
             from parser_utils import generate_invoice_summary
             summary_md = ""
             if doc_type == "spec":
                 try:
-                    sum_res = extract_specification_summary(df, all_items, temp_path)
+                    from ai_service import extract_specification_summary
+                    sum_res = extract_specification_summary(df if 'df' in locals() else None, all_items, temp_path)
                     summary_md = sum_res["summary_md"]
-                except Exception as e:
-                    summary_md = "### Общая сводка\n\nНе удалось извлечь данные (ошибка парсера)."
-            elif doc_type == "invoice":
+                except: summary_md = "Сводка не сформирована."
+            else:
                 summary_md = generate_invoice_summary(final_struct)
 
             rate = 0.6 if p_method == "ocr_table" else 0.2
             cost = round((total_tokens * rate) / 1000 + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)
-            final_struct.update({
-                "cost": cost, 
-                "method": p_method, 
-                "usage": {"total_tokens": total_tokens},
-                "summary_md": summary_md
-            })
+            final_struct.update({"cost": cost, "method": p_method, "usage": {"tokens": total_tokens}, "summary_md": summary_md})
             
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
             
             # Update manifest
             manifest = _load_manifest(projectId)
             if disk_name in manifest:
-                # --- SPECS ONLY: Extract Summary (AI-Enhanced) ---
-                if doc_type == "spec":
-                    try:
-                        sum_res = extract_specification_summary(df, all_items, temp_path)
-                        summary_md = sum_res["summary_md"]
-                        debug_grid = sum_res["debug_grid"]
-                        
-                        manifest[disk_name]["summary_md"] = summary_md
-                        
-                        # Save physical MD for summary
-                        if summary_md:
-                            summary_p = get_file_path(projectId, disk_name, "_summary.md")
-                            with open(summary_p, "w", encoding="utf-8") as fs:
-                                fs.write(summary_md)
-                                
-                        # Save DEBUG grid
-                        if debug_grid:
-                            debug_p = get_file_path(projectId, disk_name, "_debug.md")
-                            with open(debug_p, "w", encoding="utf-8") as fs:
-                                fs.write(f"### DEBUG GRID FOR {disk_name}\n\n" + summary_md + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
-                    except Exception as e_sum:
-                        print(f"Summary extraction error: {e_sum}")
-                        manifest[disk_name]["summary_md"] = ""
-                else:
-                    manifest[disk_name]["summary_md"] = ""
-                
-                manifest[disk_name]["cost"] = cost
-                # Update status based on method used
-                if p_method == "ocr_table":
-                    manifest[disk_name]["status"] = "READY_MD_OCR"
-                elif p_method in ["direct_text", "excel_ai"]:
-                    manifest[disk_name]["status"] = "READY_MD_LOCAL"
-                
+                manifest[disk_name].update({"cost": cost, "status": "READY_MD_OCR" if p_method == "ocr_table" else "READY_MD_LOCAL", "summary_md": summary_md})
                 _save_manifest(manifest, projectId)
 
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
+
         except Exception as e:
             import traceback
             traceback.print_exc()

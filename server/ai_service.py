@@ -78,7 +78,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
     # We assume last_prompt.txt debug is handled or not needed here
     # If needed, it should be done in main.py or passed as a flag
 
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt-pro/latest"
+    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt-pro/5.1"
     payload = {
         "modelUri": model_uri,
         "completionOptions": {"stream": False, "temperature": 0.1, "maxTokens": "8000"},
@@ -128,15 +128,20 @@ def parse_gpt_json(text: str):
 async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, model_type: str = "pro"):
     """
     Extracts only the invoice header (Metadata) using a specialized prompt.
-    Takes first ~60 lines of MD text.
+    Takes first ~100 lines of MD text but strips table formatting for better extraction.
     """
     from main import load_prompt
     lines = text.split('\n')
-    header_slice = "\n".join(lines[:60])
+    header_slice = "\n".join(lines[:100])
+    
+    # Strip MD table markers to get clean text for meta extraction
+    clean_text = header_slice.replace("|", " ").replace("---", " ")
+    clean_text = re.sub(r' +', ' ', clean_text)
+    
     system_prompt = load_prompt("invoice_header")
     
     try:
-        raw_res, tokens = await gpt_yandex(header_slice, api_key, folder_id, system_prompt, model_type)
+        raw_res, tokens = await gpt_yandex(clean_text, api_key, folder_id, system_prompt, model_type)
         return parse_gpt_json(raw_res), tokens
     except Exception as e:
         print(f"Metadata extraction error: {e}")
@@ -152,7 +157,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     if context and "{supplier_name}" in system_prompt:
         system_prompt = system_prompt.replace("{supplier_name}", context.get("supplier_name", "Не указан"))
 
-    CHUNK_SIZE = 1000
+    CHUNK_SIZE = 400
     all_items = []
     all_fixes = []
     total_tokens = 0
