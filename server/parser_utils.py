@@ -582,18 +582,19 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
 
 def excel_to_grid_markdown(file_path: str) -> str:
     """
-    Converts an Excel invoice to Markdown using the Grid Method.
-    Identifies the table, handles merged cells correctly, and preserves structure.
+    Converts an Excel invoice to Markdown using the Full Grid Method.
+    Exports the entire sheet from row 0 up to max_row, with a fixed column count.
+    Preserves merged cells and empty rows for a 1:1 visual representation.
     """
     filename = file_path.lower()
     rows_data = []
-    
+    max_w = 0
+
     # 1. Load Workbook
     if filename.endswith(".xls"):
         import xlrd
         try:
             wb = xlrd.open_workbook(file_path, formatting_info=True)
-            # Find sheet with "счет" or "invoice" keywords, fallback to index 0
             sheet = None
             for sn in wb.sheet_names():
                 if any(k in sn.lower() for k in ["счет", "invoice", "инвойс", "актуальн"]):
@@ -601,13 +602,14 @@ def excel_to_grid_markdown(file_path: str) -> str:
                     break
             if not sheet: sheet = wb.sheet_by_index(0)
             
-            merged = sheet.merged_cells # list of (rlo, rhi, clo, chi)
-            
+            merged = sheet.merged_cells
+            max_w = sheet.ncols
+
             def is_merged_child(r, c):
                 for rlo, rhi, clo, chi in merged:
                     if rlo <= r < rhi and clo <= c < chi:
-                        if r == rlo and c == clo: return False # Start cell
-                        return True # Child cell
+                        if r == rlo and c == clo: return False
+                        return True
                 return False
 
             for r in range(sheet.nrows):
@@ -633,8 +635,9 @@ def excel_to_grid_markdown(file_path: str) -> str:
                     break
             if not sheet: sheet = wb.active
             
-            # Pre-calculate merged cells map for speed
-            merged_map = {} # (r, c) -> is_child
+            max_w = sheet.max_column
+            
+            merged_map = {}
             for m_range in sheet.merged_cells.ranges:
                 for r in range(m_range.min_row, m_range.max_row + 1):
                     for c in range(m_range.min_col, m_range.max_col + 1):
@@ -659,53 +662,30 @@ def excel_to_grid_markdown(file_path: str) -> str:
     if not rows_data:
         return ""
 
-    # 2. Identify Table Boundaries
-    keywords = ["наименование", "№", "количество", "сумма", "цена", "ед.изм", "артикул"]
-    header_idx = -1
-    max_matches = 0
-    
-    for idx, row in enumerate(rows_data):
-        matches = sum(1 for cell in row if any(k in str(cell).lower() for k in keywords))
-        if matches > max_matches:
-            max_matches = matches
-            header_idx = idx
-            if matches >= 3: break # Found common set of headers
+    # 2. Find real data boundaries to avoid 1M empty rows if any
+    # (Though sheet.max_row usually handles this, sometimes it's bloated)
+    last_real_row = 0
+    for idx, r in enumerate(rows_data):
+        if any(str(c).strip() for c in r):
+            last_real_row = idx + 1
+            
+    rows_data = rows_data[:last_real_row]
+    if not rows_data: return ""
 
-    if header_idx == -1: header_idx = 0 # Fallback
-
-    # End boundary: search for "итого", "всего" or empty rows
-    end_idx = len(rows_data)
-    for idx in range(header_idx + 1, len(rows_data)):
-        row_str = " ".join(str(c).lower() for c in rows_data[idx])
-        if any(k in row_str for k in ["итого", "всего", "без ндс", "в т.ч. ндс"]):
-            # Include the summary row itself as it often has totals
-            end_idx = idx + 1
-            break
-
-    # 3. Format as Markdown
-    table_rows = rows_data[header_idx:end_idx]
-    if not table_rows: return ""
-    
-    # Determine actual width (max columns with any data)
-    width = 0
-    for r in table_rows:
-        for c_idx, val in enumerate(r):
-            if val.strip() and c_idx + 1 > width:
-                width = c_idx + 1
-
+    # 3. Format as Markdown Grid
     md_lines = []
     
-    # Header
-    header_row = [str(c).replace("|", "\\|").replace("\n", " ") for c in table_rows[0][:width]]
+    # Header (just use indices for raw grid representation or first row)
+    # The header line in markdown table is decorative in this "Raw Grid" case
+    header_row = [f"Col {i+1}" for i in range(max_w)]
     md_lines.append("| " + " | ".join(header_row) + " |")
-    md_lines.append("| " + " | ".join(["---"] * width) + " |")
+    md_lines.append("| " + " | ".join(["---"] * max_w) + " |")
     
-    # Content
-    for r in table_rows[1:]:
-        # Filter purely empty rows if they are after some data but before end
-        if not any(c.strip() for c in r[:width]): continue
-        
-        row_str = [str(c).replace("|", "\\|").replace("\n", " ") for c in r[:width]]
+    # All rows from 0 to last_real_row
+    for r in rows_data:
+        # Pad row to max_w if needed
+        full_row = r + [""] * (max_w - len(r))
+        row_str = [str(c).replace("|", "\\|").replace("\n", " ") for c in full_row]
         md_lines.append("| " + " | ".join(row_str) + " |")
         
     return "\n".join(md_lines)

@@ -765,7 +765,38 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setEstimateRows([]);
       setSelectedIds([]);
       setActiveHeaderIds([]);
+      setUploadStatuses({});
+      setFilesMap({});
     }
+
+    const fetchProjectFiles = async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
+        if (res.ok) {
+          const files = await res.json();
+          const statuses: Record<string, UploadStatus> = {};
+          files.forEach((f: any) => {
+            statuses[f.disk_name] = {
+              status: f.status,
+              time: 'Загружено', // Fallback
+              cost: f.cost,
+              tokens: f.tokens,
+              estimated_cost: f.estimated_cost,
+              estimated_tokens: f.estimated_tokens,
+              model: f.model,
+              method: f.method,
+              summary_md: f.summary_md,
+              summary_fields: f.summary_fields
+            };
+          });
+          setUploadStatuses(statuses);
+        }
+      } catch (e) {
+        console.error('Failed to fetch project files:', e);
+      }
+    };
+
+    fetchProjectFiles();
 
     const loadLocal = (key: string) => {
       try {
@@ -1104,47 +1135,76 @@ export function DataProvider({ children }: { children: ReactNode }) {
         };
       }).filter(Boolean);
     } else {
-      // SMART MAPPING for Invoices (Stage 11: Dynamic Column Detection)
-      const headerLine = lines[0];
-      const headers = headerLine.split('|').map(c => c.trim().toLowerCase()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
-      
+      // SMART MAPPING for Invoices (Stage 12: Full Grid Support)
+      // 1. Identify which line in dataLines is the ACTUAL Excel header
+      let actualHeaderIdx = -1;
+      let headers: string[] = [];
+      const keywords = ['наименован', 'товар', 'услуг', 'кол-во', 'цена', 'сумма'];
+
+      for (let i = 0; i < dataLines.length; i++) {
+        const cols = dataLines[i].split('|').map(c => c.trim().toLowerCase()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+        const matches = cols.filter(c => keywords.some(k => c.includes(k))).length;
+        if (matches >= 2) {
+          actualHeaderIdx = i;
+          headers = cols;
+          break;
+        }
+      }
+
       const getCol = (marks: string[], defIdx: number) => {
+        if (actualHeaderIdx === -1) return defIdx;
         const idx = headers.findIndex(h => marks.some(m => h.includes(m)));
         return idx !== -1 ? idx : (defIdx < headers.length ? defIdx : -1);
       };
 
-      const c_art = getCol(['артикул', 'код'], 0);
-      const c_name = getCol(['наименован', 'товар', 'услуг'], 1);
-      const c_qty = getCol(['кол', 'к-во'], 2);
+      const c_art = getCol(['артикул', 'код', '№', 'pos'], 0);
+      const c_name = getCol(['наименован', 'товар', 'услуг', 'работа'], 1);
+      const c_qty = getCol(['кол', 'к-во', 'qty'], 2);
       const c_unit = getCol(['ед', 'изм'], 3);
-      const c_price = getCol(['цена', 'тариф'], 4);
-      const c_total = getCol(['сумма', 'всего', 'итого'], 5);
+      const c_price = getCol(['цена', 'тариф', 'price'], 4);
+      const c_total = getCol(['сумма', 'всего', 'итого', 'total'], 5);
 
-      return dataLines.map(line => {
+      return dataLines.map((line, idx) => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
         
-        if (cols[0] === '1' && cols[1] === '2' && (cols[2] === '3' || cols[3] === '4')) {
-          return null;
-        }
+        // Skip markdown separator lines
+        if (cols.some(c => c.includes('---'))) return null;
+        // Skip technical index lines like 1 | 2 | 3
+        if (cols[0] === '1' && cols[1] === '2' && (cols[2] === '3' || cols[3] === '4')) return null;
 
         const r = emptyInvoiceRow();
+        r.id = genId();
         r.fileId = fileName;
         r.documentName = fileName;
         
-        r.article = c_art !== -1 ? cols[c_art] || '' : '';
-        const name = c_name !== -1 ? cols[c_name] || '' : '';
-        
-        if (!name.trim() || name.includes('---') || name.includes('===')) {
+        // If we are before the header, or couldn't find one, just put everything in name
+        if (actualHeaderIdx === -1 || idx < actualHeaderIdx) {
+          r.name = cols.filter(c => c.length > 0).join(' ') || '';
+          r.is_header = true; // Use header style for metadata rows
+        } else if (idx === actualHeaderIdx) {
+          return null; // Skip the header row itself from items
+        } else {
+          // Standard item parsing
+          r.article = c_art !== -1 ? cols[c_art] || '' : '';
+          r.name = c_name !== -1 ? cols[c_name] || '' : '';
+          r.quantity = c_qty !== -1 ? cols[c_qty] || '0' : '0';
+          r.unit = c_unit !== -1 ? cols[c_unit] || '' : '';
+          r.price = c_price !== -1 ? cols[c_price] || '0' : '0';
+          r.total = c_total !== -1 ? cols[c_total] || '0' : '0';
+          
+          // If name is empty but there's a sum/price, try to take from other columns
+          if (!r.name && (r.total || r.price)) {
+              r.name = cols.find(c => c.length > 3) || '';
+          }
+        }
+
+        // Final filter: only skip purely empty rows
+        if (!r.name && !r.article && !r.total) {
           return null;
         }
 
-        r.name = name;
-        r.quantity = c_qty !== -1 ? cols[c_qty] || '1' : '1';
-        r.unit = c_unit !== -1 ? cols[c_unit] || 'шт' : 'шт';
-        r.price = c_price !== -1 ? cols[c_price] || '0' : '0';
-        r.total = c_total !== -1 ? cols[c_total] || '0' : '0';
         return r;
-      }).filter(Boolean);
+      }).filter((r): r is InvoiceRow => r !== null);
     }
   };
 
