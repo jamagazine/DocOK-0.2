@@ -33,7 +33,8 @@ def slugify_translit(text: str) -> str:
 from parser_utils import (
     normalize_for_match, calculate_uncertainty, 
     transliterate, secure_filename, sanitize_dataframe, 
-    convert_df_to_items, extract_text_from_pdf, extract_specification_summary
+    convert_df_to_items, extract_text_from_pdf, extract_specification_summary,
+    excel_to_grid_markdown
 )
 from ai_service import (
     ocr_yandex, gpt_yandex, get_token_count, 
@@ -432,7 +433,15 @@ async def process_invoice(
                 df = sanitize_dataframe(df.fillna(""))
                 unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
                 if unnamed_empty: df = df.drop(columns=unnamed_empty)
-                extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+                
+                # Try to use pre-generated GRID MD for invoices if available
+                grid_p = get_file_path(projectId, disk_name, "_invoice.md")
+                if doc_type == "invoice" and os.path.exists(grid_p):
+                    with open(grid_p, "r", encoding="utf-8") as f:
+                        extracted_text = f.read()
+                else:
+                    extracted_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+                
                 p_method = "excel_ai"
             else:
                 p_method = "ocr_table"
@@ -505,26 +514,30 @@ async def process_invoice(
             # Update manifest
             manifest = _load_manifest(projectId)
             if disk_name in manifest:
-                try:
-                    sum_res = extract_specification_summary(df, all_items, temp_path)
-                    summary_md = sum_res["summary_md"]
-                    debug_grid = sum_res["debug_grid"]
-                    
-                    manifest[disk_name]["summary_md"] = summary_md
-                    
-                    # Save physical MD for summary
-                    if summary_md:
-                        summary_p = get_file_path(projectId, disk_name, "_summary.md")
-                        with open(summary_p, "w", encoding="utf-8") as fs:
-                            fs.write(summary_md)
-                            
-                    # Save DEBUG grid
-                    if debug_grid:
-                        debug_p = get_file_path(projectId, disk_name, "_debug.md")
-                        with open(debug_p, "w", encoding="utf-8") as fs:
-                            fs.write(f"### DEBUG GRID FOR {disk_name}\n\n" + summary_md + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
-                except Exception as e_sum:
-                    print(f"Summary extraction error: {e_sum}")
+                # --- SPECS ONLY: Extract Summary (AI-Enhanced) ---
+                if doc_type == "spec":
+                    try:
+                        sum_res = extract_specification_summary(df, all_items, temp_path)
+                        summary_md = sum_res["summary_md"]
+                        debug_grid = sum_res["debug_grid"]
+                        
+                        manifest[disk_name]["summary_md"] = summary_md
+                        
+                        # Save physical MD for summary
+                        if summary_md:
+                            summary_p = get_file_path(projectId, disk_name, "_summary.md")
+                            with open(summary_p, "w", encoding="utf-8") as fs:
+                                fs.write(summary_md)
+                                
+                        # Save DEBUG grid
+                        if debug_grid:
+                            debug_p = get_file_path(projectId, disk_name, "_debug.md")
+                            with open(debug_p, "w", encoding="utf-8") as fs:
+                                fs.write(f"### DEBUG GRID FOR {disk_name}\n\n" + summary_md + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
+                    except Exception as e_sum:
+                        print(f"Summary extraction error: {e_sum}")
+                        manifest[disk_name]["summary_md"] = ""
+                else:
                     manifest[disk_name]["summary_md"] = ""
                 
                 manifest[disk_name]["cost"] = cost
@@ -555,7 +568,7 @@ async def match_items_endpoint(request: Request):
     return {"invoice_items": invoice_items}
 
 @app.post("/api/storage/upload")
-async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...)):
+async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...), stage: str = Form("spec")):
     original_filename = file.filename
     transliterated_name = transliterate(original_filename)
     secured_name = secure_filename(transliterated_name)
@@ -581,33 +594,46 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             df = sanitize_dataframe(df)
             unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
             if unnamed_empty: df = df.drop(columns=unnamed_empty)
-            md_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+            
+            if stage == "invoice":
+                # TK v2.0: GRID METHOD for Invoices
+                md_text = excel_to_grid_markdown(dest_path)
+                # Save physical grid MD
+                grid_p = get_file_path(projectId, secured_name, "_invoice.md")
+                with open(grid_p, "w", encoding="utf-8") as f:
+                    f.write(md_text)
+            else:
+                md_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
+
             ext_text = md_text
             estimated_tokens = int((len(ext_text) / 4) * 2.0)
             estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
 
-            # --- AUTO-EXTRACT SUMMARY (Pre-AI) ---
-            try:
-                # We can do a quick pass to get basic stats
-                pre_items = convert_df_to_items(df)
-                sum_res = extract_specification_summary(df, pre_items, dest_path)
-                summary_md = sum_res["summary_md"]
-                debug_grid = sum_res["debug_grid"]
-                summary_fields = sum_res["fields"]
-                
-                if summary_md:
-                    summary_p = get_file_path(projectId, secured_name, "_summary.md")
-                    with open(summary_p, "w", encoding="utf-8") as f:
-                        f.write(summary_md)
-                
-                # Save DEBUG grid
-                if debug_grid:
-                    debug_p = get_file_path(projectId, secured_name, "_debug.md")
-                    with open(debug_p, "w", encoding="utf-8") as f:
-                        f.write(f"### DEBUG GRID FOR {secured_name}\n\n" + summary_md + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
-            except Exception as e_sum:
-                print(f"Pre-summary error: {e_sum}")
-                summary_md = ""
+            # --- AUTO-EXTRACT SUMMARY (Pre-AI) - ONLY FOR SPECS ---
+            if stage == "spec":
+                try:
+                    # We can do a quick pass to get basic stats
+                    pre_items = convert_df_to_items(df)
+                    sum_res = extract_specification_summary(df, pre_items, dest_path)
+                    summary_md = sum_res["summary_md"]
+                    debug_grid = sum_res["debug_grid"]
+                    summary_fields = sum_res["fields"]
+                    
+                    if summary_md:
+                        summary_p = get_file_path(projectId, secured_name, "_summary.md")
+                        with open(summary_p, "w", encoding="utf-8") as f:
+                            f.write(summary_md)
+                    
+                    # Save DEBUG grid
+                    if debug_grid:
+                        debug_p = get_file_path(projectId, secured_name, "_debug.md")
+                        with open(debug_p, "w", encoding="utf-8") as f:
+                            f.write(f"### DEBUG GRID FOR {secured_name}\n\n" + summary_md + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
+                except Exception as e_sum:
+                    print(f"Pre-summary error: {e_sum}")
+                    summary_md = ""
+                    summary_fields = None
+            else:
                 summary_fields = None
         except Exception as e:
             print(f"Spreadsheet processing error: {e}")

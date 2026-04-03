@@ -1104,10 +1104,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
         };
       }).filter(Boolean);
     } else {
+      // SMART MAPPING for Invoices (Stage 11: Dynamic Column Detection)
+      const headerLine = lines[0];
+      const headers = headerLine.split('|').map(c => c.trim().toLowerCase()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+      
+      const getCol = (marks: string[], defIdx: number) => {
+        const idx = headers.findIndex(h => marks.some(m => h.includes(m)));
+        return idx !== -1 ? idx : (defIdx < headers.length ? defIdx : -1);
+      };
+
+      const c_art = getCol(['артикул', 'код'], 0);
+      const c_name = getCol(['наименован', 'товар', 'услуг'], 1);
+      const c_qty = getCol(['кол', 'к-во'], 2);
+      const c_unit = getCol(['ед', 'изм'], 3);
+      const c_price = getCol(['цена', 'тариф'], 4);
+      const c_total = getCol(['сумма', 'всего', 'итого'], 5);
+
       return dataLines.map(line => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
         
-        // Фильтр технической строки 1 | 2 | 3...
         if (cols[0] === '1' && cols[1] === '2' && (cols[2] === '3' || cols[3] === '4')) {
           return null;
         }
@@ -1115,20 +1130,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const r = emptyInvoiceRow();
         r.fileId = fileName;
         r.documentName = fileName;
-        // Basic mapping for Invoice from MD: 
-        r.article = cols[0] || '';
-        const name = cols[1] || '';
         
-        // ТЗ №2: Очистка технических «призраков»
+        r.article = c_art !== -1 ? cols[c_art] || '' : '';
+        const name = c_name !== -1 ? cols[c_name] || '' : '';
+        
         if (!name.trim() || name.includes('---') || name.includes('===')) {
           return null;
         }
 
         r.name = name;
-        r.quantity = cols[2] || '1';
-        r.unit = cols[3] || 'шт';
-        r.price = cols[4] || '0';
-        r.total = cols[5] || '0';
+        r.quantity = c_qty !== -1 ? cols[c_qty] || '1' : '1';
+        r.unit = c_unit !== -1 ? cols[c_unit] || 'шт' : 'шт';
+        r.price = c_price !== -1 ? cols[c_price] || '0' : '0';
+        r.total = c_total !== -1 ? cols[c_total] || '0' : '0';
         return r;
       }).filter(Boolean);
     }
@@ -1196,6 +1210,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (activeProjectId) {
           uploadData.append('projectId', activeProjectId);
         }
+        uploadData.append('stage', stage);
         const res = await fetch('http://localhost:8000/api/storage/upload', {
           method: 'POST',
           body: uploadData,

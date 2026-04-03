@@ -578,3 +578,135 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
         }
     }
 
+
+
+def excel_to_grid_markdown(file_path: str) -> str:
+    """
+    Converts an Excel invoice to Markdown using the Grid Method.
+    Identifies the table, handles merged cells correctly, and preserves structure.
+    """
+    filename = file_path.lower()
+    rows_data = []
+    
+    # 1. Load Workbook
+    if filename.endswith(".xls"):
+        import xlrd
+        try:
+            wb = xlrd.open_workbook(file_path, formatting_info=True)
+            # Find sheet with "счет" or "invoice" keywords, fallback to index 0
+            sheet = None
+            for sn in wb.sheet_names():
+                if any(k in sn.lower() for k in ["счет", "invoice", "инвойс", "актуальн"]):
+                    sheet = wb.sheet_by_name(sn)
+                    break
+            if not sheet: sheet = wb.sheet_by_index(0)
+            
+            merged = sheet.merged_cells # list of (rlo, rhi, clo, chi)
+            
+            def is_merged_child(r, c):
+                for rlo, rhi, clo, chi in merged:
+                    if rlo <= r < rhi and clo <= c < chi:
+                        if r == rlo and c == clo: return False # Start cell
+                        return True # Child cell
+                return False
+
+            for r in range(sheet.nrows):
+                row = []
+                for c in range(sheet.ncols):
+                    if is_merged_child(r, c):
+                        row.append("")
+                    else:
+                        val = sheet.cell_value(r, c)
+                        row.append(str(val).strip() if val is not None else "")
+                rows_data.append(row)
+        except Exception as e:
+            return f"Error reading .xls: {e}"
+            
+    else: # .xlsx
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(file_path, data_only=True)
+            sheet = None
+            for sn in wb.sheetnames:
+                if any(k in sn.lower() for k in ["счет", "invoice", "инвойс", "актуальн"]):
+                    sheet = wb[sn]
+                    break
+            if not sheet: sheet = wb.active
+            
+            # Pre-calculate merged cells map for speed
+            merged_map = {} # (r, c) -> is_child
+            for m_range in sheet.merged_cells.ranges:
+                for r in range(m_range.min_row, m_range.max_row + 1):
+                    for c in range(m_range.min_col, m_range.max_col + 1):
+                        if r == m_range.min_row and c == m_range.min_col:
+                            merged_map[(r, c)] = False
+                        else:
+                            merged_map[(r, c)] = True
+
+            for r in range(1, sheet.max_row + 1):
+                row = []
+                for c in range(1, sheet.max_column + 1):
+                    if merged_map.get((r, c), False):
+                        row.append("")
+                    else:
+                        val = sheet.cell(row=r, column=c).value
+                        if val is None: val = ""
+                        row.append(str(val).strip())
+                rows_data.append(row)
+        except Exception as e:
+            return f"Error reading .xlsx: {e}"
+
+    if not rows_data:
+        return ""
+
+    # 2. Identify Table Boundaries
+    keywords = ["наименование", "№", "количество", "сумма", "цена", "ед.изм", "артикул"]
+    header_idx = -1
+    max_matches = 0
+    
+    for idx, row in enumerate(rows_data):
+        matches = sum(1 for cell in row if any(k in str(cell).lower() for k in keywords))
+        if matches > max_matches:
+            max_matches = matches
+            header_idx = idx
+            if matches >= 3: break # Found common set of headers
+
+    if header_idx == -1: header_idx = 0 # Fallback
+
+    # End boundary: search for "итого", "всего" or empty rows
+    end_idx = len(rows_data)
+    for idx in range(header_idx + 1, len(rows_data)):
+        row_str = " ".join(str(c).lower() for c in rows_data[idx])
+        if any(k in row_str for k in ["итого", "всего", "без ндс", "в т.ч. ндс"]):
+            # Include the summary row itself as it often has totals
+            end_idx = idx + 1
+            break
+
+    # 3. Format as Markdown
+    table_rows = rows_data[header_idx:end_idx]
+    if not table_rows: return ""
+    
+    # Determine actual width (max columns with any data)
+    width = 0
+    for r in table_rows:
+        for c_idx, val in enumerate(r):
+            if val.strip() and c_idx + 1 > width:
+                width = c_idx + 1
+
+    md_lines = []
+    
+    # Header
+    header_row = [str(c).replace("|", "\\|").replace("\n", " ") for c in table_rows[0][:width]]
+    md_lines.append("| " + " | ".join(header_row) + " |")
+    md_lines.append("| " + " | ".join(["---"] * width) + " |")
+    
+    # Content
+    for r in table_rows[1:]:
+        # Filter purely empty rows if they are after some data but before end
+        if not any(c.strip() for c in r[:width]): continue
+        
+        row_str = [str(c).replace("|", "\\|").replace("\n", " ") for c in r[:width]]
+        md_lines.append("| " + " | ".join(row_str) + " |")
+        
+    return "\n".join(md_lines)
+
