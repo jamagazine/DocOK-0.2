@@ -50,7 +50,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                             w_text = word.get('text', '')
                             text_parts.append(w_text)
                             
-                            # Extract bounding box (normalized 0-1 usually, or pixels)
+                            # Extract bounding box
                             poly = word.get('boundingBox', {}).get('vertices', [])
                             if poly and len(poly) >= 4:
                                 x = min(int(v.get('x', 0)) for v in poly)
@@ -65,6 +65,17 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
 
     return "".join(text_parts), has_low_confidence, all_words
 
+def load_prompt(name: str) -> str:
+    """Standalone prompt loader to avoid circular imports with main.py"""
+    path = os.path.join(os.path.dirname(__file__), "prompts", f"{name}_prompt.md")
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except:
+        return ""
+
 async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     headers = {
@@ -75,13 +86,15 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
 
     user_text = f"Текст документа:\n{text}"
     
-    # We assume last_prompt.txt debug is handled or not needed here
-    # If needed, it should be done in main.py or passed as a flag
-
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt-pro/5.1"
+    # Official Yandex GPT model URIs (latest is standard)
+    if model_type == "pro":
+        model_uri = f"gpt://{folder_id}/yandexgpt/latest"
+    else:
+        model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest"
+    
     payload = {
         "modelUri": model_uri,
-        "completionOptions": {"stream": False, "temperature": 0.1, "maxTokens": "8000"},
+        "completionOptions": {"stream": False, "temperature": 0.0, "maxTokens": 2000},
         "messages": [
             {"role": "system", "text": system_prompt},
             {"role": "user", "text": user_text}
@@ -104,7 +117,7 @@ async def get_token_count(text: str, model_type: str, api_key: str, folder_id: s
         "x-folder-id": folder_id,
         "Content-Type": "application/json"
     }
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt/latest"
+    model_uri = f"gpt://{folder_id}/yandexgpt/latest" if model_type == "pro" else f"gpt://{folder_id}/yandexgpt-lite/latest"
     payload = {"modelUri": model_uri, "text": text}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -125,20 +138,74 @@ def parse_gpt_json(text: str):
     except:
         return None
 
-async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, model_type: str = "pro"):
+def normalize_invoice_table(md_text: str) -> str:
     """
-    Extracts only the invoice header (Metadata) using a specialized prompt.
-    Takes first ~100 lines of MD text but strips table formatting for better extraction.
+    Cleans up MD table noise:
+    1. Finds actual table start.
+    2. Merges rows that have text but no prices (orphans).
+    3. Cleans up pipe characters.
     """
-    from main import load_prompt
+    if not md_text: return ""
+    lines = md_text.split('\n')
+    output_lines = []
+    
+    # Find headers (look for piped header with --- separator)
+    start_idx = -1
+    for i, line in enumerate(lines):
+        if "|" in line and i + 1 < len(lines) and "| ---" in lines[i+1]:
+            start_idx = i
+            break
+    
+    if start_idx == -1: return md_text # No table found, return as is
+            
+    header_part = lines[start_idx:start_idx+2]
+    data_rows = lines[start_idx+2:]
+    output_lines.extend(header_part)
+    
+    current_row = None
+    
+    for line in data_rows:
+        line = line.strip()
+        if not line.startswith("|") or not line.endswith("|"): continue
+        
+        parts = [p.strip() for p in line.split("|")]
+        # Expected Grid: | Group | No | Name | Qty | Unit | Price | Disc | Sum |
+        # Parts will be ['', Group, No, Name, Qty, Unit, Price, Disc, Sum, ''] -> len 10
+        if len(parts) < 9: continue
+        
+        # Shift to data indices (1 to 8)
+        name_val = parts[3] if len(parts) > 3 else ""
+        price_val = parts[6] if len(parts) > 6 else ""
+        sum_val = parts[8] if len(parts) > 8 else ""
+        qty_val = parts[4] if len(parts) > 4 else ""
+        
+        # Check if row has numeric anchors (Price, Sum or Qty)
+        has_data = any(c.isdigit() for c in price_val) or \
+                   any(c.isdigit() for c in sum_val) or \
+                   any(c.isdigit() for c in qty_val)
+        
+        if has_data:
+            if current_row: 
+                output_lines.append("| " + " | ".join(current_row) + " |")
+            current_row = parts[1:9]
+        else:
+            # Orphan row (description wrap)
+            if current_row and name_val:
+                current_row[2] += " " + name_val
+    
+    if current_row:
+        output_lines.append("| " + " | ".join(current_row) + " |")
+        
+    return "\n".join(output_lines)
+
+async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "pro"):
+    """Extracts only the metadata (inn, date, number) from raw header text."""
     lines = text.split('\n')
     header_slice = "\n".join(lines[:100])
     
-    # Strip MD table markers to get clean text for meta extraction
+    # Strip MD table markers for meta extraction
     clean_text = header_slice.replace("|", " ").replace("---", " ")
     clean_text = re.sub(r' +', ' ', clean_text)
-    
-    system_prompt = load_prompt("invoice_header")
     
     try:
         raw_res, tokens = await gpt_yandex(clean_text, api_key, folder_id, system_prompt, model_type)
@@ -147,17 +214,22 @@ async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, mode
         print(f"Metadata extraction error: {e}")
         return None, 0
 
-async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite", context: dict = None):
+async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "pro", context: dict = None):
+    """Processes cleaned-up MD tables with Yandex GPT."""
+    
+    # 1. Normalize the MD table before processing
+    full_text = normalize_invoice_table(full_text)
+    
     lines = full_text.split('\n')
-    # If context (supplier) is provided, we can skip hardcoded header_block or use it alongside
     header_block = "\n".join(lines[:2]) if len(lines) >= 2 else (lines[0] if lines else "")
     data_lines = lines[2:] if len(lines) >= 2 else []
     
-    # Inject context into system prompt if needed
+    # 2. Inject context (Supplier Name) into prompt
     if context and "{supplier_name}" in system_prompt:
         system_prompt = system_prompt.replace("{supplier_name}", context.get("supplier_name", "Не указан"))
 
-    CHUNK_SIZE = 400
+    # 3. Use unified large chunk for invoices (avoid fragmentation)
+    CHUNK_SIZE = 9999 
     all_items = []
     all_fixes = []
     total_tokens = 0
@@ -169,8 +241,6 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     
     async def process_single_chunk(i, chunk):
         async with sem:
-            # For data rows, we don't necessarily need the full original header, 
-            # but we need the table header (line 0, 1 of MD table)
             chunk_text = header_block + "\n" + "\n".join(chunk)
             try:
                 raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, system_prompt, model_type)
@@ -200,11 +270,8 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
             elif isinstance(parsed, dict):
                 fixes_to_add = parsed.get('fixes', [])
                 items_to_add = parsed.get('items', [])
-                
-                # Check for header/footer/document
                 if not main_doc:
                     main_doc = parsed.get('header', parsed.get('document', {}))
-                
                 if not footer_data:
                     footer_data = parsed.get('footer', {})
             
