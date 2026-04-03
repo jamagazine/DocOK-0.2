@@ -739,7 +739,7 @@ async def list_projects():
             # 1. Dynamic Files Count Sync (Using direct local path)
             f_dir = os.path.join(p_path, "files")
             if os.path.exists(f_dir):
-                state["filesCount"] = len([f for f in os.listdir(f_dir) if os.path.isfile(os.path.join(f_dir, f))])
+                state["filesCount"] = len([f for f in os.listdir(f_dir) if os.path.isfile(os.path.join(f_dir, f)) and not f.lower().endswith(('.json', '.md'))])
             else:
                 state["filesCount"] = 0
             

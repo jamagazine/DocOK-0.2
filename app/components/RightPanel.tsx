@@ -28,7 +28,8 @@ import {
   Check,
   Folder,
   ListTree,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -186,7 +187,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     handleFile, viewMode, setViewMode, pdfGeometry,
     estimateRows, estimateTotal, specRows, invoiceRows,
     resetData, handleSort, groupRows, filesMap, completeStage,
-    selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
+    completedStages, uncompleteStage, selectedIds, setSelectedIds, selectAllRows, deleteSelectedRows,
     isOnlySelectedView, setIsOnlySelectedView, setIsResetConfirmOpen,
     matchInvoiceToSpec, getCurrentRows, projectName,
     activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
@@ -280,7 +281,6 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     switch (stage) {
       case 'spec': return 'Позиций спецификации';
       case 'invoice': return 'Строк в счетах';
-      case 'request': return 'Позиций в заявке';
       case 'estimate': return 'Позиций сметы';
       default: return 'Позиций';
     }
@@ -342,7 +342,10 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id);
+              if (!expanded) onToggle();
+            }}
             className={cn(
               "w-9 h-9 rounded-lg transition-colors flex items-center justify-center",
               activeTab === tab.id ? "bg-indigo-100 text-indigo-700 font-bold" : "hover:bg-slate-100 text-slate-600",
@@ -632,16 +635,6 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                                </div>
                             </div>
                           </div>
-                          
-                          <div className="bg-indigo-50/50 p-4 rounded-xl flex items-start gap-3 border border-indigo-100/50">
-                             <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-sm border border-indigo-50 shrink-0">
-                                <Sparkles className="w-4 h-4 text-indigo-500" />
-                             </div>
-                             <p className="text-[10px] text-slate-500 leading-normal font-medium">
-                               Данные извлечены алгоритмом <b>DocOK Scan v0.2</b>. 
-                               Вертикальная рамка штампа определена автоматически.
-                             </p>
-                          </div>
                         </div>
                       );
                     }
@@ -695,11 +688,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   </div>
                 )}
               </>
-            ) : (
-              <div className="flex flex-col gap-4 items-center group cursor-help" title={`Итого: ${getIntermediateTotal()} ₽`}>
-                <Info className="w-6 h-6 text-slate-400 group-hover:text-indigo-600 transition-colors" />
-              </div>
-            )}
+            ) : null}
           </div>
         )}
 
@@ -732,33 +721,77 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
       </div>
 
       {/* Footer - Basement (Next Button) */}
-      <div className="border-t border-slate-200 px-4 py-2 flex justify-center items-center h-16 bg-slate-50">
+      <div className="border-t border-slate-200 px-4 py-2 flex flex-col justify-center items-center h-auto min-h-[72px] bg-slate-50 gap-2 overflow-hidden shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+        {completedStages.includes(currentStage) && (
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100 mb-1 animate-in fade-in slide-in-from-bottom-1">
+            <Check className="w-3 h-3" />
+            <span>Этап подтвержден</span>
+          </div>
+        )}
         {hasNextStage ? (
-          <button
-            onClick={() => {
-              completeStage(currentStage);
-              onNextStage();
-            }}
-            disabled={!canProceed}
-            className={cn(
-              "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12",
-              expanded ? "w-full px-6" : "w-12 p-0",
-              canProceed
-                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-                : "bg-slate-800 text-slate-500 cursor-not-allowed opacity-50"
+          <div className={cn("flex items-center gap-2", expanded ? "w-full" : "flex-col")}>
+            {!completedStages.includes(currentStage) ? (
+              <button
+                onClick={() => {
+                  completeStage(currentStage);
+                  onNextStage();
+                }}
+                disabled={!canProceed}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12 shadow-sm border border-transparent",
+                  expanded ? "flex-1 px-4" : "w-12 p-0",
+                  canProceed
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "bg-slate-200 text-slate-400 cursor-not-allowed opacity-50"
+                )}
+                title={canProceed ? "Подтвердить и продолжить" : "Загрузите данные для продолжения"}
+              >
+                <Check className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
+                {expanded && <span className="uppercase tracking-widest text-[#9fffcb] text-[10px] font-black">Применить</span>}
+              </button>
+            ) : (
+              <button
+                onClick={() => uncompleteStage(currentStage)}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12 shadow-sm border border-slate-200",
+                  expanded ? "flex-1 px-4" : "w-12 p-0",
+                  "bg-white hover:bg-slate-50 text-slate-600"
+                )}
+                title="Отменить подтверждение"
+              >
+                <X className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
+                {expanded && <span className="uppercase tracking-widest text-slate-400 text-[10px] font-black">Отменить</span>}
+              </button>
             )}
-            title={canProceed ? "Перейти к следующему этапу" : "Загрузите данные для продолжения"}
-          >
-            {expanded && <span className="uppercase tracking-widest text-[#9fffcb] text-[10px] font-black">Продолжить</span>}
-            <ArrowRight className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
-          </button>
+          </div>
         ) : (
-          <div className={cn(
-            "flex items-center justify-center gap-2 rounded-xl font-extrabold bg-indigo-600 text-white shadow-sm h-12",
-            expanded ? "w-full px-6" : "w-12 p-0"
-          )}>
-            {expanded && <span className="uppercase tracking-widest text-[10px] font-black">Завершить</span>}
-            <CheckCircle2 className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
+          <div className={cn("flex items-center gap-2", expanded ? "w-full" : "flex-col")}>
+             {!completedStages.includes('estimate') ? (
+              <button
+                onClick={() => completeStage('estimate')}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-xl font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm h-12 transition-all",
+                  expanded ? "w-full px-6" : "w-12 p-0"
+                )}
+                title="Одобрить смету и завершить проект"
+              >
+                <CheckCircle2 className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
+                {expanded && <span className="uppercase tracking-widest text-[10px] font-black">Одобрить</span>}
+              </button>
+             ) : (
+              <button
+                onClick={() => uncompleteStage('estimate')}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12 shadow-sm border border-slate-200",
+                  expanded ? "w-full px-4" : "w-12 p-0",
+                  "bg-white hover:bg-slate-50 text-slate-600"
+                )}
+                title="Отменить завершение проекта"
+              >
+                <RotateCcw className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
+                {expanded && <span className="uppercase tracking-widest text-slate-400 text-[10px] font-black">Сбросить финиш</span>}
+              </button>
+             )}
           </div>
         )}
       </div>

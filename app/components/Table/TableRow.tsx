@@ -31,7 +31,7 @@ export interface Column {
 interface TableRowProps {
   row: any;
   columns: Column[];
-  stage: 'spec' | 'request' | 'invoice' | 'estimate';
+  stage: 'spec' | 'invoice' | 'estimate';
   actualIndex: number;
   isSelected: boolean;
   selectedIds: string[];
@@ -94,9 +94,8 @@ export const TableRow = React.memo(({
     "flex items-center text-sm border-b border-slate-100 transition-colors group cursor-pointer",
     stage === 'estimate' ? "min-h-[56px]" : "min-h-[48px]",
     isSelected && "bg-indigo-50/50",
-    row.math_error && stage === 'request' && "bg-red-50/70 hover:bg-red-100/70",
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
-    (stage === 'request' || stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
+    (stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes based on Level Hierachy
     // Spec specific classes based on Level Hierachy (Inversion logic: high level = dark BG)
     stage === 'spec' && (row.level || 0) >= 3 && "bg-indigo-950 text-slate-50 font-black border-l-4 border-l-amber-500 border-b border-indigo-900 shadow-md transition-all hover:bg-indigo-900",
@@ -392,7 +391,7 @@ export const TableRow = React.memo(({
                   value={String(row[col.key] || '')}
                   colKey={col.key}
                   rowId={row.id}
-                  isReadOnly={selectedIds.length > 0 || (stage === 'spec' && isHeader) || (stage === 'request' || stage === 'invoice') || isActuallyMerged}
+                  isReadOnly={selectedIds.length > 0 || (stage === 'spec' && isHeader) || stage === 'invoice' || isActuallyMerged}
 
                   isHeader={stage === 'spec' && isHeader}
                   align={col.align}

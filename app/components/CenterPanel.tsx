@@ -133,7 +133,6 @@ export function CenterPanel({ currentStage }: CenterPanelProps) {
         <div className="flex-1 overflow-auto relative bg-white">
           <div className="min-w-max h-full">
             {currentStage === 'spec' && <SpecTable />}
-            {currentStage === 'request' && <RequestTable />}
             {currentStage === 'invoice' && <InvoiceTable />}
             {currentStage === 'estimate' && <EstimateTable />}
           </div>
@@ -519,7 +518,7 @@ function SpecTable() {
           <EmptyStateBlock handleFile={handleFile} currentStage="spec" />
         </div>
       )}
-      {specRows.length > 0 && (
+      {/* {specRows.length > 0 && (
         <button
           onClick={() => setSpecRows([...specRows, emptySpecRow()])}
           className="self-start flex items-center gap-2 px-4 py-2 mt-4 ml-4 mb-4 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 shadow-sm"
@@ -527,68 +526,12 @@ function SpecTable() {
           <Plus className="w-4 h-4" />
           Добавить строку спецификации
         </button>
-      )}
+      )} */}
     </div>
   );
 }
 
-function RequestTable() {
-  const { requestRows, handleFile, selectedIds, toggleRowSelection, displayRows, searchQuery, setSearchQuery } = useData();
-  const { handleCellUpdate } = useTableEditor('request');
-  const { handleKeyDown } = useTableNavigation();
 
-  const columns: Column[] = [
-    { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
-    { key: 'name', label: 'Наименование' },
-    { key: 'brand', label: 'Марка/Тип', width: '120px' },
-    { key: 'code', label: 'Код', width: '120px' },
-    { key: 'supplier', label: 'Поставщик', width: '150px' },
-    { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
-    { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' }
-  ];
-
-  const isActiveSearch = searchQuery.trim().length > 0;
-
-  if (isActiveSearch && displayRows.length === 0) {
-    return (
-      <NoResultsState 
-        onReset={() => setSearchQuery('')} 
-        currentQuery={searchQuery} 
-        stage="request"
-      />
-    );
-  }
-
-  return (
-    <div className="flex flex-col">
-      {requestRows.length > 0 ? (
-        <>
-          <TableHeader columns={columns} pageIds={displayRows.map(r => r.id)} />
-          <div className="divide-y divide-slate-100">
-            {displayRows.map((row, i) => (
-              <TableRow
-                key={row.id}
-                row={row}
-                columns={columns}
-                stage="request"
-                actualIndex={i}
-                isSelected={selectedIds.includes(row.id)}
-                selectedIds={selectedIds}
-                toggleRowSelection={toggleRowSelection}
-                onUpdate={handleCellUpdate}
-                onKeyDown={handleKeyDown}
-              />
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="p-4">
-          <EmptyStateBlock handleFile={handleFile} currentStage="request" />
-        </div>
-      )}
-    </div>
-  );
-}
 
 
 function InvoiceTable() {
@@ -649,7 +592,7 @@ function InvoiceTable() {
         </div>
       )}
 
-      {invoiceRows.length > 0 && (
+      {/* {invoiceRows.length > 0 && (
         <button
           onClick={() => setInvoiceRows([...invoiceRows, emptyInvoiceRow()])}
           className="self-start flex items-center gap-2 px-4 py-2 mt-4 ml-4 mb-4 text-sm font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors border border-emerald-200 shadow-sm"
@@ -657,7 +600,7 @@ function InvoiceTable() {
           <Plus className="w-4 h-4" />
           Добавить позицию из счета
         </button>
-      )}
+      )} */}
     </div>
   );
 }

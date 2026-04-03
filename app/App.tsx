@@ -16,7 +16,7 @@ function AppContent() {
   const [rightExpanded, setRightExpanded] = useState(true);
   const { currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging, viewContext, setViewContext } = useData();
 
-  const stageOrder: Stage[] = ['spec', 'request', 'invoice', 'estimate'];
+  const stageOrder: Stage[] = ['spec', 'invoice', 'estimate'];
   const currentStageIndex = stageOrder.indexOf(currentStage);
   const hasNextStage = currentStageIndex < stageOrder.length - 1;
   const canProceed = currentStage !== 'estimate';

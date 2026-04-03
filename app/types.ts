@@ -1,4 +1,4 @@
-export type Stage = 'spec' | 'request' | 'invoice' | 'estimate';
+export type Stage = 'spec' | 'invoice' | 'estimate';
 
 export type StageStatus = 'done' | 'partial' | 'not_started';
 

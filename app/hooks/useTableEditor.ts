@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useData } from '../context/DataContext';
 
-export function useTableEditor(stage: 'spec' | 'request' | 'invoice' | 'estimate') {
+export function useTableEditor(stage: 'spec' | 'invoice' | 'estimate') {
   const { handleRowChange } = useData();
 
   // Wrapper for handleRowChange to encapsulate table cell edits

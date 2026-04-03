@@ -36,9 +36,9 @@ export interface Project {
   version?: string;
   // Dynamic rows persistence
   specRows?: SpecRow[];
-  requestRows?: SpecRow[];
   invoiceRows?: InvoiceRow[];
   estimateRows?: EstimateRow[];
+  completedStages?: string[];
 }
 
 export function genId(): string {
@@ -298,8 +298,6 @@ interface DataContextType {
   setInvoiceRows: React.Dispatch<React.SetStateAction<InvoiceRow[]>>;
   estimateRows: EstimateRow[];
   setEstimateRows: React.Dispatch<React.SetStateAction<EstimateRow[]>>;
-  requestRows: SpecRow[];
-  setRequestRows: React.Dispatch<React.SetStateAction<SpecRow[]>>;
   configKeys: Record<string, string>;
   setConfigKeys: (keys: Record<string, string>) => void;
   yandexConfig: YandexConfig;
@@ -332,6 +330,7 @@ interface DataContextType {
   handleSort: (key: string) => void;
   completedStages: string[];
   completeStage: (stageId: string) => void;
+  uncompleteStage: (stageId: string) => void;
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;
   selectedIds: string[];
@@ -449,10 +448,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const urlStage = params.get('stage') as Stage;
-      if (['spec', 'request', 'invoice', 'estimate'].includes(urlStage)) return urlStage;
+      if (['spec', 'invoice', 'estimate'].includes(urlStage)) return urlStage;
       
       const saved = localStorage.getItem('docok_currentStage');
-      if (saved && ['spec', 'request', 'invoice', 'estimate'].includes(saved)) return saved as Stage;
+      if (saved && ['spec', 'invoice', 'estimate'].includes(saved)) return saved as Stage;
     }
     return 'spec';
   });
@@ -730,9 +729,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [specRows, setSpecRows] = useState<SpecRow[]>([]);
-  const [requestRows, setRequestRows] = useState<SpecRow[]>([]);
   const [invoiceRows, setInvoiceRows] = useState<InvoiceRow[]>([]);
   const [estimateRows, setEstimateRows] = useState<EstimateRow[]>([]);
+
+  const [completedStages, setCompletedStages] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('docok_completed_stages');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
+
+  useEffect(() => { 
+    localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); 
+  }, [completedStages]);
 
   // Store previous project ID to avoid clearing rows on every list update
   const prevProjectIdRef = useRef<string | null>(null);
@@ -752,7 +761,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // ONLY clear rows if we actually switched projects
     if (projectChanged) {
       setSpecRows([]);
-      setRequestRows([]);
       setInvoiceRows([]);
       setEstimateRows([]);
       setSelectedIds([]);
@@ -770,14 +778,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const savedSpec = loadLocal('specRows');
     if (savedSpec) setSpecRows(savedSpec);
 
-    const savedReq = loadLocal('requestRows');
-    if (savedReq) setRequestRows(savedReq);
-
     const savedInv = loadLocal('invoiceRows');
     if (savedInv) setInvoiceRows(savedInv);
 
     const savedEst = loadLocal('estimateRows');
     if (savedEst) setEstimateRows(savedEst);
+
+    const savedComp = loadLocal('completedStages');
+    if (savedComp) setCompletedStages(savedComp);
+    else if (activeProject?.completedStages) setCompletedStages(activeProject.completedStages);
+    else setCompletedStages([]);
 
     // End initialization block after state updates are scheduled
     const timer = setTimeout(() => { isInitializing.current = false; }, 200);
@@ -798,7 +808,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     
     // Local persistence
     localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
-    localStorage.setItem(`docok_p_${activeProjectId}_requestRows`, JSON.stringify(requestRows));
     localStorage.setItem(`docok_p_${activeProjectId}_invoiceRows`, JSON.stringify(invoiceRows));
     localStorage.setItem(`docok_p_${activeProjectId}_estimateRows`, JSON.stringify(estimateRows));
 
@@ -810,9 +819,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...project,
       lastModified: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + ' | ' + new Date().toLocaleDateString('ru-RU'),
       specRows,
-      requestRows,
       invoiceRows,
-      estimateRows
+      estimateRows,
+      completedStages,
+      progress: Math.min(100, Math.round((completedStages.length / 3) * 100))
     };
     
     try {
@@ -827,7 +837,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn('Quiet save failed:', e);
     }
-  }, [activeProjectId, specRows, requestRows, invoiceRows, estimateRows, projects]);
+  }, [activeProjectId, specRows, invoiceRows, estimateRows, projects]);
 
   // --- Hybrid Saving UX ---
   
@@ -840,7 +850,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [specRows, requestRows, invoiceRows, estimateRows, activeProjectId, viewContext, saveTableData]);
+  }, [specRows, invoiceRows, estimateRows, completedStages, activeProjectId, viewContext, saveTableData]);
 
   // 2. Mandatory Save on Exit (Workspace -> Dashboard)
   const lastViewContext = useRef(viewContext);
@@ -852,18 +862,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     lastViewContext.current = viewContext;
   }, [viewContext, saveTableData, fetchProjects]);
 
-  // Sync rows to local storage whenever they change
   useEffect(() => {
     if (activeProjectId && !isInitializing.current) {
       localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
     }
   }, [specRows, activeProjectId]);
-
-  useEffect(() => {
-    if (activeProjectId && !isInitializing.current) {
-      localStorage.setItem(`docok_p_${activeProjectId}_requestRows`, JSON.stringify(requestRows));
-    }
-  }, [requestRows, activeProjectId]);
 
   useEffect(() => {
     if (activeProjectId && !isInitializing.current) {
@@ -886,14 +889,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: null, direction: null });
 
-  const [completedStages, setCompletedStages] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('docok_completed_stages');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) { return []; }
-  });
 
-  useEffect(() => { localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); }, [completedStages]);
 
   const [configKeys, setConfigKeys] = useState<Record<string, string>>({});
   const [yandexConfig, setYandexConfig] = useState<YandexConfig>(() => {
@@ -962,13 +958,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const snap = newPast.pop()!;
       let currentRows: any[] = [];
       if (snap.stage === 'spec') { currentRows = specRows; setSpecRows(snap.rows); }
-      else if (snap.stage === 'request') { currentRows = requestRows; setRequestRows(snap.rows); }
       else if (snap.stage === 'invoice') { currentRows = invoiceRows; setInvoiceRows(snap.rows); }
       else if (snap.stage === 'estimate') { currentRows = estimateRows; setEstimateRows(snap.rows); }
       const newFuture = [{ stage: snap.stage, rows: [...currentRows] }, ...prev.future];
       return { past: newPast, future: newFuture };
     });
-  }, [specRows, requestRows, invoiceRows, estimateRows]);
+  }, [specRows, invoiceRows, estimateRows]);
 
   const redo = useCallback(() => {
     setHistory(prev => {
@@ -977,13 +972,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const snap = newFuture.shift()!;
       let currentRows: any[] = [];
       if (snap.stage === 'spec') { currentRows = specRows; setSpecRows(snap.rows); }
-      else if (snap.stage === 'request') { currentRows = requestRows; setRequestRows(snap.rows); }
       else if (snap.stage === 'invoice') { currentRows = invoiceRows; setInvoiceRows(snap.rows); }
       else if (snap.stage === 'estimate') { currentRows = estimateRows; setEstimateRows(snap.rows); }
       const newPast = [...prev.past, { stage: snap.stage, rows: [...currentRows] }];
       return { past: newPast, future: newFuture };
     });
-  }, [specRows, requestRows, invoiceRows, estimateRows]);
+  }, [specRows, invoiceRows, estimateRows]);
 
   const handleUnmerge = useCallback((parentId: string, childId: string) => {
     // Current logic: unmerging in non-destructive view mode could mean 'ignoring' this sub-item?
@@ -1148,7 +1142,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
       if (!res.ok) return;
       const files = await res.json();
-      const count = files.length;
+      const count = files.filter((f: any) => 
+        !f.name.toLowerCase().endsWith('.json') && 
+        !f.name.toLowerCase().endsWith('.md')
+      ).length;
       
       // 2. Find current project state
       const project = projects.find(p => p.id === activeProjectId);
@@ -1527,7 +1524,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       case 'spec': setSpecRows([]); break;
       case 'invoice': setInvoiceRows([]); break;
       case 'estimate': setEstimateRows([]); break;
-      case 'request': setRequestRows([]); break;
     }
     setActiveHeaderIds([]);
   }, []);
@@ -1536,7 +1532,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setSpecRows([]);
     setInvoiceRows([]);
     setEstimateRows([]);
-    setRequestRows([]);
     setCompletedStages([]);
     setSelectedIds([]);
     setActiveHeaderIds([]);
@@ -1572,10 +1567,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const sortedSpecRows = React.useMemo(() =>
     applySortAndFilter(specRows, sortConfig, searchQuery, ['name', 'code', 'supplier']),
     [specRows, sortConfig, searchQuery]
-  );
-  const sortedRequestRows = React.useMemo(() =>
-    applySortAndFilter(requestRows, sortConfig, searchQuery, ['name', 'code', 'supplier']),
-    [requestRows, sortConfig, searchQuery]
   );
   const sortedInvoiceRows = React.useMemo(() =>
     applySortAndFilter(invoiceRows, sortConfig, searchQuery, ['name', 'article', 'supplier']),
@@ -1979,7 +1970,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     let baseRows: any[] = [];
     let searchFields: string[] = [];
     if (currentStage === 'spec') { baseRows = specRows; searchFields = ['name', 'code', 'supplier']; }
-    else if (currentStage === 'request') { baseRows = requestRows; searchFields = ['name', 'code', 'supplier']; }
     else if (currentStage === 'invoice') { baseRows = invoiceRows; searchFields = ['name', 'article', 'supplier']; }
     else if (currentStage === 'estimate') { baseRows = estimateRows; searchFields = ['name', 'workType', 'supplier']; }
 
@@ -2118,7 +2108,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return { displayRows, totalProcessedCount, isPaginationActive, selectableIdsForMode };
   }, [
     currentStage, viewMode,
-    specRows, requestRows, invoiceRows, estimateRows,
+    specRows, invoiceRows, estimateRows,
     activeHeaderIds, isOnlySelectedView, selectedIds, searchQuery,
     sortConfig,
     currentPage, rowsPerPage,
@@ -2133,7 +2123,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (selectedIds.length === 0) return 0;
     
     // Собираем все текущие ряды (оригинальные) для быстрой проверки типа через ID
-    const allBaseRows = [...specRows, ...invoiceRows, ...estimateRows, ...requestRows];
+    const allBaseRows = [...specRows, ...invoiceRows, ...estimateRows];
     const headerIds = new Set(allBaseRows.filter(r => r.is_header).map(r => r.id));
 
     return selectedIds.filter(id => {
@@ -2144,18 +2134,54 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // 3. Все остальное (ITEM, merged_...) — это значимые позиции (товары)
       return true;
     }).length;
-  }, [selectedIds, specRows, invoiceRows, estimateRows, requestRows]);
+  }, [selectedIds, specRows, invoiceRows, estimateRows]);
 
 
 
   const completeStage = useCallback((stageId: string) => {
     setCompletedStages((prev: string[]) => {
-      if (!prev.includes(stageId)) {
-        return [...prev, stageId];
+      if (prev.includes(stageId)) return prev;
+      const next = [...prev, stageId];
+      
+      // Sync progress immediately to the project card
+      if (activeProjectId) {
+        setProjects(all => all.map(p => {
+          if (p.id !== activeProjectId) return p;
+          const newProgress = Math.min(100, Math.round((next.length / 3) * 100));
+          const isFinished = stageId === 'estimate';
+          return { 
+            ...p, 
+            completedStages: next, 
+            progress: newProgress,
+            status: isFinished ? 'archive' : p.status
+          };
+        }));
+        // Local persistence
+        localStorage.setItem(`docok_p_${activeProjectId}_completedStages`, JSON.stringify(next));
       }
-      return prev;
+      return next;
     });
-  }, []);
+  }, [activeProjectId]);
+
+  const uncompleteStage = useCallback((stageId: string) => {
+    setCompletedStages((prev: string[]) => {
+      const next = prev.filter(s => s !== stageId);
+      if (activeProjectId) {
+        setProjects(all => all.map(p => {
+          if (p.id !== activeProjectId) return p;
+          const newProgress = Math.min(100, Math.round((next.length / 3) * 100));
+          return { 
+            ...p, 
+            completedStages: next, 
+            progress: newProgress,
+            status: p.status === 'archive' && stageId === 'estimate' ? 'active' : p.status
+          };
+        }));
+        localStorage.setItem(`docok_p_${activeProjectId}_completedStages`, JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [activeProjectId]);
 
   // Helper: parse quantity to float
   const parseQtyNum = (val: unknown) => parseFloat(String(val).replace(/\s/g, '').replace(/,/g, '.')) || 0;
@@ -2217,14 +2243,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
 
     // 4. Remove other stage rows
-    setRequestRows(prev => prev.filter((r: SpecRow) => r.fileId !== fileName));
     setInvoiceRows(prev => prev.filter((r: InvoiceRow) => r.fileId !== fileName));
     setEstimateRows(prev => prev.filter((r: EstimateRow) => r.fileId !== fileName));
 
     // 5. Final Sync: Update project state and Dashboard counters
     await syncProjectFilesCount();
     toast.success(`Файл ${fileName} удален`);
-  }, [activeProjectId, syncProjectFilesCount, setUploadStatuses, setFilesMap, setSpecRows, setRequestRows, setInvoiceRows, setEstimateRows]);
+  }, [activeProjectId, syncProjectFilesCount, setUploadStatuses, setFilesMap, setSpecRows, setInvoiceRows, setEstimateRows]);
 
   const resetFileData = useCallback((fileName: string) => {
     // 1. Убираем сроки только из активной вкладки
@@ -2237,9 +2262,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         break;
       case 'estimate':
         setEstimateRows(prev => prev.filter(r => r.fileId !== fileName));
-        break;
-      case 'request':
-        setRequestRows(prev => prev.filter(r => r.fileId !== fileName));
         break;
     }
 
@@ -2254,7 +2276,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     updateFileStatusOnServer(fileName, 'reset');
     toast.success(`Данные файла ${fileName} сброшены для текущей вкладки.`);
-  }, [currentStage, setSpecRows, setInvoiceRows, setEstimateRows, setRequestRows, setUploadStatuses, updateFileStatusOnServer]);
+  }, [currentStage, setSpecRows, setInvoiceRows, setEstimateRows, setUploadStatuses, updateFileStatusOnServer]);
 
   const retryFile = useCallback(async (fileName: string, stage: Stage) => {
     const file = filesMap[fileName];
@@ -2327,7 +2349,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (currentStage === 'spec') activeRows = specRows as any;
       else if (currentStage === 'invoice') activeRows = invoiceRows;
       else if (currentStage === 'estimate') activeRows = estimateRows;
-      else if (currentStage === 'request') activeRows = requestRows as any;
 
       const idx = activeRows.findIndex(r => r.id === id);
       if (idx !== -1) {
@@ -2360,7 +2381,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return next;
       }
     });
-  }, [currentStage, specRows, invoiceRows, estimateRows, requestRows, displayRows]);
+  }, [currentStage, specRows, invoiceRows, estimateRows, displayRows]);
 
 
   const toggleSelectAllPage = useCallback((pageIds: string[]) => {
@@ -2391,7 +2412,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     
     let baseRows: any[] = [];
     if (currentStage === 'spec') baseRows = specRows;
-    else if (currentStage === 'request') baseRows = requestRows;
     else if (currentStage === 'invoice') baseRows = invoiceRows;
     else if (currentStage === 'estimate') baseRows = estimateRows;
     
@@ -2435,13 +2455,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
 
     if (currentStage === 'spec') setSpecRows(newRows);
-    else if (currentStage === 'request') setRequestRows(newRows);
     else if (currentStage === 'invoice') setInvoiceRows(newRows);
     else if (currentStage === 'estimate') setEstimateRows(newRows);
 
     setSelectedIds([]);
     setIsOnlySelectedView(false);
-  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, displayRows, pushHistory]);
+  }, [selectedIds, currentStage, specRows, invoiceRows, estimateRows, displayRows, pushHistory]);
 
 
   const keepSelectedRows = useCallback(() => {
@@ -2449,7 +2468,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     
     let baseRows: any[] = [];
     if (currentStage === 'spec') baseRows = specRows;
-    else if (currentStage === 'request') baseRows = requestRows;
     else if (currentStage === 'invoice') baseRows = invoiceRows;
     else if (currentStage === 'estimate') baseRows = estimateRows;
 
@@ -2505,19 +2523,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const newRows = baseRows.filter(r => keepStatus.has(r.id));
 
     if (currentStage === 'spec') setSpecRows(newRows);
-    else if (currentStage === 'request') setRequestRows(newRows);
     else if (currentStage === 'invoice') setInvoiceRows(newRows);
     else if (currentStage === 'estimate') setEstimateRows(newRows);
 
     setSelectedIds([]);
     setIsOnlySelectedView(false);
-  }, [selectedIds, currentStage, specRows, requestRows, invoiceRows, estimateRows, displayRows, pushHistory]);
+  }, [selectedIds, currentStage, specRows, invoiceRows, estimateRows, displayRows, pushHistory]);
 
 
   const getNavigatorTree = useCallback(() => {
     let baseRows: any[] = [];
     if (currentStage === 'spec') baseRows = specRows;
-    else if (currentStage === 'request') baseRows = requestRows;
     else if (currentStage === 'invoice') baseRows = invoiceRows;
     else if (currentStage === 'estimate') baseRows = estimateRows;
 
@@ -2579,7 +2595,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     });
     return tree;
-  }, [currentStage, viewMode, specRows, requestRows, invoiceRows, estimateRows, getSupplierRows]);
+  }, [currentStage, viewMode, specRows, invoiceRows, estimateRows, getSupplierRows]);
 
 
   // Обратная совместимость: getCurrentRows возвращает displayRows из pipeline
@@ -2596,8 +2612,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setInvoiceRows,
         estimateRows: sortedEstimateRows,
         setEstimateRows,
-        requestRows: sortedRequestRows,
-        setRequestRows,
         configKeys,
         setConfigKeys,
         yandexConfig,
@@ -2629,6 +2643,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setSearchQuery,
         completedStages,
         completeStage,
+        uncompleteStage,
         isDragging,
         setIsDragging,
         selectedIds,

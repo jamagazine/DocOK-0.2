@@ -10,7 +10,7 @@ function cn(...inputs: ClassValue[]) {
 interface NoResultsStateProps {
   onReset: () => void;
   currentQuery: string;
-  stage?: 'spec' | 'request' | 'invoice' | 'estimate';
+  stage?: 'spec' | 'invoice' | 'estimate';
 }
 
 export function NoResultsState({ onReset, currentQuery, stage = 'spec' }: NoResultsStateProps) {
@@ -23,13 +23,7 @@ export function NoResultsState({ onReset, currentQuery, stage = 'spec' }: NoResu
       button: 'hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50',
       gradient: 'from-indigo-500/10'
     },
-    request: {
-      text: 'text-blue-600',
-      bgLight: 'bg-blue-50',
-      border: 'border-blue-100',
-      button: 'hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50',
-      gradient: 'from-blue-500/10'
-    },
+
     invoice: {
       text: 'text-emerald-600',
       bgLight: 'bg-emerald-50',

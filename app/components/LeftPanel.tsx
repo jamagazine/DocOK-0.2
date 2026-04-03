@@ -41,7 +41,6 @@ interface LeftPanelProps {
 
 const STAGES: StageInfo[] = [
   { id: 'spec', label: 'Спецификация', status: 'done' },
-  { id: 'request', label: 'Запрос поставщику', status: 'partial' },
   { id: 'invoice', label: 'Счет поставщика', status: 'not_started' },
   { id: 'estimate', label: 'Смета', status: 'not_started' },
 ];
@@ -52,8 +51,7 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
     saveYandexConfig, 
     specRows, 
     invoiceRows, 
-    estimateRows, 
-    requestRows,
+    estimateRows,
     completedStages,
     uploadStatuses,
     estimateTotal,
@@ -98,7 +96,6 @@ export function LeftPanel({ expanded, onToggle, currentStage, onSetStage, onOpen
     // 2. Check for data presence
     let hasData = false;
     if (stageId === 'spec') hasData = specRows.length > 0;
-    if (stageId === 'request') hasData = requestRows.length > 0;
     if (stageId === 'invoice') hasData = invoiceRows.length > 0;
     if (stageId === 'estimate') hasData = estimateRows.length > 0;
 
