@@ -53,10 +53,10 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                             # Extract bounding box (normalized 0-1 usually, or pixels)
                             poly = word.get('boundingBox', {}).get('vertices', [])
                             if poly and len(poly) >= 4:
-                                x = min(v.get('x', 0) for v in poly)
-                                y = min(v.get('y', 0) for v in poly)
-                                w = max(v.get('x', 0) for v in poly) - x
-                                h = max(v.get('y', 0) for v in poly) - y
+                                x = min(int(v.get('x', 0)) for v in poly)
+                                y = min(int(v.get('y', 0)) for v in poly)
+                                w = max(int(v.get('x', 0)) for v in poly) - x
+                                h = max(int(v.get('y', 0)) for v in poly) - y
                                 all_words.append({
                                     "text": w_text,
                                     "x": x, "y": y, "w": w, "h": h
@@ -78,7 +78,7 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
     # We assume last_prompt.txt debug is handled or not needed here
     # If needed, it should be done in main.py or passed as a flag
 
-    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt/latest"
+    model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest" if model_type == "lite" else f"gpt://{folder_id}/yandexgpt-pro/5.1"
     payload = {
         "modelUri": model_uri,
         "completionOptions": {"stream": False, "temperature": 0.1, "maxTokens": "8000"},

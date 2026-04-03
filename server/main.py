@@ -415,7 +415,7 @@ async def process_invoice(
         
         try:
             if filename.endswith(".pdf"):
-                from .parser_utils import extract_text_from_pdf, ocr_to_grid_markdown
+                from parser_utils import extract_text_from_pdf, ocr_to_grid_markdown
                 extracted_text = extract_text_from_pdf(temp_path)
                 # If digital text is sufficient, use it directly
                 if extracted_text.strip() and len(extracted_text.strip()) > 50:
@@ -455,7 +455,7 @@ async def process_invoice(
                 
                 p_method = "excel_ai"
             else: # Images
-                from .parser_utils import ocr_to_grid_markdown
+                from parser_utils import ocr_to_grid_markdown
                 p_method = "ocr_table"
                 with open(temp_path, "rb") as f:
                     txt, low, words = await ocr_yandex(base64.b64encode(f.read()).decode('utf-8'), api_key, folder_id)
@@ -471,7 +471,7 @@ async def process_invoice(
                 total_tokens = 0
                 main_doc = {"name": original_name}
             else:
-                model = "pro" if p_method == "ocr_table" else "lite"
+                model_type = "pro" if p_method == "ocr_table" else "lite"
                 system_prompt = load_prompt("specification" if doc_type == "spec" else "invoice")
                 
                 base_items = convert_df_to_items(df) if is_spreadsheet else []
@@ -483,7 +483,7 @@ async def process_invoice(
                         f.write(f"=== SYSTEM ({doc_type}) ===\n{system_prompt}\n\n=== TEXT ===\n{extracted_text[:1000]}...")
                 except: pass
 
-                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model):
+                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, system_prompt, model_type):
                     if ev["type"] == "progress":
                         yield f"data: {json.dumps({'status': 'chunk', 'index': ev['index'], 'total': ev['total']}, ensure_ascii=False)}\n\n"
                     elif ev["type"] == "result":
@@ -516,8 +516,8 @@ async def process_invoice(
                     print(f"Error extracting summary: {e}")
                     summary_md = "### Общая сводка\n\nНе удалось извлечь данные (ошибка парсера)."
             
-            rate = 1.2 if p_method == "ocr_table" else 0.2
-            cost = round((total_tokens * rate) / 1000 + (num_pages * 1.22 if p_method == "ocr_table" else 0), 2)
+            rate = 0.6 if p_method == "ocr_table" else 0.2
+            cost = round((total_tokens * rate) / 1000 + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)
             final_struct.update({
                 "cost": cost, 
                 "method": p_method, 
@@ -663,7 +663,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     elif api_key and folder_id:
         try:
             if original_filename.lower().endswith(".pdf"):
-                from .parser_utils import detect_pdf_type, pdf_to_grid_markdown
+                from parser_utils import detect_pdf_type, pdf_to_grid_markdown
                 pdf_type = detect_pdf_type(dest_path)
                 
                 if pdf_type == "TEXT_PDF" and stage == "invoice":
@@ -674,19 +674,22 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                         with open(grid_p, "w", encoding="utf-8") as f:
                             f.write(md_text)
                         
-                        estimated_tokens = int((len(ext_text) / 4) * 1.5)
-                        estimated_cost = round((estimated_tokens * 0.2) / 1000, 2)
+                        tokens = await get_token_count(ext_text, "pro", api_key, folder_id)
+                        estimated_tokens = tokens
+                        estimated_cost = round((tokens * 0.6) / 1000, 2)
                         
                 if not ext_text:
                     import pdfplumber
                     with pdfplumber.open(dest_path) as pdf:
                         pages = len(pdf.pages)
                         if pages > 0:
-                            estimated_cost = round(pages * 7.0, 2)
+                            # 1.22 (OCR Table) + ~0.28 (LLM margin) = 1.5 RUB per page
+                            estimated_cost = round(pages * 1.5, 2)
+                            # Average 5000 tokens per page for structured docs
                             estimated_tokens = pages * 5000
             elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 estimated_tokens = 5000
-                estimated_cost = 7.0
+                estimated_cost = 1.5
         except Exception as e:
             print(f"Error estimating cost: {e}")
             
@@ -696,7 +699,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         final_status = "READY_MD_LOCAL"
     elif original_filename.lower().endswith(".pdf"):
         # We already called detect_pdf_type above
-        from .parser_utils import detect_pdf_type
+        from parser_utils import detect_pdf_type
         pdf_type = detect_pdf_type(dest_path)
         if pdf_type == "TEXT_PDF" and stage == "invoice":
             final_status = "READY_MD_LOCAL"
@@ -726,6 +729,23 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "fileName": original_filename, "method": "", "model": "", "cost": 0, "tokens": 0, "status": "UPLOAD"
     }, projectId)
     
+    # Calculate metadata for frontend routing
+    pages_count = 1
+    is_pdf = original_filename.lower().endswith(".pdf")
+    is_image = original_filename.lower().endswith((".png", ".jpg", ".jpeg"))
+    
+    current_pdf_type = None
+    if is_pdf:
+        from parser_utils import detect_pdf_type
+        current_pdf_type = detect_pdf_type(dest_path)
+        import pdfplumber
+        try:
+            with pdfplumber.open(dest_path) as pdf:
+                pages_count = len(pdf.pages)
+        except: pass
+    
+    is_scan_val = (is_image or (is_pdf and current_pdf_type == "SCAN_PDF"))
+
     return {
         "status": "success", 
         "filename": secured_name, 
@@ -734,7 +754,10 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "raw_markdown": ext_text,
         "summary_md": summary_md,
         "summary_fields": summary_fields,
-        "file_status": final_status
+        "file_status": final_status,
+        "pages_count": pages_count,
+        "is_scan": is_scan_val,
+        "pdf_type": current_pdf_type
     }
 
 @app.get("/api/storage/files")

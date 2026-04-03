@@ -4,6 +4,7 @@ import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { CenterPanel } from './components/CenterPanel';
 import { ResetConfirmation } from './components/ResetConfirmation';
+import { OCRConfirmationModal } from './components/OCRConfirmationModal';
 import { DashboardLeftPanel } from './components/DashboardLeftPanel';
 import { DashboardCenterPanel } from './components/DashboardCenterPanel';
 import { DashboardRightPanel } from './components/DashboardRightPanel';
@@ -14,7 +15,11 @@ import { Upload } from 'lucide-react';
 function AppContent() {
   const [leftExpanded, setLeftExpanded] = useState(true);
   const [rightExpanded, setRightExpanded] = useState(true);
-  const { currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, uploadStatuses, generateEstimate, isDragging, setIsDragging, viewContext, setViewContext } = useData();
+  const { 
+    currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, 
+    uploadStatuses, generateEstimate, isDragging, setIsDragging, viewContext, setViewContext,
+    showOCRConfirm, setShowOCRConfirm, ocrConfirmationQueue, hasLargeOcrFile, confirmOCR, cancelOCR
+  } = useData();
 
   const stageOrder: Stage[] = ['spec', 'invoice', 'estimate'];
   const currentStageIndex = stageOrder.indexOf(currentStage);
@@ -131,6 +136,13 @@ function AppContent() {
         </div>
       </div>
       <ResetConfirmation />
+      <OCRConfirmationModal
+        isOpen={showOCRConfirm}
+        onConfirm={confirmOCR}
+        onCancel={cancelOCR}
+        count={ocrConfirmationQueue.length}
+        hasLargeFile={hasLargeOcrFile}
+      />
       <div className="flex h-screen w-screen overflow-hidden bg-slate-50 font-sans text-slate-900">
         {viewContext === 'workspace' ? (
           // ─── Project Workspace ───────────────────────────────────────────────

@@ -352,6 +352,14 @@ interface DataContextType {
   getCurrentRows: () => any[];
   matchInvoiceToSpec: () => Promise<void>;
 
+  // OCR Confirmation
+  showOCRConfirm: boolean;
+  setShowOCRConfirm: (val: boolean) => void;
+  ocrConfirmationQueue: {file: File, serverFilename: string, stage: Stage}[];
+  hasLargeOcrFile: boolean;
+  confirmOCR: () => Promise<void>;
+  cancelOCR: () => void;
+
   // Pipeline output
   displayRows: any[];
   totalProcessedCount: number;
@@ -443,6 +451,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('docok_activeProjectId');
     }
   }, [activeProjectId]);
+
+  const [showOCRConfirm, setShowOCRConfirm] = useState(false);
+  const [ocrConfirmationQueue, setOcrConfirmationQueue] = useState<{file: File, serverFilename: string, stage: Stage}[]>([]);
+  const [hasLargeOcrFile, setHasLargeOcrFile] = useState(false);
 
   const [currentStage, setCurrentStageRaw] = useState<Stage>(() => {
     if (typeof window !== 'undefined') {
@@ -1232,7 +1244,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
       });
-      
       // 4. Update local projects list
       setProjects(prev => prev.map(p => p.id === activeProjectId ? updated : p));
       
@@ -1245,25 +1256,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
-    // Reset search filter so new rows are visible
     setSearchQuery('');
-
     const now = new Date();
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
 
-    // Set all initial statuses to render instantly
-    const initialStatuses: Record<string, any> = {};
-    for (const f of fileArray) {
-      initialStatuses[f.name] = { status: 'Ожидание...', time: currentTime, size: f.size };
-    }
-    setUploadStatuses((prev: any) => ({ ...prev, ...initialStatuses }));
-
-    // Start async processing for all files concurrently
-    fileArray.forEach(async (file) => {
+    const results = await Promise.all(fileArray.map(async (file) => {
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...' } }));
 
       let serverFilename = '';
-      // Upload to physical storage
       try {
         const uploadData = new FormData();
         uploadData.append('file', file);
@@ -1271,228 +1271,118 @@ export function DataProvider({ children }: { children: ReactNode }) {
           uploadData.append('projectId', activeProjectId);
         }
         uploadData.append('stage', stage);
+
         const res = await fetch('http://localhost:8000/api/storage/upload', {
           method: 'POST',
           body: uploadData,
         });
+
         if (res.ok) {
           const resData = await res.json();
           serverFilename = resData.filename || '';
-          if (resData.estimated_cost !== undefined || resData.estimated_tokens !== undefined || resData.summary_fields) {
+          
+          if (resData.estimated_cost !== undefined) {
             setUploadStatuses((prev: any) => ({
               ...prev,
               [file.name]: {
                 ...prev[file.name],
-                ...(resData.estimated_cost !== undefined && { estimated_cost: resData.estimated_cost }),
-                ...(resData.estimated_tokens !== undefined && { estimated_tokens: resData.estimated_tokens }),
-                ...(resData.summary_fields && { summary_fields: resData.summary_fields }),
-                ...(resData.summary_md && { summary_md: resData.summary_md })
+                estimated_cost: resData.estimated_cost,
+                estimated_tokens: resData.estimated_tokens,
+                summary_fields: resData.summary_fields,
+                summary_md: resData.summary_md
               }
             }));
           }
 
-          // TK v1.6: Instant Markdown population
           if (resData.raw_markdown) {
             const instantRows = parseMarkdownToRows(resData.raw_markdown, stage, file.name);
             if (stage === 'spec') {
-              setSpecRows(prev => [...prev, ...instantRows as SpecRow[]]);
+              setSpecRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as SpecRow[]]);
             } else {
-              setInvoiceRows(prev => [...prev, ...instantRows as InvoiceRow[]]);
+              setInvoiceRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as InvoiceRow[]]);
             }
           }
 
-          // Force focus on the newly uploaded file to show Passport immediately
           setActiveFileId(file.name);
-
-          // TK v2.5: Disable automatic AI for PDF/Images, make it manual via button
-          const useAi = forceAI;
-          if (!useAi) {
-            const finalStatus = resData.file_status || 'READY_MD';
-            setUploadStatuses((prev: any) => ({
-              ...prev,
-              [file.name]: {
-                ...prev[file.name],
-                status: finalStatus,
-                time: currentTime,
-                method: 'MD_Instant'
-              }
-            }));
-            // Sync status to server
-            updateFileStatusOnServer(file.name, finalStatus);
-          } else {
-            // useAi is true
-            if (!yandexConfig.apiKey || !yandexConfig.catalogId) {
-              setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: 'API Ключ или ID каталога не настроены', time: currentTime } }));
-              return;
+          const finalStatus = resData.file_status || 'READY_MD';
+          setUploadStatuses((prev: any) => ({
+            ...prev,
+            [file.name]: {
+              ...prev[file.name],
+              status: finalStatus,
+              time: currentTime,
+              method: 'MD_Instant'
             }
+          }));
+          updateFileStatusOnServer(file.name, finalStatus);
 
-            setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Анализ ИИ...', time: currentTime } }));
-            const formData = new FormData();
-            formData.append('doc_type', stage); 
-            if (activeProjectId) {
-              formData.append('projectId', activeProjectId);
-            }
-            
-            if (serverFilename) {
-              formData.append('file_id', serverFilename);
-            } else {
-              formData.append('file', file);
-            }
-
-            try {
-              const resProc = await fetch('http://localhost:8000/api/process-invoice', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                  'x-api-key': yandexConfig.apiKey,
-                  'x-folder-id': yandexConfig.catalogId
-                }
-              });
-
-              if (!resProc.ok) {
-                const errorData = await resProc.json().catch(() => ({}));
-                throw new Error(errorData.detail || `Ошибка сервера ${resProc.status}`);
-              }
-
-              const reader = resProc.body?.getReader();
-              if (!reader) throw new Error('Поток недоступен');
-              const decoder = new TextDecoder();
-              let buffer = '';
-
-              try {
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-
-                  buffer += decoder.decode(value, { stream: true });
-                  let newlineIdx;
-                  while ((newlineIdx = buffer.indexOf('\n\n')) >= 0) {
-                    const packet = buffer.slice(0, newlineIdx).trim();
-                    buffer = buffer.slice(newlineIdx + 2);
-
-                    if (!packet.startsWith('data: ')) continue;
-                    const payloadStr = packet.slice(6);
-                    let payload;
-                    try {
-                      payload = JSON.parse(payloadStr);
-                    } catch (e) {
-                      continue;
-                    }
-
-                    if (payload.status === 'stage') {
-                      setUploadStatuses((prev: any) => ({
-                        ...prev,
-                        [file.name]: { ...prev[file.name], current_step: payload.step || 'prep' }
-                      }));
-                    } else if (payload.status === 'chunk') {
-                      setUploadStatuses((prev: any) => ({
-                        ...prev,
-                        [file.name]: {
-                          ...prev[file.name],
-                          current_step: 'ai',
-                          processed_count: payload.index,
-                          total_chunks: payload.total
-                        }
-                      }));
-                    } else if (payload.status === 'error') {
-                      throw new Error(payload.detail || 'Неизвестная ошибка ИИ');
-                    } else if (payload.status === 'final') {
-                      const data = payload.data;
-                      const tokens = data.usage?.total_tokens || 0;
-                      const cost = data.cost || 0;
-
-                      const strToNumOrBlank = (v: any) => {
-                        if (v === undefined || v === null || v === '') return '';
-                        const parsed = parseFloat(String(v).replace(/,/g, '.').replace(/\s/g, ''));
-                        return isNaN(parsed) ? String(v) : String(parsed);
-                      };
-
-                      if (stage === 'spec') {
-                        const aiRows: SpecRow[] = (data.items || []).map((item: any) => ({
-                          id: genId(),
-                          fileId: file.name,
-                          pos: item.pos || '',
-                          name: item.name || '',
-                          brand: item.brand || '',
-                          code: item.code || item.article || '',
-                          supplier: item.supplier || data.document?.metadata?.vendor || '',
-                          unit: item.unit || 'шт',
-                          quantity: item.is_header ? '' : (strToNumOrBlank(item.quantity) || '1'),
-                          mass: item.is_header ? '' : (strToNumOrBlank(item.mass) || '0'),
-                          note: item.note || (item.isUncertain ? 'Требует проверки' : ''),
-                          is_header: item.row_type === 'WORK_TYPE' || item.row_type === 'LOCATION' || item.row_type === 'GROUP' || Boolean(item.is_header),
-                          row_type: item.row_type || 'ITEM',
-                          originalRowsIds: [],
-                          children: []
-                        }));
-                        setSpecRows((prev) => {
-                          const filtered = prev.filter(r => r.fileId !== file.name);
-                          return [...filtered, ...aiRows];
-                        });
-                      } else {
-                        const aiRows: InvoiceRow[] = (data.items || []).map((item: any) => {
-                          const r = emptyInvoiceRow();
-                          r.fileId = file.name;
-                          r.documentName = data.document?.filename || data.document?.name || file.name;
-                          r.isUncertain = Boolean(item.isUncertain);
-                          r.article = item.article || '';
-                          r.name = item.name || '';
-                          r.supplier = data.document?.metadata?.vendor || '';
-                          r.quantity = strToNumOrBlank(item.quantity) || '1';
-                          r.unit = item.unit || 'шт';
-                          r.price = strToNumOrBlank(item.price) || '0';
-                          r.total = strToNumOrBlank(item.total) || '0';
-                          return r;
-                        });
-                        setInvoiceRows((prev) => {
-                          const filtered = prev.filter(r => r.fileId !== file.name);
-                          return [...filtered, ...aiRows];
-                        });
-                      }
-
-                      setUploadStatuses((prev: any) => ({
-                        ...prev,
-                        [file.name]: {
-                          ...prev?.[file.name],
-                          status: 'Готово (ИИ)',
-                          time: currentTime,
-                          current_step: 'final',
-                          tokens,
-                          cost,
-                          model: data.model || '',
-                          method: data.method || '',
-                          chunks_report: data.chunks_report || [],
-                          summary_md: data.summary_md || '',
-                          summary_fields: data.fields || null
-                        }
-                      }));
-                      setFilesMap((prev: Record<string, File>) => ({ ...prev, [file.name]: file }));
-                      updateFileStatusOnServer(file.name, 'Готово (ИИ)');
-                      syncProjectFilesCount();
-                    }
-                  }
-                }
-              } finally {
-                reader.cancel().catch(e => console.error('Не удалось закрыть поток:', e));
-              }
-            } catch (e: any) {
-              console.error('AI Processing error:', e);
-              setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Ошибка', error: e.message, time: currentTime } }));
-            }
+          if (resData.is_scan) {
+            return { file, serverFilename, stage: stage as Stage, isLarge: (resData.pages_count || 1) > 3 };
           }
         }
       } catch (e) {
         console.error('Failed to upload file to storage:', e);
       }
-    }); // closes forEach
+      return null;
+    }));
 
-  }, [yandexConfig, updateFileStatusOnServer, activeProjectId, syncProjectFilesCount]);
+    const ocrQueue = results.filter(r => r !== null) as {file: File, serverFilename: string, stage: Stage, isLarge: boolean}[];
+
+    if (ocrQueue.length > 0) {
+      const anyLarge = ocrQueue.some(q => q.isLarge);
+      const isBatchLarge = ocrQueue.length > 3 || anyLarge;
+
+      if (isBatchLarge) {
+        setOcrConfirmationQueue(ocrQueue);
+        setHasLargeOcrFile(anyLarge);
+        setShowOCRConfirm(true);
+      } else {
+        for (const item of ocrQueue) {
+          const formData = new FormData();
+          formData.append('doc_type', item.stage);
+          if (activeProjectId) formData.append('projectId', activeProjectId);
+          formData.append('file_id', item.serverFilename);
+
+          try {
+            setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
+            await fetch('http://localhost:8000/api/process-invoice', {
+              method: 'POST',
+              body: formData,
+              headers: {
+                'x-api-key': yandexConfig.apiKey,
+                'x-folder-id': yandexConfig.catalogId
+              }
+            });
+          } catch (e) { console.error(e); }
+        }
+      }
+    }
+    syncProjectFilesCount();
+  }, [yandexConfig, activeProjectId, syncProjectFilesCount, updateFileStatusOnServer]);
 
   const reprocessAi = useCallback(async (fileName: string) => {
     const file = filesMap[fileName];
     if (!file) return;
     await handleFile([file], currentStage, true);
   }, [filesMap, currentStage, handleFile]);
+
+  const confirmOCR = useCallback(async () => {
+    const queue = [...ocrConfirmationQueue];
+    setOcrConfirmationQueue([]);
+    setShowOCRConfirm(false);
+    setHasLargeOcrFile(false);
+
+    for (const item of queue) {
+      await reprocessAi(item.file.name);
+    }
+  }, [ocrConfirmationQueue, reprocessAi]);
+
+  const cancelOCR = useCallback(() => {
+    setOcrConfirmationQueue([]);
+    setShowOCRConfirm(false);
+    setHasLargeOcrFile(false);
+    toast.info('Автоматический OCR отменен. Вы можете запустить его вручную кнопкой напротив каждого файла.');
+  }, []);
 
 
 
@@ -2712,6 +2602,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         toggleSelectAllPage,
         selectAllRows,
         deleteSelectedRows,
+        showOCRConfirm,
+        setShowOCRConfirm,
+        ocrConfirmationQueue,
+        hasLargeOcrFile,
+        confirmOCR,
+        cancelOCR,
         currentPage,
         setCurrentPage,
         rowsPerPage,
