@@ -891,11 +891,11 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
         r'(ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|МУП|ГУП|ФГУП)\s*[«"\']?[\w\s\-–—]+[»"\'"]?',
         re.IGNORECASE
     )
+    BANK_STOP = re.compile(r'(СБЕРБАНК|БАНК|БАНК\s+ПОЛУЧАТЕЛ|ВОЛГО|НОВГОРОД)', re.IGNORECASE)
 
     supplier_inn = None
     supplier_inn_y = None
 
-    # Step 1: Find the supplier's INN
     for w in words:
         txt = w['text']
         if len(txt) < 10:
@@ -904,36 +904,44 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
         if cand and cand != client_inn:
             supplier_inn = cand
             supplier_inn_y = w['y']
-            break   # Take the first discovered non-client INN
+            break
 
     if not supplier_inn:
         return {"inn": None, "name": None}
 
-    # Step 2: Find org name near the INN anchor (Y ± 120px), excluding banks
-    supplier_name = None
-    BANK_STOP = re.compile(r'(СБЕРБАНК|БАНК|БАНК\s+ПОЛУЧАТЕЛ|ВОЛГО|НОВГОРОД)', re.IGNORECASE)
-    candidates = sorted(words, key=lambda w: abs(w['y'] - supplier_inn_y))
-    for w in candidates:
-        if abs(w['y'] - supplier_inn_y) > 120:
-            break
-        txt = w['text']
-        if BANK_STOP.search(txt):
-            continue    # skip bank labels
-        m = ORG_PATTERN.search(txt)
-        if m:
-            supplier_name = m.group(0).strip()
+    # Group words into text rows
+    words_sorted = sorted(words, key=lambda w: w['y'])
+    rows_grouped = []
+    if words_sorted:
+        cur_row = [words_sorted[0]]
+        for i in range(1, len(words_sorted)):
+            if abs(words_sorted[i]['y'] - cur_row[0]['y']) < 12:
+                cur_row.append(words_sorted[i])
+            else:
+                rows_grouped.append(cur_row)
+                cur_row = [words_sorted[i]]
+        rows_grouped.append(cur_row)
+
+    # Convert rows to text and find supplier INN row index
+    row_texts = [" ".join(w['text'] for w in sorted(r, key=lambda x: x['x'])) for r in rows_grouped]
+    target_idx = -1
+    for i, r_txt in enumerate(row_texts):
+        if supplier_inn in r_txt:
+            target_idx = i
             break
 
-    # Step 3: If name not found in single word, try combining nearby row text
-    if not supplier_name:
-        nearby_text = " ".join(
-            w['text'] for w in words
-            if abs(w['y'] - supplier_inn_y) <= 120
-            and not BANK_STOP.search(w['text'])
-        )
-        m = ORG_PATTERN.search(nearby_text)
-        if m:
-            supplier_name = m.group(0).strip()
+    supplier_name = None
+    if target_idx != -1:
+        start_idx = max(0, target_idx - 2)
+        end_idx = min(len(row_texts), target_idx + 3)
+        for i in range(start_idx, end_idx):
+            txt = row_texts[i]
+            if BANK_STOP.search(txt):
+                continue
+            m = ORG_PATTERN.search(txt)
+            if m:
+                supplier_name = m.group(0).strip()
+                break
 
     return {"inn": supplier_inn, "name": supplier_name}
 
@@ -1056,6 +1064,17 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                 s_up = s.upper()
 
                 # ── IRON CURTAIN priority chain ──────────────────────────────
+                # Determine Supplier Core Name to block partial matches
+                supplier_core = ""
+                if SUPPLIER_NAME:
+                    m_core = re.search(r'["«\']([^"»\']+)["»\']', SUPPLIER_NAME)
+                    if m_core:
+                        supplier_core = m_core.group(1).upper()
+                    else:
+                        parts = SUPPLIER_NAME.split()
+                        if len(parts) > 1:
+                            supplier_core = re.sub(r'\W', '', parts[1]).upper()
+
                 # Rule 1: Supplier INN found → ALWAYS Supplier
                 if SUPPLIER_INN and SUPPLIER_INN in s:
                     s_lines.append(s)
@@ -1065,40 +1084,54 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                 if SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up:
                     s_lines.append(s)
                     continue
+                if supplier_core and len(supplier_core) > 3 and supplier_core in s_up:
+                    s_lines.append(s)
+                    continue
 
-                # Rule 3: Client identifiers → Buyer
-                if CLIENT_INN in s or CLIENT_NAME in s:
+                # ── BUYER BAN LIST CHECK ──
+                can_be_buyer = True
+                if SUPPLIER_INN and SUPPLIER_INN in s:
+                    can_be_buyer = False
+                if supplier_core and len(supplier_core) > 3 and supplier_core in s_up:
+                    can_be_buyer = False
+                if not any(k in s_up for k in ["ММК", "ЛЕВЧЕНКО", CLIENT_INN]) and not is_buyer_prox:
+                    can_be_buyer = False
+
+                # Rule 3: Client identifiers → Buyer (if allowed)
+                if (CLIENT_INN in s or CLIENT_NAME in s) and can_be_buyer:
                     b_lines.append(s)
                     continue
 
                 # Rule 4-5: Forced X-split decisions
                 if forced_bucket == "BUYER":
-                    b_lines.append(s)
+                    if can_be_buyer:
+                        b_lines.append(s)
+                    else:
+                        tr_lines.append(s)
                     continue
                 if forced_bucket == "SUPPLIER":
                     s_lines.append(s)
                     continue
 
                 # Rule 6: Bank/account keywords → Supplier
-                if any(k in s_up for k in ["БИК", "КОРР.", "СЧ.", "РАСЧ", "СЧЕТ №"]):
+                if any(k in s_up for k in ["БИК", "КОРР.", "СЧ.", "РАСЧ", "СЧЕТ №", "БАНК", "ПАО", "ОАО", "ЗАО"]):
                     s_lines.append(s)
                     continue
 
                 # Rule 7: ООО/ИП present but NOT client name → Supplier
-                legal_forms = ["ООО", "ОАО", "ЗАО", "ПАО", "АО ", "ИП "]
+                legal_forms = ["ООО ", "ИП "]
                 if any(k in s_up for k in legal_forms) and CLIENT_NAME not in s:
                     s_lines.append(s)
                     continue
 
                 # Rule 8: Hard trash — no digits, no legal markers
-                legal_markers = ["ИНН", "КПП", "ОБЩЕСТВО", "ТЕЛ", "АДРЕС", "ПОЧТОВЫЙ"]
-                if (not any(c.isdigit() for c in s)
-                        and not any(k in s_up for k in legal_markers)):
+                legal_markers = ["ИНН", "КПП", "ОБЩЕСТВО", "ТЕЛ", "АДРЕС", "ПОЧТОВЫЙ", "УЛ", "ДОМ", "БАНК", "СЧЕТ", "ООО", "ИП", "ЗАО", "АО", "ПАО", "ФИЛИАЛ"]
+                if not any(c.isdigit() for c in s) and not any(k in s_up for k in legal_markers):
                     tr_lines.append(s)
                     continue
 
                 # Rule 9: Proximity-based fallback
-                if is_buyer_prox and not is_supplier_prox:
+                if is_buyer_prox and not is_supplier_prox and can_be_buyer:
                     b_lines.append(s)
                 elif is_supplier_prox:
                     s_lines.append(s)
