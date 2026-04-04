@@ -832,32 +832,21 @@ def excel_to_grid_markdown(file_path: str) -> str:
     if not rows_data:
         return ""
 
-    # 2. Find real data boundaries to avoid 1M empty rows if any
-    # (Though sheet.max_row usually handles this, sometimes it's bloated)
     last_real_row = 0
     for idx, r in enumerate(rows_data):
         if any(str(c).strip() for c in r):
             last_real_row = idx + 1
-            
     rows_data = rows_data[:last_real_row]
     if not rows_data: return ""
 
-    # 3. Format as Markdown Grid
     md_lines = []
-    
-    # Header (just use indices for raw grid representation or first row)
-    # The header line in markdown table is decorative in this "Raw Grid" case
     header_row = [f"Col {i+1}" for i in range(max_w)]
     md_lines.append("| " + " | ".join(header_row) + " |")
     md_lines.append("| " + " | ".join(["---"] * max_w) + " |")
-    
-    # All rows from 0 to last_real_row
     for r in rows_data:
-        # Pad row to max_w if needed
         full_row = r + [""] * (max_w - len(r))
         row_str = [str(c).replace("|", "\\|").replace("\n", " ") for c in full_row]
         md_lines.append("| " + " | ".join(row_str) + " |")
-        
     return "\n".join(md_lines)
 
 
@@ -871,7 +860,6 @@ def detect_pdf_type(file_path: str) -> str:
             if not pdf.pages:
                 return "SCAN_PDF"
             text = pdf.pages[0].extract_text() or ""
-            # Threshold: more than 50 symbols of text = digital (TEXT_PDF)
             if len(text.strip()) > 50:
                 return "TEXT_PDF"
             return "SCAN_PDF"
@@ -880,148 +868,303 @@ def detect_pdf_type(file_path: str) -> str:
         return "SCAN_PDF"
 
 
-def ocr_to_grid_markdown(words: list) -> tuple:
-    """
-    STAGE 3.3 VERSION - UNIVERSAL MAGNETIC BUCKETS.
-    1. Discovery: Finds Buyer (CLIENT_INN) and Supplier (Any other valid INN).
-    2. Clustering: Magnetic Y-clustering (+/- 150px) around anchors.
-    3. X-Separator: Physically split rows bridging two magnetic zones.
-    4. Sanitizer: Full INN/BIK check + Trash filter.
-    """
-    if not words: return "", ""
-    import re
+def _load_client_settings() -> dict:
+    """Load client (Buyer) config from client_settings.json next to this file."""
+    import os, json
+    cfg_path = os.path.join(os.path.dirname(__file__), "client_settings.json")
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"inn": "5905271743", "name": "ММК-Пермь"}
 
-    CLIENT_INN = "5905271743"
-    
-    # Discovery Phase
-    supplier_y_anchors = []
-    buyer_y_anchors = []
-    
-    # 1. Identify Anchor Points via Entity Validation
+
+def _discover_supplier(words: list, client_inn: str) -> dict:
+    """
+    DISCOVERY PASS — Phase 1.
+    Scan all words to find any valid INN != client_inn.
+    Then search Y ± 40px neighborhood for a legal-form org name.
+    Returns: {"inn": str, "name": str}
+    """
+    import re
+    ORG_PATTERN = re.compile(
+        r'(ООО|ОАО|ЗАО|ПАО|АО|ИП|НКО|МУП|ГУП|ФГУП)\s*[«"\']?[\w\s\-–—]+[»"\'"]?',
+        re.IGNORECASE
+    )
+
+    supplier_inn = None
+    supplier_inn_y = None
+
+    # Step 1: Find the supplier's INN
     for w in words:
         txt = w['text']
-        if len(txt) >= 10:
-            inn_cand = validate_and_clean_inn(txt)
-            if inn_cand == CLIENT_INN:
-                buyer_y_anchors.append(w['y'])
-            elif inn_cand:
-                supplier_y_anchors.append(w['y'])
-        if "ММК-Пермь" in txt:
+        if len(txt) < 10:
+            continue
+        cand = validate_and_clean_inn(txt)
+        if cand and cand != client_inn:
+            supplier_inn = cand
+            supplier_inn_y = w['y']
+            break   # Take the first discovered non-client INN
+
+    if not supplier_inn:
+        return {"inn": None, "name": None}
+
+    # Step 2: Find org name near the INN anchor (Y ± 120px), excluding banks
+    supplier_name = None
+    BANK_STOP = re.compile(r'(СБЕРБАНК|БАНК|БАНК\s+ПОЛУЧАТЕЛ|ВОЛГО|НОВГОРОД)', re.IGNORECASE)
+    candidates = sorted(words, key=lambda w: abs(w['y'] - supplier_inn_y))
+    for w in candidates:
+        if abs(w['y'] - supplier_inn_y) > 120:
+            break
+        txt = w['text']
+        if BANK_STOP.search(txt):
+            continue    # skip bank labels
+        m = ORG_PATTERN.search(txt)
+        if m:
+            supplier_name = m.group(0).strip()
+            break
+
+    # Step 3: If name not found in single word, try combining nearby row text
+    if not supplier_name:
+        nearby_text = " ".join(
+            w['text'] for w in words
+            if abs(w['y'] - supplier_inn_y) <= 120
+            and not BANK_STOP.search(w['text'])
+        )
+        m = ORG_PATTERN.search(nearby_text)
+        if m:
+            supplier_name = m.group(0).strip()
+
+    return {"inn": supplier_inn, "name": supplier_name}
+
+
+def ocr_to_grid_markdown(words: list) -> tuple:
+    """
+    STAGE 3 FINAL — Semantic Discovery & Iron Curtain Separator.
+
+    Phase 0: Load client config (Buyer) from client_settings.json.
+    Phase 1: Discovery Pass — find Supplier INN + Name dynamically.
+    Phase 2: Row grouping + Iron Curtain distribution.
+    Phase 3: Label cleanup (strip cross-entity markers).
+    Phase 4: Emit structured VERIFIED MD template.
+    """
+    if not words:
+        return "", ""
+    import re
+
+    # ── Phase 0: Config ──────────────────────────────────────────────────────
+    cfg = _load_client_settings()
+    CLIENT_INN  = cfg.get("inn",  "5905271743")
+    CLIENT_NAME = cfg.get("name", "ММК-Пермь")
+
+    # ── Phase 1: Discovery Pass ───────────────────────────────────────────────
+    supplier_ref = _discover_supplier(words, CLIENT_INN)
+    SUPPLIER_INN  = supplier_ref["inn"]   # may be None
+    SUPPLIER_NAME = supplier_ref["name"]  # may be None
+
+    # Build anchor Y-lists for magnetic proximity
+    supplier_y_anchors: list[int] = []
+    buyer_y_anchors:    list[int] = []
+
+    for w in words:
+        txt = w['text']
+        # Buyer anchors
+        if CLIENT_INN in txt or CLIENT_NAME in txt:
             buyer_y_anchors.append(w['y'])
+        # Supplier anchors (by discovered INN)
+        if SUPPLIER_INN and SUPPLIER_INN in txt:
+            supplier_y_anchors.append(w['y'])
+        # Fallback: any other valid INN becomes supplier anchor
+        if len(txt) >= 10:
+            cand = validate_and_clean_inn(txt)
+            if cand and cand != CLIENT_INN:
+                supplier_y_anchors.append(w['y'])
 
-    # 2. Row Grouping (Vertical normalization)
+    # ── Phase 2: Row Grouping ─────────────────────────────────────────────────
     words.sort(key=lambda w: w['y'])
-    rows_grouped = []
+    rows_grouped: list[list] = []
     if words:
-        current_row = [words[0]]
+        cur_row = [words[0]]
         for i in range(1, len(words)):
-            if abs(words[i]['y'] - current_row[0]['y']) < 12: current_row.append(words[i])
+            if abs(words[i]['y'] - cur_row[0]['y']) < 12:
+                cur_row.append(words[i])
             else:
-                rows_grouped.append(current_row)
-                current_row = [words[i]]
-        rows_grouped.append(current_row)
+                rows_grouped.append(cur_row)
+                cur_row = [words[i]]
+        rows_grouped.append(cur_row)
 
-    # 3. Magnetic Bucketing Logic
-    s_lines, b_lines, tr_lines = [], [], []
-    table_raw = ["### TABLE ###", "| № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    # ── Phase 2: Iron Curtain Distribution ───────────────────────────────────
+    s_lines:  list[str] = []
+    b_lines:  list[str] = []
+    tr_lines: list[str] = []
+    table_raw  = [
+        "### TABLE ###",
+        "| № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
     footer_raw = ["### FOOTER_DATA ###"]
-    
-    state = "HEADER"
-    seen_unique = set()
-    
+
+    state       = "HEADER"
+    seen_unique: set[str] = set()
+
     for row in rows_grouped:
         row.sort(key=lambda x: x['x'])
-        row_y = row[0]['y']
-        full_line = " ".join([w['text'] for w in row]).strip()
-        l_line = full_line.lower()
+        row_y     = row[0]['y']
+        full_line = " ".join(w['text'] for w in row).strip()
+        l_line    = full_line.lower()
 
-        # Block Transitions
+        # State transitions
         if state == "HEADER" and any(k in l_line for k in ["наименование", "кол-во", "цена"]):
             state = "TABLE"
             continue
         elif state == "TABLE" and any(k in l_line for k in ["итого", "всего", "в том числе"]):
             state = "FOOTER"
 
+        # ── HEADER processing ────────────────────────────────────────────────
         if state == "HEADER":
+            # Determine X-split point (if this row bridges buyer zone)
             split_x = -1
             for ay in buyer_y_anchors:
                 if abs(row_y - ay) < 150:
                     for w in row:
-                        if CLIENT_INN in w['text'] or "ММК-Пермь" in w['text']:
+                        if CLIENT_INN in w['text'] or CLIENT_NAME in w['text']:
                             split_x = w['x'] - 10
                             break
-                    if split_x != -1: break
-            
-            # Принудительное назначение корзин по X
-            segments = []
+                    if split_x != -1:
+                        break
+
+            # Build forced segments
+            segments: list[tuple[str, str]] = []
             if split_x != -1:
-                left_txt = " ".join([w['text'] for w in row if w['x'] < split_x]).strip()
-                right_txt = " ".join([w['text'] for w in row if w['x'] >= split_x]).strip()
-                if left_txt: segments.append((left_txt, "SUPPLIER"))
-                if right_txt: segments.append((right_txt, "BUYER"))
+                left  = " ".join(w['text'] for w in row if w['x'] <  split_x).strip()
+                right = " ".join(w['text'] for w in row if w['x'] >= split_x).strip()
+                if left:  segments.append((left,  "SUPPLIER"))
+                if right: segments.append((right, "BUYER"))
             else:
-                segments.append((" ".join([w['text'] for w in row]).strip(), "UNKNOWN"))
+                segments.append((full_line, "UNKNOWN"))
 
             for s, forced_bucket in segments:
-                if not s or len(s) < 2: continue
+                if not s or len(s) < 2:
+                    continue
                 norm = re.sub(r'\W', '', s).lower()
-                if norm in seen_unique: continue
+                if norm in seen_unique:
+                    continue
                 seen_unique.add(norm)
 
-                is_buyer_prox = any(abs(row_y - ay) < 150 for ay in buyer_y_anchors)
+                is_buyer_prox    = any(abs(row_y - ay) < 150 for ay in buyer_y_anchors)
                 is_supplier_prox = any(abs(row_y - ay) < 150 for ay in supplier_y_anchors)
-                
-                # Если строка была разрезана по X, мы ЖЕСТКО знаем, куда она идет
+                s_up = s.upper()
+
+                # ── IRON CURTAIN priority chain ──────────────────────────────
+                # Rule 1: Supplier INN found → ALWAYS Supplier
+                if SUPPLIER_INN and SUPPLIER_INN in s:
+                    s_lines.append(s)
+                    continue
+
+                # Rule 2: Supplier name fragment found → Supplier
+                if SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up:
+                    s_lines.append(s)
+                    continue
+
+                # Rule 3: Client identifiers → Buyer
+                if CLIENT_INN in s or CLIENT_NAME in s:
+                    b_lines.append(s)
+                    continue
+
+                # Rule 4-5: Forced X-split decisions
                 if forced_bucket == "BUYER":
                     b_lines.append(s)
                     continue
-                elif forced_bucket == "SUPPLIER":
+                if forced_bucket == "SUPPLIER":
                     s_lines.append(s)
                     continue
 
-                # Если строка не разрезана (UNKNOWN), применяем умную сортировку
-                if CLIENT_INN in s or "ММК-Пермь" in s:
-                    b_lines.append(s)
-                elif validate_and_clean_inn(s) or any(k in s.upper() for k in ["БИК", "КОРР.", "СЧ.", "РАСЧ"]):
+                # Rule 6: Bank/account keywords → Supplier
+                if any(k in s_up for k in ["БИК", "КОРР.", "СЧ.", "РАСЧ", "СЧЕТ №"]):
                     s_lines.append(s)
-                # ЖЕСТКИЙ ФИЛЬТР МУСОРА: Нет цифр и нет юридических маркеров = МУСОР
-                elif not any(c.isdigit() for c in s) and not any(k in s.upper() for k in ["ИНН", "КПП", "ООО", "ЗАО", "ПАО", "ОБЩЕСТВО", "ТЕЛ", "АДРЕС"]):
+                    continue
+
+                # Rule 7: ООО/ИП present but NOT client name → Supplier
+                legal_forms = ["ООО", "ОАО", "ЗАО", "ПАО", "АО ", "ИП "]
+                if any(k in s_up for k in legal_forms) and CLIENT_NAME not in s:
+                    s_lines.append(s)
+                    continue
+
+                # Rule 8: Hard trash — no digits, no legal markers
+                legal_markers = ["ИНН", "КПП", "ОБЩЕСТВО", "ТЕЛ", "АДРЕС", "ПОЧТОВЫЙ"]
+                if (not any(c.isdigit() for c in s)
+                        and not any(k in s_up for k in legal_markers)):
                     tr_lines.append(s)
-                elif is_buyer_prox and not is_supplier_prox:
+                    continue
+
+                # Rule 9: Proximity-based fallback
+                if is_buyer_prox and not is_supplier_prox:
                     b_lines.append(s)
                 elif is_supplier_prox:
                     s_lines.append(s)
                 else:
-                    tr_lines.append(s) # По умолчанию всё непонятное идет в МУСОР
+                    tr_lines.append(s)  # default: TRASH
 
+        # ── TABLE processing ─────────────────────────────────────────────────
         elif state == "TABLE":
             rd = {"№": "", "name": "", "qty": "", "un": "", "pr": "", "tot": ""}
             for w in row:
                 x = int(w['x'])
-                if x < 70: rd["№"] += " " + w['text']
+                if x < 70:    rd["№"]    += " " + w['text']
                 elif x < 500: rd["name"] += " " + w['text']
-                elif x < 620: rd["qty"] += " " + w['text']
-                elif x < 720: rd["un"] += " " + w['text']
-                elif x < 870: rd["pr"] += " " + w['text']
-                else: rd["tot"] += " " + w['text']
-            
-            def pk(v):
+                elif x < 620: rd["qty"]  += " " + w['text']
+                elif x < 720: rd["un"]   += " " + w['text']
+                elif x < 870: rd["pr"]   += " " + w['text']
+                else:         rd["tot"]  += " " + w['text']
+
+            def pk(v: str) -> str:
                 m = re.findall(r'(\d+[\d\s,.]*)', v)
                 return m[-1].strip() if m else v.strip()
-            
+
             f_tot = pk(rd["tot"])
-            if not f_tot and not any(c.isdigit() for c in rd["name"]) and len(rd["name"]) < 10: continue
-            
-            cols = [rd["№"].strip(), rd["name"].strip(), rd["qty"].strip(), rd["un"].strip(), pk(rd["pr"]), "", f_tot]
-            table_raw.append("| " + " | ".join([c.replace("|", "") for c in cols]) + " |")
+            if not f_tot and not any(c.isdigit() for c in rd["name"]) and len(rd["name"]) < 10:
+                continue
 
+            cols = [rd["№"].strip(), rd["name"].strip(), rd["qty"].strip(),
+                    rd["un"].strip(), pk(rd["pr"]), "", f_tot]
+            table_raw.append("| " + " | ".join(c.replace("|", "") for c in cols) + " |")
+
+        # ── FOOTER processing ─────────────────────────────────────────────────
         elif state == "FOOTER":
-            if full_line: footer_raw.append(full_line)
+            if full_line:
+                footer_raw.append(full_line)
 
-    res = [
-        "### [SUPPLIER_DATA] ###", "\n".join(s_lines), "",
-        "### [BUYER_DATA] ###", "\n".join(b_lines), "",
-        "### [HEADER_TRASH] ###", "\n".join(tr_lines)
-    ]
-    return "\n".join(res), "\n".join(table_raw) + "\n\n" + "\n".join(footer_raw)
+    # ── Phase 3: Label Cleanup ────────────────────────────────────────────────
+    # Strip cross-entity markers from each bucket
+    _buyer_marker_re    = re.compile(r'Покупатель\s*:.*', re.IGNORECASE)
+    _supplier_marker_re = re.compile(r'Поставщик\s*:.*',  re.IGNORECASE)
+
+    s_lines = [_buyer_marker_re.sub('', ln).strip() for ln in s_lines]
+    s_lines = [ln for ln in s_lines if ln]          # drop empty after strip
+    b_lines = [_supplier_marker_re.sub('', ln).strip() for ln in b_lines]
+    b_lines = [ln for ln in b_lines if ln]
+
+    # ── Phase 4: Structured MD Output ────────────────────────────────────────
+    sup_org = SUPPLIER_NAME or "Не найден"
+    sup_inn = SUPPLIER_INN  or "Не найден"
+
+    header_md = "\n".join([
+        "### [SUPPLIER_VERIFIED_DATA] ###",
+        f"- Organization: {sup_org}",
+        f"- INN: {sup_inn}",
+        "- Raw_Lines:",
+        *[f"  {ln}" for ln in s_lines],
+        "",
+        "### [BUYER_VERIFIED_DATA] ###",
+        f"- Organization: {CLIENT_NAME}",
+        f"- INN: {CLIENT_INN}",
+        "- Raw_Lines:",
+        *[f"  {ln}" for ln in b_lines],
+        "",
+        "### [TRASH_BIN] ###",
+        *tr_lines,
+    ])
+
+    table_md = "\n".join(table_raw) + "\n\n" + "\n".join(footer_raw)
+    return header_md, table_md
 
