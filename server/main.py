@@ -465,37 +465,29 @@ async def process_invoice(
             metadata_source = (full_header_text + "\n" + (extracted_text[:1000] if extracted_text else "")).strip()
             if not metadata_source: metadata_source = "Empty Document"
 
-            # Phase 1: Metadata (Pro -> Lite)
-            yield f"data: {json.dumps({'status': 'chunk', 'index': 0, 'total': 2, 'msg': 'Извлечение реквизитов (Pro)...'}, ensure_ascii=False)}\n\n"
-            from ai_service import extract_invoice_metadata
-            meta_prompt = load_prompt("invoice_header")
-            try:
-                main_doc, mt = await extract_invoice_metadata(metadata_source, api_key, folder_id, meta_prompt, "pro")
-                total_tokens += mt
-            except Exception as e:
-                print(f"Meta Pro Error: {e}. Falling back to Lite.")
-                main_doc, mt = await extract_invoice_metadata(metadata_source, api_key, folder_id, meta_prompt, "lite")
-                total_tokens += mt
-
-            if not main_doc: main_doc = {"name": original_name}
-
-            # Phase 2: Items Extraction (Pro, single chunk)
-            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 2, 'msg': 'Извлечение товаров (Pro)...'}, ensure_ascii=False)}\n\n"
+            # UNIFIED PHASE: Extraction (Header + Items + Footer)
+            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Извлечение данных (Unified Pro)...'}, ensure_ascii=False)}\n\n"
+            
+            # Combine Header and Table for full context
+            unified_source = (full_header_text + "\n\n" + extracted_text).strip()
             items_prompt = load_prompt("invoice_items")
             from ai_service import process_chunks_with_gpt
+            
             try:
-                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, items_prompt, "pro", context=main_doc):
+                async for ev in process_chunks_with_gpt(unified_source, api_key, folder_id, items_prompt, "pro", context={}):
                     if ev["type"] == "result":
                         all_items = ev["items"]
                         total_tokens += ev["tokens"]
-                        if not footer_data: footer_data = ev.get("footer", {})
+                        main_doc = ev.get("main_doc", {"name": original_name})
+                        footer_data = ev.get("footer", {})
             except Exception as e:
-                print(f"Items Pro Error: {e}. Falling back to Lite.")
-                async for ev in process_chunks_with_gpt(extracted_text, api_key, folder_id, items_prompt, "lite", context=main_doc):
+                print(f"Unified Pro Error: {e}. Falling back to Lite.")
+                async for ev in process_chunks_with_gpt(unified_source, api_key, folder_id, items_prompt, "lite", context={}):
                     if ev["type"] == "result":
                         all_items = ev["items"]
                         total_tokens += ev["tokens"]
-                        if not footer_data: footer_data = ev.get("footer", {})
+                        main_doc = ev.get("main_doc", {"name": original_name})
+                        footer_data = ev.get("footer", {})
 
             # Final structural assembly
             final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)

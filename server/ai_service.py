@@ -198,6 +198,71 @@ def normalize_invoice_table(md_text: str) -> str:
         
     return "\n".join(output_lines)
 
+def apply_math_arbitrage(json_data: dict) -> dict:
+    """
+    Python-based Auditor (Pipeline v6.0 Арбитраж).
+    Validates GPT output against math principles: Qty * Price = Total.
+    Checks global sum against Footer Grand Total.
+    """
+    if not json_data: return {}
+    
+    header = json_data.get("header", {})
+    footer = json_data.get("footer", {})
+    items = json_data.get("items", [])
+    
+    # Global state for audit
+    total_accumulated = 0.0
+    vat_rate_global = str(footer.get("vat_rate_global", "20")).replace("%", "")
+    
+    for item in items:
+        # Pre-cleaning fields
+        def to_f(v): 
+            if not v: return 0.0
+            return float(str(v).replace(" ", "").replace(",", "."))
+
+        qty = to_f(item.get("quantity", 0))
+        price = to_f(item.get("price", 0))
+        total = to_f(item.get("total", 0))
+        price_disc = to_f(item.get("unit_price_discounted", 0))
+        
+        # 1. Row Check
+        expected_total = round(qty * price, 2)
+        expected_total_disc = round(qty * price_disc, 2) if price_disc > 0 else 0.0
+        
+        notes = []
+        if abs(expected_total - total) > 0.02:
+            # Maybe price_disc was the intended price?
+            if price_disc > 0 and abs(expected_total_disc - total) <= 0.02:
+                notes.append("Сумма совпадает с ценой со скидкой.")
+            else:
+                notes.append(f"Ошибка расчета: {qty} * {price} != {total}")
+                item["math_error"] = True
+        
+        # 2. Automated Calculations
+        if not item.get("total_no_discount"):
+            item["total_no_discount"] = expected_total
+        
+        # 3. VAT Calculation (if rate exists)
+        rate = float(vat_rate_global) if vat_rate_global.isdigit() else 20.0
+        item["vat_sum"] = round(total * (rate / (100 + rate)), 2)
+        
+        item["validation_notes"] = " ".join(notes)
+        total_accumulated += total
+
+    # 4. Global Arbitrage
+    grand_total = 0.0
+    try:
+        gt_raw = str(footer.get("total_amount", "0")).replace(" ", "").replace(",", ".")
+        grand_total = float(re.search(r'\d+(\.\d+)?', gt_raw).group(0)) if re.search(r'\d+', gt_raw) else 0.0
+    except: pass
+
+    if grand_total > 0 and abs(total_accumulated - grand_total) > 0.1:
+        msg = f"⚠ Несовпадение итогов: Сумма строк ({total_accumulated:.2f}) != Итого ({grand_total:.2f})"
+        if "validation_notes" not in footer: footer["validation_notes"] = ""
+        footer["validation_notes"] = (footer["validation_notes"] + " " + msg).strip()
+
+    return json_data
+
 async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "pro"):
     """Extracts only the metadata (inn, date, number) from raw header text."""
     lines = text.split('\n')
@@ -270,6 +335,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
             elif isinstance(parsed, dict):
                 fixes_to_add = parsed.get('fixes', [])
                 items_to_add = parsed.get('items', [])
+                # Store potential metadata/footer for extraction
                 if not main_doc:
                     main_doc = parsed.get('header', parsed.get('document', {}))
                 if not footer_data:
@@ -279,13 +345,21 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
             all_items.extend(items_to_add)
         else:
             all_items.append({"pos": "ERR", "name": f"Ошибка чанка {i+1}", "note": err_msg, "is_error_chunk": True})
+
+    # FINAL STEP: Apply Python Mathematical Arbitrage
+    final_json = {
+        "header": main_doc,
+        "items": all_items,
+        "footer": footer_data
+    }
+    final_json = apply_math_arbitrage(final_json)
             
     yield {
         "type": "result", 
-        "items": all_items, 
+        "items": final_json["items"], 
         "fixes": all_fixes, 
         "tokens": total_tokens, 
-        "main_doc": main_doc, 
-        "footer": footer_data,
+        "main_doc": final_json["header"], 
+        "footer": final_json["footer"],
         "chunks_report": []
     }
