@@ -421,21 +421,43 @@ async def process_invoice(
         try:
             # 1. OCR / Parsing Phase
             if filename.endswith(".pdf"):
-                from parser_utils import ocr_to_grid_markdown
+                from parser_utils import ocr_to_grid_markdown, deskew_image
                 import pdfplumber
                 all_ocr_text = ""
                 full_header_buffer = ""
+                raw_ocr_data = [] # To store full JSONs for all pages
+                
                 with pdfplumber.open(temp_path) as pdf:
                     num_pages = len(pdf.pages)
-                    for pg in pdf.pages:
-                        img = io.BytesIO()
-                        pg.to_image(resolution=150).original.save(img, format='PNG')
-                        txt_res, low_res, words_res = await ocr_yandex(base64.b64encode(img.getvalue()).decode('utf-8'), api_key, folder_id)
+                    for i, pg in enumerate(pdf.pages):
+                        # 1. DPI OPTIMIZATION (200 DPI to fit 4MB limit)
+                        p_img = pg.to_image(resolution=200).original
+                        
+                        # 2. DESKEWING (OpenCV alignment)
+                        p_img = deskew_image(p_img)
+                        
+                        # 3. Preparation for OCR
+                        img_byte_arr = io.BytesIO()
+                        p_img.save(img_byte_arr, format='PNG')
+                        
+                        # 4. Call Yandex OCR
+                        txt_res, low_res, words_res, raw_json = await ocr_yandex(base64.b64encode(img_byte_arr.getvalue()).decode('utf-8'), api_key, folder_id)
+                        raw_ocr_data.append(raw_json)
+                        
+                        # 5. Process to Grid MD
                         h, t = ocr_to_grid_markdown(words_res)
                         if h: full_header_buffer += f"\n{h}"
                         if t: all_ocr_text += f"\n\n{t}"
                         if low_res: has_low_confidence = True
+                        
+                        # Mandatory Throttling: Strict adherence to 1 RPS entry limit
+                        await asyncio.sleep(1.5)
                 
+                # Save Raw OCR Log for Debugging
+                raw_log_p = get_file_path(projectId, disk_name, "_raw_ocr.json")
+                with open(raw_log_p, "w", encoding="utf-8") as f:
+                    json.dump(raw_ocr_data, f, ensure_ascii=False, indent=2)
+
                 extracted_text = all_ocr_text.strip()
                 full_header_text = full_header_buffer.strip()
                 p_method = "ocr_table"
@@ -454,40 +476,25 @@ async def process_invoice(
                 full_header_text = h.strip()
                 if low_res: has_low_confidence = True
 
-            # Save sterile MD files locally for reference
+            # Save sterile MD files locally for reference (Full Debug View)
+            full_md_debug = (full_header_text + "\n\n" + extracted_text).strip()
+            
             grid_p = get_file_path(projectId, disk_name, "_invoice.md")
-            with open(grid_p, "w", encoding="utf-8") as f: f.write(extracted_text)
+            with open(grid_p, "w", encoding="utf-8") as f: f.write(full_md_debug)
             
             final_p = get_file_path(projectId, disk_name, "_invoice_final.md")
-            with open(final_p, "w", encoding="utf-8") as f: f.write(extracted_text)
+            with open(final_p, "w", encoding="utf-8") as f: f.write(full_md_debug)
 
             # Metadata source (Header + bit of grid)
             metadata_source = (full_header_text + "\n" + (extracted_text[:1000] if extracted_text else "")).strip()
             if not metadata_source: metadata_source = "Empty Document"
 
-            # UNIFIED PHASE: Extraction (Header + Items + Footer)
-            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Извлечение данных (Unified Pro)...'}, ensure_ascii=False)}\n\n"
-            
-            # Combine Header and Table for full context
-            unified_source = (full_header_text + "\n\n" + extracted_text).strip()
-            items_prompt = load_prompt("invoice_items")
-            from ai_service import process_chunks_with_gpt
-            
-            try:
-                async for ev in process_chunks_with_gpt(unified_source, api_key, folder_id, items_prompt, "pro", context={}):
-                    if ev["type"] == "result":
-                        all_items = ev["items"]
-                        total_tokens += ev["tokens"]
-                        main_doc = ev.get("main_doc", {"name": original_name})
-                        footer_data = ev.get("footer", {})
-            except Exception as e:
-                print(f"Unified Pro Error: {e}. Falling back to Lite.")
-                async for ev in process_chunks_with_gpt(unified_source, api_key, folder_id, items_prompt, "lite", context={}):
-                    if ev["type"] == "result":
-                        all_items = ev["items"]
-                        total_tokens += ev["tokens"]
-                        main_doc = ev.get("main_doc", {"name": original_name})
-                        footer_data = ev.get("footer", {})
+            # DEBUG MODE: AI Disabled
+            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'DEBUG MODE: ИИ отключен (Raw MD mode)...'}, ensure_ascii=False)}\n\n"
+            all_items = []
+            main_doc = {"name": original_name}
+            footer_data = {}
+            total_tokens = 0
 
             # Final structural assembly
             final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)
@@ -747,12 +754,35 @@ async def storage_delete(name: str, projectId: str, nuclear: bool = False):
     m = _load_manifest(projectId)
     dk = None
     for k, v in m.items():
-        if isinstance(v, dict) and v.get("originalName")==name: dk = k; break
-    if not dk: dk = secure_filename(name)
-    for ext in ["", ".json", ".md"]:
-        p = get_file_path(projectId, dk, ext)
-        if os.path.exists(p): os.remove(p)
-    if dk in m: del m[dk]; _save_manifest(m, projectId)
+        if isinstance(v, dict) and v.get("originalName") == name:
+            dk = k
+            break
+            
+    if not dk:
+        dk = secure_filename(name)
+        
+    f_dir = get_files_dir(projectId)
+    
+    if nuclear and os.path.exists(f_dir):
+        # NUCLEAR: Delete ALL artifacts starting with the manifest key (prefix dk)
+        # This catches .pdf, _raw_ocr.json, _invoice.md, etc.
+        for f in os.listdir(f_dir):
+            if f.startswith(dk):
+                try:
+                    os.remove(os.path.join(f_dir, f))
+                except Exception as e:
+                    print(f"Nuclear deletion error for {f}: {e}")
+    else:
+        # CONSERVATIVE: Only delete original and exact .json/.md pairs
+        for ext in ["", ".json", ".md"]:
+            p = get_file_path(projectId, dk, ext)
+            if os.path.exists(p):
+                os.remove(p)
+                
+    if dk in m:
+        del m[dk]
+        _save_manifest(m, projectId)
+        
     return {"status": "success"}
 
 @app.get("/api/storage/files/{name}")

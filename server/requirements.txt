@@ -12,3 +12,5 @@ transliterate
 pdfplumber
 rapidfuzz
 tabulate
+opencv-python-headless
+numpy

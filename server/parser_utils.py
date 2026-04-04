@@ -3,6 +3,47 @@ import re
 import pandas as pd
 import io
 import pdfplumber
+import cv2
+import numpy as np
+from PIL import Image
+
+def deskew_image(pil_img):
+    """
+    Straightens a tilted scan (OCR Stage 1 Optimization).
+    Uses OpenCV to find the text angle and rotate the image.
+    """
+    # 1. Convert PIL to OpenCV (BGR)
+    cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    
+    # 2. To Grayscale and Binarize
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.bitwise_not(gray)
+    thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    
+    # 3. Find coordinates of all white pixels (text)
+    coords = np.column_stack(np.where(thresh > 0))
+    if len(coords) == 0: return pil_img
+
+    # 4. Find the minAreaRect for the points
+    rect = cv2.minAreaRect(coords)
+    angle = rect[-1]
+    
+    # Normalize the angle (OpenCV returns -90 to 0)
+    if angle < -45:
+        angle = -(90 + angle)
+    else:
+        angle = -angle
+        
+    # Rotate if tilt is significant (> 0.5 deg)
+    if abs(angle) > 0.5:
+        (h, w) = cv_img.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        cv_img = cv2.warpAffine(cv_img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        # Convert back to PIL
+        return Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
+    
+    return pil_img
 
 UNITS_MAP = {
     # базовые
@@ -56,6 +97,66 @@ def to_float(val) -> float:
     val_str = str(val).replace(' ', '').replace(',', '.')
     match = re.search(r'-?\d+(\.\d+)?', val_str)
     return float(match.group(0)) if match else 0.0
+
+def validate_and_clean_inn(text: str) -> str:
+    """
+    Validates Russian INN (10 or 12 digits).
+    Includes logic for 11-digit OCR errors (stripping first/last char).
+    """
+    import re
+    inn = re.sub(r'\D', '', str(text))
+    
+    # 1. Handle OCR ghosts (11 digits)
+    if len(inn) == 11:
+        candidates = [inn[1:], inn[:-1]]
+        for cand in candidates:
+            if validate_inn_logic(cand): return cand
+    
+    return inn if validate_inn_logic(inn) else ""
+
+def validate_inn_logic(s: str) -> bool:
+    """
+    Strict Russian INN checksum validation (10 or 12 digits).
+    """
+    if not s or not s.isdigit(): return False
+    if len(s) not in [10, 12]: return False
+    
+    if len(s) == 10:
+        coeffs = [2, 4, 10, 3, 5, 9, 4, 6, 8]
+        s_sum = sum(int(s[i]) * coeffs[i] for i in range(9))
+        return (s_sum % 11) % 10 == int(s[9])
+        
+    if len(s) == 12:
+        coeffs1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
+        s_sum1 = sum(int(s[i]) * coeffs1[i] for i in range(10))
+        n11 = (s_sum1 % 11) % 10
+        
+        coeffs2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
+        s_sum2 = sum(int(s[i]) * coeffs2[i] for i in range(11))
+        n12 = (s_sum2 % 11) % 10
+        
+        return n11 == int(s[10]) and n12 == int(s[11])
+    return False
+
+def validate_and_clean_inn(text: str) -> str:
+    import re
+    inn = re.sub(r'\D', '', str(text))
+    if len(inn) == 11:
+        for cand in [inn[1:], inn[:-1]]:
+            if validate_inn_logic(cand): return cand
+    return inn if validate_inn_logic(inn) else ""
+
+def validate_bank_details(bik: str, acc_settlement: str = "", acc_corr: str = ""):
+    import re
+    bik = re.sub(r'\D', '', str(bik))
+    acc_s = re.sub(r'\D', '', str(acc_settlement))
+    acc_c = re.sub(r'\D', '', str(acc_corr))
+    is_bik_ok = len(bik) == 9 and bik.startswith('04')
+    res_s = acc_s if len(acc_s) == 20 else ""
+    res_c = acc_c if len(acc_c) == 20 and acc_c.startswith('301') else ""
+    is_valid = is_bik_ok and res_c and bik[-3:] == res_c[-3:]
+    return {"bik": bik if is_bik_ok else "", "settlement_account": res_s, 
+            "correspondent_account": res_c, "is_valid": is_valid}
 
 def calculate_uncertainty(struct: dict, global_low_conf: bool):
     items = struct.get("items", [])
@@ -781,313 +882,144 @@ def detect_pdf_type(file_path: str) -> str:
 
 def ocr_to_grid_markdown(words: list) -> tuple:
     """
-    Intelligent Multi-Table Scanner - Pipeline v5.0 («Безупречный счет»).
-    Implements Iron Anchor (№), Piggy Bank (Buffering), and X-Corridors.
+    STAGE 3.3 VERSION - UNIVERSAL MAGNETIC BUCKETS.
+    1. Discovery: Finds Buyer (CLIENT_INN) and Supplier (Any other valid INN).
+    2. Clustering: Magnetic Y-clustering (+/- 150px) around anchors.
+    3. X-Separator: Physically split rows bridging two magnetic zones.
+    4. Sanitizer: Full INN/BIK check + Trash filter.
     """
     if not words: return "", ""
+    import re
 
-    # 1. Pre-sanitization: Clean up noise symbols
-    words = [w for w in words if w.get('text') and len(w['text'].strip()) > 0]
+    CLIENT_INN = "5905271743"
+    
+    # Discovery Phase
+    supplier_y_anchors = []
+    buyer_y_anchors = []
+    
+    # 1. Identify Anchor Points via Entity Validation
     for w in words:
-        # Keep numeric parts and Cyrillic/Latin letters
-        t = re.sub(r'[^\x00-\x7fа-яёА-ЯЁ\s№.,-]', '', w['text']).strip()
-        w['text'] = t.replace("|", "").replace("\\", "")
-    
-    # Group words into physical rows by Y (tolerance 10px)
+        txt = w['text']
+        if len(txt) >= 10:
+            inn_cand = validate_and_clean_inn(txt)
+            if inn_cand == CLIENT_INN:
+                buyer_y_anchors.append(w['y'])
+            elif inn_cand:
+                supplier_y_anchors.append(w['y'])
+        if "ММК-Пермь" in txt:
+            buyer_y_anchors.append(w['y'])
+
+    # 2. Row Grouping (Vertical normalization)
     words.sort(key=lambda w: w['y'])
-    rows_raw = []
+    rows_grouped = []
     if words:
-        current_phys_row = [words[0]]
+        current_row = [words[0]]
         for i in range(1, len(words)):
-            if abs(words[i]['y'] - current_phys_row[0]['y']) < 10:
-                current_phys_row.append(words[i])
+            if abs(words[i]['y'] - current_row[0]['y']) < 12: current_row.append(words[i])
             else:
-                rows_raw.append(current_phys_row)
-                current_phys_row = [words[i]]
-        rows_raw.append(current_phys_row)
+                rows_grouped.append(current_row)
+                current_row = [words[i]]
+        rows_grouped.append(current_row)
 
-    # 2. Table Segmentation & Header Isolation
-    table_anchors = ["наименование", "товар", "услуга", "работа", "номенклатура"]
-    footer_words = ["итого", "всего", "сумма к оплате"]
+    # 3. Magnetic Bucketing Logic
+    s_lines, b_lines, tr_lines = [], [], []
+    table_raw = ["### TABLE ###", "| № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    footer_raw = ["### FOOTER_DATA ###"]
     
-    header_raw_lines = []
-    table_segments = []
-    current_segment = []
-    in_table = False
-    first_table_found = False
+    state = "HEADER"
+    seen_unique = set()
+    
+    for row in rows_grouped:
+        row.sort(key=lambda x: x['x'])
+        row_y = row[0]['y']
+        full_line = " ".join([w['text'] for w in row]).strip()
+        l_line = full_line.lower()
 
-    for row in rows_raw:
-        row_text = " ".join([w['text'].lower() for w in row])
-        # Detect table start: MUST have anchor AND quantitative marker
-        if not in_table and any(a in row_text for a in table_anchors):
-            if any(m in row_text for m in ["№", "цена", "кол", "сумм"]):
-                in_table = True
-                first_table_found = True
-                current_segment = [row] # Include header row
-                continue
-        
-        if in_table and any(fw in row_text for fw in footer_words):
-            in_table = False
-            table_segments.append(current_segment)
-            current_segment = []
+        # Block Transitions
+        if state == "HEADER" and any(k in l_line for k in ["наименование", "кол-во", "цена"]):
+            state = "TABLE"
             continue
+        elif state == "TABLE" and any(k in l_line for k in ["итого", "всего", "в том числе"]):
+            state = "FOOTER"
 
-        if in_table:
-            current_segment.append(row)
-        elif not first_table_found:
-            # Sort header text by X for logical reading
-            line = " ".join([w['text'] for w in sorted(row, key=lambda x: x['x'])])
-            if line.strip(): header_raw_lines.append(line)
-
-    if in_table and current_segment:
-        table_segments.append(current_segment)
-
-    # 3. Process each table segment using Corridors and Anchors
-    all_tables_md = []
-    system_regex = re.compile(r'^([А-ЯЁA-Zа-яёa-z]{1,3}[-]?\d+)')
-
-    for segment in table_segments:
-        if not segment: continue
-        
-        # Step 3a: Define X-Corridors based on Header Row
-        corridors = {"№": 0, "name": 0, "qty": 0, "unit": 0, "price": 0, "sum": 0}
-        h_row = segment[0]
-        for w in h_row:
-            txt = w['text'].lower()
-            if "№" in txt or "п/п" in txt: corridors["№"] = w['x']
-            elif any(x in txt for x in table_anchors): corridors["name"] = w['x']
-            elif "кол" in txt: corridors["qty"] = w['x']
-            elif "ед" in txt or "изм" in txt: corridors["unit"] = w['x']
-            elif "цена" in txt or "тариф" in txt: corridors["price"] = w['x']
-            elif "сумм" in txt or "всего" in txt: corridors["sum"] = w['x']
-
-        # Safe fallbacks if some anchor not found
-        if corridors["name"] == 0: corridors["name"] = corridors["№"] + 50 if corridors["№"] > 0 else 100
-        # For corridors, we care MOST about Name-to-Qty boundary
-        qty_start = corridors["qty"] or 450
-        price_start = corridors["price"] or 650
-        sum_start = corridors["sum"] or 800
-
-        table_md_header = [
-            "| Группа | № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |"
-        ]
-        
-        processed_items = []
-        current_item = None
-        current_group = ""
-
-        # Step 3b: Iterate Rows with Buffering Logic
-        currency_pattern = re.compile(r'\d+[\s]*[.,][\s]*\d{2}')
-        
-        for r_idx in range(1, len(segment)):
-            r = segment[r_idx]
-            sorted_words = sorted(r, key=lambda x: x['x'])
+        if state == "HEADER":
+            # X-Split Logic: Identify split point if row spans zones
+            # Use X of MMK anchor as split boundary if detected
+            split_x = -1
+            for ay in buyer_y_anchors:
+                if abs(row_y - ay) < 150:
+                    for w in row:
+                        if CLIENT_INN in w['text'] or "ММК-Пермь" in w['text']:
+                            split_x = w['x'] - 10
+                            break
+                    if split_x != -1: break
             
-            # Temporary bucket for this row
-            row_data = {"№": "", "name": "", "qty": "", "unit": "", "price": "", "sum": ""}
-            
-            for w in sorted_words:
-                wx = w['x']
-                # X-Corridor Assignment:
-                if wx < min(80, (corridors["name"] or 100)):
-                    row_data["№"] += " " + w['text']
-                elif wx < qty_start:
-                    row_data["name"] += " " + w['text']
-                elif wx < (corridors["unit"] or (qty_start + 50)):
-                    # Shift Check: If non-digit text falls into numeric column, pull it back to name
-                    if any(c.isalpha() for c in w['text']) and not any(c.isdigit() for c in w['text']):
-                        row_data["name"] += " " + w['text']
-                    else:
-                        row_data["qty"] += " " + w['text']
-                elif wx < price_start:
-                    row_data["unit"] += " " + w['text']
-                elif wx < sum_start:
-                    row_data["price"] += " " + w['text']
-                else:
-                    row_data["sum"] += " " + w['text']
-
-            # Clean buckets
-            for k in row_data: row_data[k] = row_data[k].strip()
-
-            # "IRON ANCHOR" Check (№) - Now Magnetic (any digit works)
-            is_anchor = bool(re.search(r'\d', row_data["№"]))
-            # EXCLUSION: If № is a single alphanumeric word without spaces (e.g. D125), it's NOT an anchor
-            if is_anchor and re.match(r'^[A-Za-zА-Яа-яЁё]+\d+\w*$', row_data["№"]):
-                is_anchor = False
-            
-            # "FINANCE TRIGGER" (Price + Sum) - Fallback if № is missing
-            has_finance = bool(currency_pattern.search(row_data["price"])) and bool(currency_pattern.search(row_data["sum"]))
-            
-            # "SYSTEM" Check (V1, P1, etc.)
-            system_match = system_regex.search(row_data["№"] + " " + row_data["name"])
-            if system_match:
-                current_group = system_match.group(1)
-            
-            # LOGIC:
-            if is_anchor or has_finance:
-                # Flush previous item
-                if current_item: processed_items.append(current_item)
-                # Create NEW item
-                current_item = {
-                    "group": current_group,
-                    "№": row_data["№"],
-                    "name": row_data["name"],
-                    "qty": row_data["qty"],
-                    "unit": row_data["unit"],
-                    "price": row_data["price"],
-                    "sum": row_data["sum"]
-                }
+            # Divide row into two potential segments
+            left_txt, right_txt = [], []
+            if split_x != -1:
+                for w in row:
+                    if w['x'] < split_x: left_txt.append(w['text'])
+                    else: right_txt.append(w['text'])
             else:
-                # "PIGGY BANK": Combine this noise into the existing item description
-                if current_item:
-                    # Append Name
-                    if row_data["name"]: current_item["name"] += " " + row_data["name"]
-                    # If current item is missing qty/price, try taking it from this 'noise' row
-                    if not current_item["qty"] and row_data["qty"]: current_item["qty"] = row_data["qty"]
-                    if not current_item["unit"] and row_data["unit"]: current_item["unit"] = row_data["unit"]
-                    if not current_item["price"] and row_data["price"]: current_item["price"] = row_data["price"]
-                    if not current_item["sum"] and row_data["sum"]: current_item["sum"] = row_data["sum"]
-                else:
-                    # Orphan row before any anchor - probably a header/system title
-                    if row_data["name"]:
-                        # Just keep as a placeholder/system marker
-                        pass
+                left_txt = [w['text'] for w in row]
 
-        # Final flush
-        if current_item: processed_items.append(current_item)
+            for s_val in [" ".join(left_txt), " ".join(right_txt)]:
+                s = s_val.strip()
+                if not s or len(s) < 2: continue
+                norm = re.sub(r'\W', '', s).lower()
+                if norm in seen_unique: continue
+                seen_unique.add(norm)
 
-        # Step 3c: Render MD Table for this segment
-        segment_md_lines = []
-        for it in processed_items:
-            # Final noise cleaning before output
-            row_cols = [it["group"], it["№"], it["name"], it["qty"], it["unit"], it["price"], "", it["sum"]]
-            clean_cols = [str(c).replace("|", "").strip() for c in row_cols]
-            if any(clean_cols):
-                segment_md_lines.append("| " + " | ".join(clean_cols) + " |")
-        
-        if segment_md_lines:
-            all_tables_md.append("\n".join(table_md_header) + "\n" + "\n".join(segment_md_lines))
+                # TRASH FILTER (Proximity check + Content check)
+                is_buyer_prox = any(abs(row_y - ay) < 150 for ay in buyer_y_anchors)
+                is_supplier_prox = any(abs(row_y - ay) < 150 for ay in supplier_y_anchors)
+                
+                has_digit = any(c.isdigit() for c in s)
+                has_keys = any(k in s.upper() for k in ["ИНН", "КПП", "СЧЕТ", "АДРЕС", "БИК"])
+                
+                # Trash Rule: Short, no digits, no keys, and away from anchors
+                if len(s) < 12 and not has_digit and not has_keys and not is_buyer_prox and not is_supplier_prox:
+                    tr_lines.append(s)
+                    continue
 
-    # 4. FINAL ASEPTIC FILTER: Strictly keep only valid MD lines
-    final_sterile_md = []
-    for table_block in all_tables_md:
-        block_lines = []
-        for line in table_block.split("\n"):
-            s = line.strip()
-            if s.startswith("|") and s.endswith("|"):
-                block_lines.append(line)
-        if block_lines:
-            final_sterile_md.append("\n".join(block_lines))
+                # Final Magnetic Distribution
+                if CLIENT_INN in s or "ММК-Пермь" in s:
+                    b_lines.append(s)
+                elif validate_and_clean_inn(s) or any(k in s.upper() for k in ["БИК", "КОРР.", "СЧ."]):
+                    s_lines.append(s)
+                elif is_buyer_prox:
+                    b_lines.append(s)
+                else: # Default or supplier proximity
+                    s_lines.append(s)
 
-    return "\n\n".join(header_raw_lines), "\n\n".join(final_sterile_md)
-
-
-def clean_empty_columns(md_text: str) -> str:
-    """
-    Analyzes a Markdown table and removes columns that are empty across ALL rows.
-    Supports tables starting/ending with | and also handles non-table text around it.
-    """
-    if not md_text or "|" not in md_text:
-        return md_text
-
-    lines = md_text.split("\n")
-    table_lines = []
-    other_lines_before = []
-    other_lines_after = []
-    
-    in_table = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("|") and stripped.endswith("|"):
-            in_table = True
-            table_lines.append(line)
-        else:
-            if not in_table:
-                other_lines_before.append(line)
-            else:
-                other_lines_after.append(line)
-
-    if not table_lines:
-        return md_text
-
-    # Split into cells (ignoring leading/trailing empty strings from split)
-    raw_rows = []
-    for line in table_lines:
-        cells = line.strip().strip("|").split("|")
-        raw_rows.append([c.strip() for c in cells])
-
-    if not raw_rows:
-        return md_text
-
-    # Skip the separator line (usually index 1) for emptiness check
-    # But we need its column count
-    num_cols = len(raw_rows[0])
-    
-    # Indices of columns that have at least one non-empty value
-    # We skip rows that look like separators (all - or :)
-    valid_cols = []
-    for col_idx in range(num_cols):
-        has_content = False
-        for row_idx, row in enumerate(raw_rows):
-            # Skip separator row (index 1 is standard for MD, or check for ---)
-            if row_idx == 1 or all(c in "-: " for c in "".join(row)):
-                continue
-            if col_idx < len(row) and row[col_idx].strip():
-                has_content = True
-                break
-        if has_content:
-            valid_cols.append(col_idx)
-
-    if not valid_cols:
-        return md_text # No non-empty columns? Keep original.
-
-    # Reconstruct the table
-    cleaned_table = []
-    for row in raw_rows:
-        new_row = [row[idx] if idx < len(row) else "" for idx in valid_cols]
-        cleaned_table.append("| " + " | ".join(new_row) + " |")
-
-    # Combine back
-    return "\n".join(other_lines_before + cleaned_table + other_lines_after)
-
-
-def generate_invoice_summary(data: dict) -> str:
-    """
-    Generates a clean Markdown summary for the invoice from JSON data.
-    """
-    doc = data.get("document", {}) or {}
-    items = data.get("items", []) or []
-    footer = data.get("footer", {}) or {}
-
-    s_name = doc.get("supplier_name", "Не определен")
-    s_inn = doc.get("supplier_inn", "")
-    inv_num = doc.get("invoice_number", "---")
-    inv_date = doc.get("date", "---")
-    
-    total_pos = len([i for i in items if i.get("name") and not i.get("is_header")])
-    total_sum = footer.get("total_amount", 0.0)
-    if not total_sum:
-        total_sum = sum(to_float(i.get("total", 0)) for i in items)
-
-    lines = []
-    lines.append(f"### Сводка по счету №{inv_num} от {inv_date}")
-    lines.append("")
-    lines.append(f"**Поставщик:** {s_name} (ИНН: {s_inn})" if s_inn else f"**Поставщик:** {s_name}")
-    lines.append(f"**Покупатель:** {doc.get('buyer_name', 'Не определен')}")
-    lines.append("")
-    lines.append(f"**Всего позиций:** {total_pos} шт.")
-    lines.append(f"**Сумма итого:** {total_sum:,.2f} руб.".replace(",", " "))
-    lines.append("")
-    
-    if footer:
-        lines.append("#### Условия и примечания")
-        if footer.get("delivery_terms"):
-            lines.append(f"- **Доставка:** {footer['delivery_terms']}")
-        if footer.get("payment_terms"):
-            lines.append(f"- **Оплата:** {footer['payment_terms']}")
-        if footer.get("additional_notes") and footer.get("additional_notes") != "null":
-            lines.append(f"- **Прочее:** {footer['additional_notes']}")
+        elif state == "TABLE":
+            rd = {"№": "", "name": "", "qty": "", "un": "", "pr": "", "tot": ""}
+            for w in row:
+                x = int(w['x'])
+                if x < 70: rd["№"] += " " + w['text']
+                elif x < 500: rd["name"] += " " + w['text']
+                elif x < 620: rd["qty"] += " " + w['text']
+                elif x < 720: rd["un"] += " " + w['text']
+                elif x < 870: rd["pr"] += " " + w['text']
+                else: rd["tot"] += " " + w['text']
             
-    return "\n".join(lines)
+            def pk(v):
+                m = re.findall(r'(\d+[\d\s,.]*)', v)
+                return m[-1].strip() if m else v.strip()
+            
+            f_tot = pk(rd["tot"])
+            if not f_tot and not any(c.isdigit() for c in rd["name"]) and len(rd["name"]) < 10: continue
+            
+            cols = [rd["№"].strip(), rd["name"].strip(), rd["qty"].strip(), rd["un"].strip(), pk(rd["pr"]), "", f_tot]
+            table_raw.append("| " + " | ".join([c.replace("|", "") for c in cols]) + " |")
+
+        elif state == "FOOTER":
+            if full_line: footer_raw.append(full_line)
+
+    res = [
+        "### [SUPPLIER_DATA] ###", "\n".join(s_lines), "",
+        "### [BUYER_DATA] ###", "\n".join(b_lines), "",
+        "### [HEADER_TRASH] ###", "\n".join(tr_lines)
+    ]
+    return "\n".join(res), "\n".join(table_raw) + "\n\n" + "\n".join(footer_raw)
 

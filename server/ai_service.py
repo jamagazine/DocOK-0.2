@@ -5,7 +5,13 @@ import asyncio
 import os
 
 async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
-    url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+    """
+    Robust Hybrid OCR Engine (Vision V1).
+    Handles 429 errors on initial submission and uses safe 1.5s polling.
+    """
+    url_analyze = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+    url_operations = "https://operation.api.cloud.yandex.net/operations/"
+    
     headers = {
         "Authorization": f"Api-Key {api_key}",
         "x-folder-id": folder_id,
@@ -17,29 +23,80 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
             "content": b64_img,
             "features": [{
                 "type": "TEXT_DETECTION",
-                "text_detection_config": {
-                    "language_codes": ["*"]
-                }
+                "text_detection_config": {"language_codes": ["*"]}
             }]
         }]
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        # 1. Submission Phase with 429 Defense
+        resp = None
+        for attempt in range(3):
+            resp = await client.post(url_analyze, headers=headers, json=payload)
+            if resp.status_code == 429:
+                wait_time = 2.0 + (attempt * 1.5)
+                print(f"Yandex 429 (Initial Submit). Attempt {attempt+1}/3. Waiting {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            resp.raise_for_status()
+            break
+        
+        if not resp:
+            raise Exception("Failed to submit OCR task after 3 attempts.")
+            
         data = resp.json()
 
+        # Case A: Sync Results
+        if "results" in data:
+            return _extract_ocr_data(data)
+
+        # Case B: Async Operation
+        operation = data.get("operation", {})
+        op_id = operation.get("id")
+        if not op_id:
+            raise ValueError(f"Unexpected response from Yandex Vision: {data}")
+
+        # 2. Polling Phase (Throttled)
+        max_polls = 50
+        poll_interval = 1.5 # Colleague recommended 1.2-1.5
+
+        for attempt in range(max_polls):
+            await asyncio.sleep(poll_interval)
+            try:
+                op_resp = await client.get(f"{url_operations}{op_id}", headers=headers)
+                if op_resp.status_code == 429:
+                    print(f"Polling 429... waiting 2.5s extra. Operation: {op_id}")
+                    await asyncio.sleep(2.5)
+                    continue
+                
+                op_resp.raise_for_status()
+                op_status = op_resp.json()
+
+                if op_status.get("done"):
+                    if "error" in op_status:
+                        raise Exception(f"Yandex OCR error: {op_status['error']}")
+                    return _extract_ocr_data(op_status.get("response"))
+                    
+            except Exception as e:
+                print(f"Error polling Yandex Operation {op_id}: {e}. Retrying inner loop...")
+                await asyncio.sleep(2.0)
+
+    raise Exception(f"OCR Operation {op_id} timed out after {max_polls * poll_interval}s.")
+
+def _extract_ocr_data(data: dict):
+    """
+    Unified parser for Yandex Vision JSON (extracts text, coordinates, and confidence).
+    """
+    if not data: return "", False, [], {}
+    
     text_parts = []
-    all_words = []  # List of {text, x, y, w, h}
+    all_words = []
     has_low_confidence = False
 
     for result in data.get('results', []):
         for res2 in result.get('results', []):
             text_detection = res2.get('textDetection', {})
             for page in text_detection.get('pages', []):
-                p_w = float(page.get('width', 1))
-                p_h = float(page.get('height', 1))
-                
                 for block in page.get('blocks', []):
                     for line in block.get('lines', []):
                         for word in line.get('words', []):
@@ -50,7 +107,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                             w_text = word.get('text', '')
                             text_parts.append(w_text)
                             
-                            # Extract bounding box
+                            # Extract bounding box to coordinates
                             poly = word.get('boundingBox', {}).get('vertices', [])
                             if poly and len(poly) >= 4:
                                 x = min(int(v.get('x', 0)) for v in poly)
@@ -58,12 +115,11 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                                 w = max(int(v.get('x', 0)) for v in poly) - x
                                 h = max(int(v.get('y', 0)) for v in poly) - y
                                 all_words.append({
-                                    "text": w_text,
-                                    "x": x, "y": y, "w": w, "h": h
+                                    "text": w_text, "x": x, "y": y, "w": w, "h": h
                                 })
                         text_parts.append('\n')
-
-    return "".join(text_parts), has_low_confidence, all_words
+    
+    return "".join(text_parts), has_low_confidence, all_words, data
 
 def load_prompt(name: str) -> str:
     """Standalone prompt loader to avoid circular imports with main.py"""
@@ -200,67 +256,69 @@ def normalize_invoice_table(md_text: str) -> str:
 
 def apply_math_arbitrage(json_data: dict) -> dict:
     """
-    Python-based Auditor (Pipeline v6.0 Арбитраж).
-    Validates GPT output against math principles: Qty * Price = Total.
-    Checks global sum against Footer Grand Total.
+    Python-based Auditor (Pipeline v7.0 Auditor).
+    1. Validates Qty * Price = Total per row.
+    2. Compares accumulated row totals against Grand Total in footer.
+    3. Injects validation_notes with human-readable audit results.
+    4. Calculates VAT if not provided.
     """
     if not json_data: return {}
     
-    header = json_data.get("header", {})
+    # Extract sections from DocOK schema
     footer = json_data.get("footer", {})
     items = json_data.get("items", [])
     
-    # Global state for audit
     total_accumulated = 0.0
-    vat_rate_global = str(footer.get("vat_rate_global", "20")).replace("%", "")
+    global_notes = []
     
-    for item in items:
-        # Pre-cleaning fields
-        def to_f(v): 
-            if not v: return 0.0
-            return float(str(v).replace(" ", "").replace(",", "."))
+    def to_f(v): 
+        if v is None: return 0.0
+        import re
+        s = str(v).replace(" ", "").replace(",", ".")
+        try:
+            match = re.search(r'-?\d+(\.\d+)?', s)
+            return float(match.group(0)) if match else 0.0
+        except:
+            return 0.0
 
-        qty = to_f(item.get("quantity", 0))
+    for item in items:
+        qty = to_f(item.get("quantity", 1))
         price = to_f(item.get("price", 0))
-        total = to_f(item.get("total", 0))
-        price_disc = to_f(item.get("unit_price_discounted", 0))
+        total_doc = to_f(item.get("total", 0))
         
-        # 1. Row Check
-        expected_total = round(qty * price, 2)
-        expected_total_disc = round(qty * price_disc, 2) if price_disc > 0 else 0.0
+        calc_total = round(qty * price, 2)
+        item["calculated_total"] = calc_total
+        item["unit_price_raw"] = price
         
         notes = []
-        if abs(expected_total - total) > 0.02:
-            # Maybe price_disc was the intended price?
-            if price_disc > 0 and abs(expected_total_disc - total) <= 0.02:
-                notes.append("Сумма совпадает с ценой со скидкой.")
-            else:
-                notes.append(f"Ошибка расчета: {qty} * {price} != {total}")
-                item["math_error"] = True
-        
-        # 2. Automated Calculations
-        if not item.get("total_no_discount"):
-            item["total_no_discount"] = expected_total
-        
-        # 3. VAT Calculation (if rate exists)
-        rate = float(vat_rate_global) if vat_rate_global.isdigit() else 20.0
-        item["vat_sum"] = round(total * (rate / (100 + rate)), 2)
-        
-        item["validation_notes"] = " ".join(notes)
-        total_accumulated += total
+        if abs(calc_total - total_doc) > 0.05:
+            notes.append(f"Ошибка расчета: {qty} * {price} = {calc_total}, в доке {total_doc}")
+            item["math_error"] = True
+        else:
+            notes.append("OK: Математика сходится")
+            
+        item["validation_notes"] = "; ".join(notes)
+        total_accumulated += total_doc
 
-    # 4. Global Arbitrage
-    grand_total = 0.0
-    try:
-        gt_raw = str(footer.get("total_amount", "0")).replace(" ", "").replace(",", ".")
-        grand_total = float(re.search(r'\d+(\.\d+)?', gt_raw).group(0)) if re.search(r'\d+', gt_raw) else 0.0
-    except: pass
+        if not item.get("vat_sum"):
+            item["vat_sum"] = round(total_doc * (20 / 120), 2)
 
-    if grand_total > 0 and abs(total_accumulated - grand_total) > 0.1:
-        msg = f"⚠ Несовпадение итогов: Сумма строк ({total_accumulated:.2f}) != Итого ({grand_total:.2f})"
-        if "validation_notes" not in footer: footer["validation_notes"] = ""
-        footer["validation_notes"] = (footer["validation_notes"] + " " + msg).strip()
-
+    grant_total_doc = 0.0
+    for k in ["total_amount", "sum_total", "grand_total", "total"]:
+        if footer.get(k):
+            grant_total_doc = to_f(footer[k])
+            if grant_total_doc > 0: break
+            
+    if grant_total_doc > 0:
+        diff = abs(total_accumulated - grant_total_doc)
+        if diff > 0.5:
+            global_notes.append(f"⚠ Несовпадение итогов: Сумма строк ({total_accumulated:.2f}) != Итого в доке ({grant_total_doc:.2f})")
+        else:
+            global_notes.append("Общий итог документа подтвержден")
+    
+    if global_notes:
+        footer["validation_notes"] = "; ".join(global_notes)
+        
     return json_data
 
 async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "pro"):
