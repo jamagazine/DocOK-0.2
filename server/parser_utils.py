@@ -943,8 +943,6 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             state = "FOOTER"
 
         if state == "HEADER":
-            # X-Split Logic: Identify split point if row spans zones
-            # Use X of MMK anchor as split boundary if detected
             split_x = -1
             for ay in buyer_y_anchors:
                 if abs(row_y - ay) < 150:
@@ -954,43 +952,47 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                             break
                     if split_x != -1: break
             
-            # Divide row into two potential segments
-            left_txt, right_txt = [], []
+            # Принудительное назначение корзин по X
+            segments = []
             if split_x != -1:
-                for w in row:
-                    if w['x'] < split_x: left_txt.append(w['text'])
-                    else: right_txt.append(w['text'])
+                left_txt = " ".join([w['text'] for w in row if w['x'] < split_x]).strip()
+                right_txt = " ".join([w['text'] for w in row if w['x'] >= split_x]).strip()
+                if left_txt: segments.append((left_txt, "SUPPLIER"))
+                if right_txt: segments.append((right_txt, "BUYER"))
             else:
-                left_txt = [w['text'] for w in row]
+                segments.append((" ".join([w['text'] for w in row]).strip(), "UNKNOWN"))
 
-            for s_val in [" ".join(left_txt), " ".join(right_txt)]:
-                s = s_val.strip()
+            for s, forced_bucket in segments:
                 if not s or len(s) < 2: continue
                 norm = re.sub(r'\W', '', s).lower()
                 if norm in seen_unique: continue
                 seen_unique.add(norm)
 
-                # TRASH FILTER (Proximity check + Content check)
                 is_buyer_prox = any(abs(row_y - ay) < 150 for ay in buyer_y_anchors)
                 is_supplier_prox = any(abs(row_y - ay) < 150 for ay in supplier_y_anchors)
                 
-                has_digit = any(c.isdigit() for c in s)
-                has_keys = any(k in s.upper() for k in ["ИНН", "КПП", "СЧЕТ", "АДРЕС", "БИК"])
-                
-                # Trash Rule: Short, no digits, no keys, and away from anchors
-                if len(s) < 12 and not has_digit and not has_keys and not is_buyer_prox and not is_supplier_prox:
-                    tr_lines.append(s)
+                # Если строка была разрезана по X, мы ЖЕСТКО знаем, куда она идет
+                if forced_bucket == "BUYER":
+                    b_lines.append(s)
+                    continue
+                elif forced_bucket == "SUPPLIER":
+                    s_lines.append(s)
                     continue
 
-                # Final Magnetic Distribution
+                # Если строка не разрезана (UNKNOWN), применяем умную сортировку
                 if CLIENT_INN in s or "ММК-Пермь" in s:
                     b_lines.append(s)
-                elif validate_and_clean_inn(s) or any(k in s.upper() for k in ["БИК", "КОРР.", "СЧ."]):
+                elif validate_and_clean_inn(s) or any(k in s.upper() for k in ["БИК", "КОРР.", "СЧ.", "РАСЧ"]):
                     s_lines.append(s)
-                elif is_buyer_prox:
+                # ЖЕСТКИЙ ФИЛЬТР МУСОРА: Нет цифр и нет юридических маркеров = МУСОР
+                elif not any(c.isdigit() for c in s) and not any(k in s.upper() for k in ["ИНН", "КПП", "ООО", "ЗАО", "ПАО", "ОБЩЕСТВО", "ТЕЛ", "АДРЕС"]):
+                    tr_lines.append(s)
+                elif is_buyer_prox and not is_supplier_prox:
                     b_lines.append(s)
-                else: # Default or supplier proximity
+                elif is_supplier_prox:
                     s_lines.append(s)
+                else:
+                    tr_lines.append(s) # По умолчанию всё непонятное идет в МУСОР
 
         elif state == "TABLE":
             rd = {"№": "", "name": "", "qty": "", "un": "", "pr": "", "tot": ""}
