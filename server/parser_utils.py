@@ -962,31 +962,22 @@ def ocr_to_grid_markdown(words: list) -> tuple:
 
     # ── Phase 0: Config ──────────────────────────────────────────────────────
     cfg = _load_client_settings()
-    CLIENT_INN  = cfg.get("inn",  "5905271743")
-    CLIENT_NAME = cfg.get("name", "ММК-Пермь")
+    CLIENT_INN  = cfg.get("client_inn",  "5905271743")
+    CLIENT_NAME = cfg.get("name_keywords", ["ММК-Пермь"])[0] if cfg.get("name_keywords") else "ММК-Пермь"
+    
+    CLIENT_KEYWORDS = []
+    CLIENT_KEYWORDS.append(CLIENT_INN)
+    if cfg.get("client_kpp"): CLIENT_KEYWORDS.append(cfg.get("client_kpp"))
+    CLIENT_KEYWORDS.extend(cfg.get("name_keywords", []))
+    CLIENT_KEYWORDS.extend(cfg.get("address_keywords", []))
+    CLIENT_KEYWORDS.extend(cfg.get("phone_keywords", []))
+    # lower it for robust search
+    CLIENT_KEYWORDS_LOWER = [k.lower() for k in CLIENT_KEYWORDS]
 
     # ── Phase 1: Discovery Pass ───────────────────────────────────────────────
     supplier_ref = _discover_supplier(words, CLIENT_INN)
     SUPPLIER_INN  = supplier_ref["inn"]   # may be None
     SUPPLIER_NAME = supplier_ref["name"]  # may be None
-
-    # Build anchor Y-lists for magnetic proximity
-    supplier_y_anchors: list[int] = []
-    buyer_y_anchors:    list[int] = []
-
-    for w in words:
-        txt = w['text']
-        # Buyer anchors
-        if CLIENT_INN in txt or CLIENT_NAME in txt:
-            buyer_y_anchors.append(w['y'])
-        # Supplier anchors (by discovered INN)
-        if SUPPLIER_INN and SUPPLIER_INN in txt:
-            supplier_y_anchors.append(w['y'])
-        # Fallback: any other valid INN becomes supplier anchor
-        if len(txt) >= 10:
-            cand = validate_and_clean_inn(txt)
-            if cand and cand != CLIENT_INN:
-                supplier_y_anchors.append(w['y'])
 
     # ── Phase 2: Row Grouping ─────────────────────────────────────────────────
     words.sort(key=lambda w: w['y'])
@@ -1001,7 +992,7 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                 cur_row = [words[i]]
         rows_grouped.append(cur_row)
 
-    # ── Phase 2: Iron Curtain Distribution ───────────────────────────────────
+    # ── Phase 3: Exclusion Principle (Iron Curtain Distribution) ─────────────
     s_lines:  list[str] = []
     b_lines:  list[str] = []
     tr_lines: list[str] = []
@@ -1017,7 +1008,6 @@ def ocr_to_grid_markdown(words: list) -> tuple:
 
     for row in rows_grouped:
         row.sort(key=lambda x: x['x'])
-        row_y     = row[0]['y']
         full_line = " ".join(w['text'] for w in row).strip()
         l_line    = full_line.lower()
 
@@ -1030,113 +1020,66 @@ def ocr_to_grid_markdown(words: list) -> tuple:
 
         # ── HEADER processing ────────────────────────────────────────────────
         if state == "HEADER":
-            # Determine X-split point (if this row bridges buyer zone)
-            split_x = -1
-            for ay in buyer_y_anchors:
-                if abs(row_y - ay) < 150:
-                    for w in row:
-                        if CLIENT_INN in w['text'] or CLIENT_NAME in w['text']:
-                            split_x = w['x'] - 10
-                            break
-                    if split_x != -1:
+            if not full_line or len(full_line) < 2:
+                continue
+            norm = re.sub(r'\W', '', full_line).lower()
+            if norm in seen_unique:
+                continue
+            seen_unique.add(norm)
+
+            s_up = full_line.upper()
+            
+            # Step 1: Check if line belongs to Buyer (client)
+            is_buyer = any(k in l_line for k in CLIENT_KEYWORDS_LOWER)
+            
+            # Sub-step: Split if Supplier INN is also mysteriously in the same row
+            if is_buyer and SUPPLIER_INN and SUPPLIER_INN in full_line:
+                # Need to cut the row!
+                split_x = -1
+                for w in row:
+                    if SUPPLIER_INN in w['text']:
+                        split_x = w['x'] - 10
                         break
+                if split_x != -1:
+                    left  = " ".join(w['text'] for w in row if w['x'] <  split_x).strip()
+                    right = " ".join(w['text'] for w in row if w['x'] >= split_x).strip()
+                    # Put parts into respective bins
+                    if left:
+                        (b_lines if any(k in left.lower() for k in CLIENT_KEYWORDS_LOWER) else s_lines).append(left)
+                    if right:
+                        (b_lines if any(k in right.lower() for k in CLIENT_KEYWORDS_LOWER) else s_lines).append(right)
+                    continue
 
-            # Build forced segments
-            segments: list[tuple[str, str]] = []
-            if split_x != -1:
-                left  = " ".join(w['text'] for w in row if w['x'] <  split_x).strip()
-                right = " ".join(w['text'] for w in row if w['x'] >= split_x).strip()
-                if left:  segments.append((left,  "SUPPLIER"))
-                if right: segments.append((right, "BUYER"))
+            # Core Ban check: NEVER let supplier info into Buyer bin
+            if is_buyer:
+                if SUPPLIER_INN and SUPPLIER_INN in full_line:
+                    is_buyer = False
+                elif SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up:
+                    is_buyer = False
+
+            if is_buyer:
+                b_lines.append(full_line)
+                continue
+
+            # Step 2: It's NOT Buyer. Check if it's Supplier explicitly
+            is_supplier = False
+            if SUPPLIER_INN and SUPPLIER_INN in full_line: is_supplier = True
+            elif SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up: is_supplier = True
+            elif any(k in s_up for k in ["БИК 04", "СЧ.", "СЧЕТ", "Р/С", "К/С", "КПП"]): is_supplier = True
+            
+            if is_supplier:
+                s_lines.append(full_line)
+                continue
+
+            # Step 3: Trash Bin filter
+            # If no digits OR no legal words
+            legal_markers = ["ООО", "ИП", "ОАО", "ЗАО", "ПАО", "АДРЕС", "УЛ", "ДОМ", "БАНК", "СЧЕТ", "ИНН", "КПП", "ФИЛИАЛ"]
+            if not any(c.isdigit() for c in full_line) and not any(k in s_up for k in legal_markers):
+                tr_lines.append(full_line)
             else:
-                segments.append((full_line, "UNKNOWN"))
-
-            for s, forced_bucket in segments:
-                if not s or len(s) < 2:
-                    continue
-                norm = re.sub(r'\W', '', s).lower()
-                if norm in seen_unique:
-                    continue
-                seen_unique.add(norm)
-
-                is_buyer_prox    = any(abs(row_y - ay) < 150 for ay in buyer_y_anchors)
-                is_supplier_prox = any(abs(row_y - ay) < 150 for ay in supplier_y_anchors)
-                s_up = s.upper()
-
-                # ── IRON CURTAIN priority chain ──────────────────────────────
-                # Determine Supplier Core Name to block partial matches
-                supplier_core = ""
-                if SUPPLIER_NAME:
-                    m_core = re.search(r'["«\']([^"»\']+)["»\']', SUPPLIER_NAME)
-                    if m_core:
-                        supplier_core = m_core.group(1).upper()
-                    else:
-                        parts = SUPPLIER_NAME.split()
-                        if len(parts) > 1:
-                            supplier_core = re.sub(r'\W', '', parts[1]).upper()
-
-                # Rule 1: Supplier INN found → ALWAYS Supplier
-                if SUPPLIER_INN and SUPPLIER_INN in s:
-                    s_lines.append(s)
-                    continue
-
-                # Rule 2: Supplier name fragment found → Supplier
-                if SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up:
-                    s_lines.append(s)
-                    continue
-                if supplier_core and len(supplier_core) > 3 and supplier_core in s_up:
-                    s_lines.append(s)
-                    continue
-
-                # ── BUYER BAN LIST CHECK ──
-                can_be_buyer = True
-                if SUPPLIER_INN and SUPPLIER_INN in s:
-                    can_be_buyer = False
-                if supplier_core and len(supplier_core) > 3 and supplier_core in s_up:
-                    can_be_buyer = False
-                if not any(k in s_up for k in ["ММК", "ЛЕВЧЕНКО", CLIENT_INN]) and not is_buyer_prox:
-                    can_be_buyer = False
-
-                # Rule 3: Client identifiers → Buyer (if allowed)
-                if (CLIENT_INN in s or CLIENT_NAME in s) and can_be_buyer:
-                    b_lines.append(s)
-                    continue
-
-                # Rule 4-5: Forced X-split decisions
-                if forced_bucket == "BUYER":
-                    if can_be_buyer:
-                        b_lines.append(s)
-                    else:
-                        tr_lines.append(s)
-                    continue
-                if forced_bucket == "SUPPLIER":
-                    s_lines.append(s)
-                    continue
-
-                # Rule 6: Bank/account keywords → Supplier
-                if any(k in s_up for k in ["БИК", "КОРР.", "СЧ.", "РАСЧ", "СЧЕТ №", "БАНК", "ПАО", "ОАО", "ЗАО"]):
-                    s_lines.append(s)
-                    continue
-
-                # Rule 7: ООО/ИП present but NOT client name → Supplier
-                legal_forms = ["ООО ", "ИП "]
-                if any(k in s_up for k in legal_forms) and CLIENT_NAME not in s:
-                    s_lines.append(s)
-                    continue
-
-                # Rule 8: Hard trash — no digits, no legal markers
-                legal_markers = ["ИНН", "КПП", "ОБЩЕСТВО", "ТЕЛ", "АДРЕС", "ПОЧТОВЫЙ", "УЛ", "ДОМ", "БАНК", "СЧЕТ", "ООО", "ИП", "ЗАО", "АО", "ПАО", "ФИЛИАЛ"]
-                if not any(c.isdigit() for c in s) and not any(k in s_up for k in legal_markers):
-                    tr_lines.append(s)
-                    continue
-
-                # Rule 9: Proximity-based fallback
-                if is_buyer_prox and not is_supplier_prox and can_be_buyer:
-                    b_lines.append(s)
-                elif is_supplier_prox:
-                    s_lines.append(s)
-                else:
-                    tr_lines.append(s)  # default: TRASH
+                # Default "don't know" falls into trash actually, per request, to avoid polluting supplier.
+                # Only explicit supplier data goes to supplier (like Bank account, INN, P/C, name).
+                tr_lines.append(full_line)
 
         # ── TABLE processing ─────────────────────────────────────────────────
         elif state == "TABLE":
@@ -1167,17 +1110,21 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             if full_line:
                 footer_raw.append(full_line)
 
-    # ── Phase 3: Label Cleanup ────────────────────────────────────────────────
+    # ── Phase 4: Label Cleanup ────────────────────────────────────────────────
     # Strip cross-entity markers from each bucket
     _buyer_marker_re    = re.compile(r'Покупатель\s*:.*', re.IGNORECASE)
     _supplier_marker_re = re.compile(r'Поставщик\s*:.*',  re.IGNORECASE)
 
+    # Clean up single words like "Покупатель:" that ended up in Supplier bin
     s_lines = [_buyer_marker_re.sub('', ln).strip() for ln in s_lines]
+    s_lines = [ln.replace('Покупатель:', '').strip() for ln in s_lines]
     s_lines = [ln for ln in s_lines if ln]          # drop empty after strip
+
     b_lines = [_supplier_marker_re.sub('', ln).strip() for ln in b_lines]
+    b_lines = [ln.replace('Поставщик:', '').strip() for ln in b_lines]
     b_lines = [ln for ln in b_lines if ln]
 
-    # ── Phase 4: Structured MD Output ────────────────────────────────────────
+    # ── Phase 5: Structured MD Output ────────────────────────────────────────
     sup_org = SUPPLIER_NAME or "Не найден"
     sup_inn = SUPPLIER_INN  or "Не найден"
 
