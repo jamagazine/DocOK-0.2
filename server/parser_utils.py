@@ -949,24 +949,25 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
 
 def ocr_to_grid_markdown(words: list) -> tuple:
     """
-    STAGE 3.2 FINAL — Universal Entity Extractor (Vertical Split & Buffers).
+    STAGE 3.2 — Spatial Baskets & Component Tokens (Basket Parsing).
     """
     if not words:
         return "", ""
     import re
+    import math
 
-    # ── Phase 0: Config ──────────────────────────────────────────────────────
+    # ── Phase 0: Config & Constants ──────────────────────────────────────────
     cfg = _load_client_settings()
     CLIENT_INN  = cfg.get("client_inn",  "5905271743")
     CLIENT_NAME = cfg.get("name_keywords", ["ММК-Пермь"])[0] if cfg.get("name_keywords") else "ММК-Пермь"
 
-    # ── Phase 1: Classification & Consolidation ──────────────────────────────
+    # ── Phase 1: Classification & Table detection (Y-Snapping) ───────────────
     words.sort(key=lambda w: w['y'])
     rows_grouped = []
     if words:
         cur_row = [words[0]]
         for i in range(1, len(words)):
-            if abs(words[i]['y'] - cur_row[0]['y']) < 12:
+            if abs(words[i]['y'] - cur_row[0]['y']) < 15: # 15px Threshold
                 cur_row.append(words[i])
             else:
                 rows_grouped.append(cur_row)
@@ -974,238 +975,144 @@ def ocr_to_grid_markdown(words: list) -> tuple:
         rows_grouped.append(cur_row)
 
     header_words: list = []
-    table_raw  = [
-        "### TABLE ###",
-        "| № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    footer_raw = ["### FOOTER_DATA ###"]
+    header_rows_text = []
 
     state = "HEADER"
     for row in rows_grouped:
         row.sort(key=lambda x: x['x'])
-        full_line = " ".join(w['text'] for w in row).strip()
-        l_line    = full_line.lower()
+        rl = " ".join(w['text'] for w in row).strip()
+        l_line = rl.lower()
 
-        # State transitions
         if state == "HEADER" and any(k in l_line for k in ["наименование", "кол-во", "цена"]):
             state = "TABLE"
             continue
-        elif state == "TABLE" and any(k in l_line for k in ["итого", "всего", "в том числе"]):
-            state = "FOOTER"
-
+        
         if state == "HEADER":
             header_words.extend(row)
-        elif state == "TABLE":
-            rd = {"№": "", "name": "", "qty": "", "un": "", "pr": "", "tot": ""}
-            for w in row:
-                x = int(w['x'])
-                if x < 70:    rd["№"]    += " " + w['text']
-                elif x < 500: rd["name"] += " " + w['text']
-                elif x < 620: rd["qty"]  += " " + w['text']
-                elif x < 720: rd["un"]   += " " + w['text']
-                elif x < 870: rd["pr"]   += " " + w['text']
-                else:         rd["tot"]  += " " + w['text']
+            header_rows_text.append(rl)
 
-            def pk(v: str) -> str:
-                m = re.findall(r'(\d+[\d\s,.]*)', v)
-                return m[-1].strip() if m else v.strip()
+    # ── Phase 2: Anchor Discovery ────────────────────────────────────────────
+    buyer_anchor = None
+    supplier_anchor = None
 
-            f_tot = pk(rd["tot"])
-            if not f_tot and not any(c.isdigit() for c in rd["name"]) and len(rd["name"]) < 10:
-                continue
-
-            cols = [rd["№"].strip(), rd["name"].strip(), rd["qty"].strip(),
-                    rd["un"].strip(), pk(rd["pr"]), "", f_tot]
-            table_raw.append("| " + " | ".join(c.replace("|", "") for c in cols) + " |")
-        elif state == "FOOTER":
-            if full_line:
-                footer_raw.append(full_line)
-
-    # ── Phase 2: Vertical Split (The Buffers) ────────────────────────────────
-    # Find split_x (Client INN or Name)
-    split_x = 1000000 # default far right
     for w in header_words:
-        if CLIENT_INN in w['text'] or (CLIENT_NAME and CLIENT_NAME in w['text']):
-            split_x = w['x'] - 20
-            break
+        t = w['text'].strip()
+        if re.fullmatch(r'\d{10}|\d{12}', t):
+            if t == CLIENT_INN:
+                buyer_anchor = (w['x'], w['y'], t)
+            elif validate_inn_logic(t):
+                if not supplier_anchor:
+                    supplier_anchor = (w['x'], w['y'], t)
 
-    sup_words = [w for w in header_words if w['x'] < split_x]
-    buy_words = [w for w in header_words if w['x'] >= split_x]
+    # ── Phase 3: Spatial Baskets (+/- 300px Y) ───────────────────────────────
+    buyer_basket_words = []
+    supplier_basket_words = []
 
-    def build_buffer(word_list):
-        word_list.sort(key=lambda w: (w['y'] // 12, w['x']))
-        # group into lines for natural spacing
-        blines = []
-        if word_list:
-            cr = [word_list[0]]
-            for i in range(1, len(word_list)):
-                if abs(word_list[i]['y'] - cr[0]['y']) < 12:
-                    cr.append(word_list[i])
+    for w in header_words:
+        dist_to_buyer = 9999
+        dist_to_supplier = 9999
+        
+        in_buyer_range = False
+        in_supplier_range = False
+
+        if buyer_anchor:
+            if abs(w['y'] - buyer_anchor[1]) <= 300:
+                in_buyer_range = True
+                dist_to_buyer = math.sqrt((w['x'] - buyer_anchor[0])**2 + (w['y'] - buyer_anchor[1])**2)
+        
+        if supplier_anchor:
+            if abs(w['y'] - supplier_anchor[1]) <= 300:
+                in_supplier_range = True
+                dist_to_supplier = math.sqrt((w['x'] - supplier_anchor[0])**2 + (w['y'] - supplier_anchor[1])**2)
+
+        # Force proximity if overlapping
+        if in_buyer_range and in_supplier_range:
+            if dist_to_buyer < dist_to_supplier:
+                buyer_basket_words.append(w)
+            else:
+                supplier_basket_words.append(w)
+        elif in_buyer_range:
+            buyer_basket_words.append(w)
+        elif in_supplier_range:
+            supplier_basket_words.append(w)
+
+    # ── Phase 4: Token Detection ─────────────────────────────────────────────
+    def get_basket_data(basket_words):
+        # Line grouping for context within basket
+        basket_words.sort(key=lambda w: (w['y'] // 12, w['x']))
+        lines = []
+        if basket_words:
+            cr = [basket_words[0]]
+            for i in range(1, len(basket_words)):
+                if abs(basket_words[i]['y'] - cr[0]['y']) < 12:
+                    cr.append(basket_words[i])
                 else:
-                    cr.sort(key=lambda w: w['x'])
-                    blines.append(" ".join(w['text'] for w in cr))
-                    cr = [word_list[i]]
-            cr.sort(key=lambda w: w['x'])
-            blines.append(" ".join(w['text'] for w in cr))
-        return "\n".join(blines)
-
-    SUPPLIER_BUFFER = build_buffer(sup_words)
-    BUYER_BUFFER = build_buffer(buy_words)
-    
-    # Needs a full text for Metadata
-    FULL_BUFFER = SUPPLIER_BUFFER + "\n" + BUYER_BUFFER
-
-    # ── Phase 3: Metadata Extraction (Document Info) ─────────────────────────
-    doc_type = "Счет"
-    doc_num = "Не найден"
-    doc_date = "Не найдена"
-
-    meta_m = re.search(r'(Счет-фактура|Счет(?: на оплату)?|УПД).*?№\s*([^\sот]+)(?:\s*от\s*|\s+)(\d{2}\.\d{2}\.\d{4}|\d{2}\s[а-яА-Я]+\s\d{4})', FULL_BUFFER, re.IGNORECASE | re.DOTALL)
-    if meta_m:
-        doc_type = meta_m.group(1).strip().capitalize()
-        doc_num = meta_m.group(2).strip()
-        doc_date = meta_m.group(3).strip()
-    else:
-        m_num = re.search(r'№\s*([A-Za-zА-Яа-я0-9\-]+)', FULL_BUFFER)
-        m_date = re.search(r'(\d{2}\.\d{2}\.\d{4})', FULL_BUFFER)
-        if m_num: doc_num = m_num.group(1)
-        if m_date: doc_date = m_date.group(1)
-
-    # ── Phase 4: Entity Extraction via RegEx ─────────────────────────────────
-
-    def extract_entities(buffer: str, is_buyer=False) -> dict:
+                    cr.sort(key=lambda x: x['x'])
+                    lines.append(" ".join(w['text'] for w in cr))
+                    cr = [basket_words[i]]
+            cr.sort(key=lambda x: x['x'])
+            lines.append(" ".join(w['text'] for w in cr))
+        
+        txt = " ".join(lines)
+        
         data = {
-            "org": "Не найден", "inn": "Не найден", "kpp": "Не найден",
-            "phone": "Не найден", "address": "Не найден", "postal": "Не найден",
-            "bank_name": "Не найден", "bik": "Не найден", "corr": "Не найден", "settl": "Не найден"
+            "org": [], "index": "Не найден", "city": "Не найден", 
+            "street": "Не найден", "house_office": "Не найден", "bank": []
         }
         
-        # INN & KPP
-        inns = [i for i in re.findall(r'\b\d{10}\b|\b\d{12}\b', buffer) if validate_inn_logic(i)]
-        if inns: data["inn"] = inns[0]
+        idx_m = re.search(r'\b\d{6}\b', txt)
+        if idx_m: data["index"] = idx_m.group(0)
         
-        kpps = re.findall(r'\b\d{9}\b', buffer)
-        for k in kpps:
-            if not k.startswith("04"): # Ignore BIKs
-                data["kpp"] = k
-                break
-
-        # Organization
-        org_pattern = re.compile(r'(ООО|ИП|АО|ЗАО|ПАО|ОАО|Общество\s+с\s+ограниченной\s+ответственностью)[\s\r\n]*([«"”\'][^»"”\']+?[»"”\'])', re.IGNORECASE | re.DOTALL)
-        org_matches = org_pattern.findall(buffer)
-        for ot, oq in org_matches:
-            # Check context to ensure it's not a bank
-            idx = buffer.find(oq)
-            ctx = buffer[max(0, idx-50):min(len(buffer), idx+50)].upper()
-            if "БАНК" not in ctx:
-                ot_clean = re.sub(r'[\r\n]+', ' ', ot).strip()
-                oq_clean = re.sub(r'[\r\n]+', ' ', oq).strip()
-                data["org"] = f"{ot_clean} {oq_clean}"
-                break
-
-        # Bank Details
-        biks = re.findall(r'\b04\d{7}\b', buffer)
-        if biks: data["bik"] = biks[0]
+        org_q = re.findall(r'(?:ООО|ИП|Общество\s+с\s+ограниченной\s+ответственностью)[\s\w]*?[«"”](.+?)[»"”]', txt, re.IGNORECASE)
+        org_m = re.findall(r'(ООО|ИП|АО|ЗАО|ПАО|ОАО|Общество\s+с\s+ограниченной\s+ответственностью)\b\s*(\w+)?', txt, re.IGNORECASE)
+        data["org"] = list(set(org_q)) if org_q else [f"{m[0]} {m[1]}" for m in org_m]
         
-        accounts = set(re.findall(r'\b(?:407|408|301)\d{17}\b', buffer))
-        data["corr"] = next((a for a in accounts if a.startswith('301')), "Не найден")
-        data["settl"] = next((a for a in accounts if a.startswith('407') or a.startswith('408')), "Не найден")
-        
-        # Bank Name
-        bn_pattern = re.compile(r'((?:ПАО|ОАО|АО|АКБ)?\s*[А-Яа-яA-Za-z\-\s]+БАНК[А-Яа-яA-Za-z\-\s]*)', re.IGNORECASE | re.DOTALL)
-        b_match = bn_pattern.search(buffer)
-        if b_match:
-            bname = re.sub(r'[\r\n]+', ' ', b_match.group(1)).strip()
-            # Remove repeated biks/accounts
-            bname = re.sub(r'\b\d{9,20}\b', '', bname).strip()
-            data["bank_name"] = bname
+        city_m = re.search(r'(?:г\.|город|г\.о\.)\s*([А-Яа-я\-]+)', txt, re.IGNORECASE)
+        if not city_m: city_m = re.search(r'([А-Яа-я\-]+)\s*(?:г\.|г\.о\.)', txt, re.IGNORECASE)
+        if city_m: data["city"] = city_m.group(1 if city_m.group(1) else 0).strip()
 
-        # Phone
-        phone_pattern = re.compile(r'(?<!\d)(?:(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\(\d{3}\)\s*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\b\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b)(?!\d)')
-        phones = phone_pattern.findall(buffer)
-        if phones: data["phone"] = ", ".join(phones)
+        st_m = re.search(r'(?:ул\.|улица|пер\.|пр-кт|пр-д|шоссе|ш\.)\s*([\w\s\-]+?)(?=[,\s]|$)', txt, re.IGNORECASE)
+        if not st_m: st_m = re.search(r'([\w\s\-]+?)\s*(?:ул\.|пер\.|пр-кт|пр-д|шоссе|ш\.)', txt, re.IGNORECASE)
+        if st_m: data["street"] = st_m.group(0).strip()
 
-        # Addresses
-        addr_pts = [
-            r'(\d{6}[,\s\r\n]*.*?г\..*?(?:ул\.|пер\.|пр\.|тракт|б-р).*?(?:д\.|дом)\s*\d+[А-Яа-я]?(?:[,\s]*(?:корп\.|стр\.|лит\.|оф\.|кв\.)\s*\w+)?)',
-            r'((?:ул\.|пер\.|пр\.|ш\.|б-р\.).+?(?:дом|д\.)\s*№?\s*\d+(?:[,\s]*(?:корп\.|стр\.|лит\.|оф\.|кв\.)\s*\w+)?)',
-            r'(\d{6}[,\s]*[А-Яа-я\s\,\.]+(?:обл\.|край|г\.|ул\.|пр\.|ш\.|д\.)[А-Яа-я\s\,\.\d]+(?:оф\.|кв\.)?\s*\d*)'
-        ]
-        
-        postal = "Не найден"
-        legal = "Не найден"
+        ho_m = re.search(r'(?:дом|д\.|стр\.|корп\.|лит\.|литера?|оф\.|офис|каб\.|цех)\s*(?:№\s*)?([А-Яа-я0-9\-]+)', txt, re.IGNORECASE)
+        if ho_m: data["house_office"] = ho_m.group(0).strip()
 
-        post_pattern = re.compile(r'(?:Почтовый[А-Яа-я\s]*:?|Адрес для корреспонденции:?)[\s\r\n]*(\d{6}[,\s\r\n\w\.]+)', re.IGNORECASE | re.DOTALL)
-        post_match = post_pattern.search(buffer)
-        if post_match:
-            postal = re.sub(r'[\r\n]+', ' ', post_match.group(1)).strip()
-            data["postal"] = postal
-
-        for pt in addr_pts:
-            m_all = re.finditer(pt, buffer, re.IGNORECASE | re.DOTALL)
-            for m in m_all:
-                addr_text = re.sub(r'[\r\n]+', ' ', m.group(1)).strip()
-                # Exclude Bank
-                if not any(bw in addr_text.upper() for bw in ["БАНК", "ПАО ", "БИК "]):
-                    # Check if it's identical to postal, if so, it's ok, but prefer a distinct one
-                    if addr_text != postal and legal == "Не найден":
-                        legal = addr_text
-            if legal != "Не найден": break
-            
-        data["address"] = legal if legal != "Не найден" else postal # fallback
+        data["bank"] = list(set(re.findall(r'(\b\d{20}\b|БИК\s*\d{9}|БАНК\s*[\w\s\-]+)', txt, re.IGNORECASE)))
 
         return data
 
-    sup_data = extract_entities(SUPPLIER_BUFFER)
-    buy_data = extract_entities(BUYER_BUFFER, is_buyer=True)
-
-    # Clean up fields
-    def get_raw_lines_list(buf):
-        lines = [ln.strip() for ln in buf.split("\n") if ln.strip()]
-        return ["  " + ln for ln in lines]
-
-    # Find Trash
-    # Remove parsed substrings to find trash
-    trash_buffer = FULL_BUFFER
-    trash_lines = [ln for ln in trash_buffer.split("\n") if len(ln)>5 and not any(k in ln.upper() for k in ["ООО", "ИНН", "Р/С", "БАНК", "КПП", "БИК"])]
+    sup_data = get_basket_data(supplier_basket_words)
+    buy_data = get_basket_data(buyer_basket_words)
 
     # ── Phase 5: Formatting Output ───────────────────────────────────────────
     header_md = "\n".join([
-        "### [DOCUMENT_INFO] ###",
-        f"- Type: {doc_type}",
-        f"- Number: {doc_num}",
-        f"- Date: {doc_date}",
+        "### [SUPPLIER_ENTITY_BASKET] ###",
+        f"- Organization_Tokens: {sup_data['org']}",
+        f"- INN: {supplier_anchor[2] if supplier_anchor else 'Не найден'}",
+        "- Address_Components:",
+        f"  * Index: {sup_data['index']}",
+        f"  * City: {sup_data['city']}",
+        f"  * Street: {sup_data['street']}",
+        f"  * House/Office: {sup_data['house_office']}",
+        f"- Bank_Tokens: {sup_data['bank']}",
         "",
-        "### [SUPPLIER_VERIFIED_DATA] ###",
-        f"- Organization: {sup_data['org']}",
-        f"- INN: {sup_data['inn']}",
-        f"- KPP: {sup_data['kpp']}",
-        f"- Phone: {sup_data['phone']}",
-        f"- Address: {sup_data['address']}",
-        f"- Postal_Address: {sup_data['postal']}",
-        f"- Bank: {sup_data['bank_name']}",
-        f"- BIK: {sup_data['bik']}",
-        f"- Corr_Acc: {sup_data['corr']}",
-        f"- Settl_Acc: {sup_data['settl']}",
-        "- Raw_Lines:",
-        *get_raw_lines_list(SUPPLIER_BUFFER),
-        "",
-        "### [BUYER_VERIFIED_DATA] ###",
+        "### [BUYER_ENTITY_BASKET] ###",
         f"- Organization: {CLIENT_NAME}",
         f"- INN: {CLIENT_INN}",
-        f"- KPP: {cfg.get('client_kpp', '590501001')}",
-        f"- Phone: {cfg.get('phone_keywords', ['220-22-22'])[0]}",
-        f"- Address: {buy_data['address'] if buy_data['address'] != 'Не найден' else cfg.get('address_keywords', [''])[0]}",
-        "- Raw_Lines:",
-        *get_raw_lines_list(BUYER_BUFFER),
+        "- Address_Components:",
+        f"  * Index: {buy_data['index']}",
+        f"  * City: {buy_data['city']}",
+        f"  * Street: {buy_data['street']}",
+        f"  * House/Office: {buy_data['house_office']}",
         "",
-        "### [TRASH_BIN] ###",
-        *["  " + ln for ln in trash_lines]
+        "### [RAW_LINES_CHECK] ###",
+        *[f"{idx+1}. {line}" for idx, line in enumerate(header_rows_text)]
     ])
 
-    table_md = "\n".join(table_raw) + "\n\n" + "\n".join(footer_raw)
-    return header_md, table_md
+    return header_md, "### TABLE SUPPRESSED FOR TEST ###"
+
+
 
 
 
