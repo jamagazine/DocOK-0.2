@@ -528,7 +528,12 @@ async def process_invoice(
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
             manifest = _load_manifest(projectId)
             if disk_name in manifest:
-                manifest[disk_name].update({"cost": cost, "status": "READY_MD_OCR" if p_method == "ocr_table" else "READY_MD_LOCAL", "summary_md": summary_md})
+                manifest[disk_name].update({
+                    "cost": cost, 
+                    "status": "READY_MD_OCR" if p_method == "ocr_table" else "READY_MD_LOCAL", 
+                    "summary_md": summary_md,
+                    "supplierData": final_struct.get("document", {})
+                })
                 _save_manifest(manifest, projectId)
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
             
