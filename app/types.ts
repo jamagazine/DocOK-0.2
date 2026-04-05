@@ -30,11 +30,12 @@ export interface UploadStatus {
   current_step?: 'prep' | 'ai' | 'final';
   summary_md?: string;
   summary_fields?: {
-    cipher: string;
-    destination: string;
-    notes: string;
+    cipher?: string;
+    destination?: string;
+    notes?: string;
     total_positions?: number;
     suppliers?: string;
+    [key: string]: any;
   };
   pages_count?: number;
   is_scan?: boolean;
@@ -93,4 +94,18 @@ export interface EstimateRow {
   clientPrice: number;
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
   is_header?: boolean;
+}
+
+export interface FieldWithConfidence<T> {
+  value: T;
+  confidence: number; // от 0.0 до 1.0 (например, 0.98 = 98% уверенности)
+  isVerified: boolean; // Флаг, подтвердил ли человек это поле
+}
+
+export interface SupplierData {
+  organization_name: FieldWithConfidence<string | null>;
+  inn: FieldWithConfidence<string | null>;
+  kpp: FieldWithConfidence<string | null>;
+  legal_address: FieldWithConfidence<string | null>;
+  postal_address: FieldWithConfidence<string | null>;
 }

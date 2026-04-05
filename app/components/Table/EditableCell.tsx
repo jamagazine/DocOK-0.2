@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useEffect, useRef } from 'react';
+import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -95,3 +95,49 @@ export const EditableCell = React.memo(({
 });
 
 EditableCell.displayName = 'EditableCell';
+
+interface ConfidenceInputProps {
+  initialValue: string | null;
+  confidence?: number;
+  onConfirm: (val: string) => void;
+}
+
+export const ConfidenceInput: React.FC<ConfidenceInputProps> = ({ 
+  initialValue, 
+  confidence = 1.0, 
+  onConfirm 
+}) => {
+  const [value, setValue] = useState(initialValue || '');
+  const [isVerified, setIsVerified] = useState(false);
+
+  // Логика HITL: если уверенность ниже 95% или значение не найдено (null)
+  const needsVerification = !isVerified && (confidence < 0.95 || initialValue === null || value === '');
+
+  return (
+    <div className="relative flex items-center w-full">
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className={cn(
+          "w-full p-2 border rounded-md transition-colors",
+          needsVerification 
+            ? "bg-yellow-50 border-yellow-400 focus:ring-yellow-500" // Сомнительное поле
+            : "bg-green-50 border-green-200 focus:ring-green-500", // Уверенное/подтвержденное поле
+          !value && "bg-red-50 border-red-400" // Критически пустое поле
+        )}
+      />
+      {needsVerification && (
+        <button
+          onClick={() => {
+            setIsVerified(true);
+            onConfirm(value);
+          }}
+          className="absolute right-2 px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 focus:outline-none"
+        >
+          Подтвердить
+        </button>
+      )}
+    </div>
+  );
+};

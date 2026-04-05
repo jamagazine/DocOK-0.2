@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { toast } from 'sonner';
 import {
   Hash,
   Menu,
@@ -39,6 +40,8 @@ import { Skeleton } from './ui/skeleton';
 import type { Stage, RightPanelTab } from '../types';
 import { useData, SpecRow, InvoiceRow, EstimateRow } from '../context/DataContext';
 import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/fileUtils';
+import { ConfidenceInput } from './Table/EditableCell';
+import { SupplierData, FieldWithConfidence } from '../types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -602,6 +605,36 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                                 {cipher}
                               </div>
                             </div>
+
+                            {/* Supplier Details (Sprint 3 HITL) */}
+                            {currentStage === 'invoice' && fields && (
+                              <div className="flex flex-col gap-4 border-t border-slate-100 pt-4">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Реквизиты поставщика</div>
+                                
+                                <div className="space-y-3">
+                                  {[
+                                    { key: 'organization_name', label: 'Организация' },
+                                    { key: 'inn', label: 'ИНН' },
+                                    { key: 'kpp', label: 'КПП' },
+                                    { key: 'legal_address', label: 'Юр. адрес' },
+                                    { key: 'postal_address', label: 'Почтовый адрес' }
+                                  ].map((f) => (
+                                    <div key={f.key} className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-slate-400 font-medium pl-1">{f.label}</label>
+                                      <ConfidenceInput 
+                                        initialValue={fields[f.key] || null}
+                                        confidence={fields[f.key] ? 1.0 : 0.0}
+                                        onConfirm={(val) => {
+                                          // Update local state or notify context
+                                          // In a real app, we'd call an API here
+                                          toast.success(`${f.label} подтвержден`);
+                                        }}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
 
                             {/* Destination */}
                             <div className="flex flex-col gap-2">
