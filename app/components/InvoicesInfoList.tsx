@@ -38,7 +38,8 @@ export const InvoicesInfoList: React.FC = () => {
       <Accordion type="single" collapsible className="w-full space-y-2">
         {invoiceFiles.map((file) => {
           const isFullyVerified = isDocumentFullyVerified(file);
-          const supplier = file.supplierData || {} as any;
+          const supplierData = file.supplierData as any;
+          const data = supplierData?.document || supplierData || {};
 
           return (
             <AccordionItem value={file.id!} key={file.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
@@ -67,9 +68,9 @@ export const InvoicesInfoList: React.FC = () => {
                       <div key={f.key} className="flex flex-col gap-1">
                         <label className="text-[10px] text-slate-400 font-medium pl-1">{f.label}</label>
                         <ConfidenceInput 
-                          initialValue={supplier[f.key]?.value || null}
-                          confidence={supplier[f.key]?.confidence || 0.0}
-                          isVerified={file.verifiedFields?.[f.key] || false}
+                          initialValue={data[f.key]?.value || null}
+                          confidence={data[f.key]?.confidence ?? 1.0}
+                          isVerified={!!file.verifiedFields?.[f.key]}
                           onConfirm={() => {
                             if (file.id) verifyField(file.id, f.key);
                             toast.success(`${f.label} подтвержден`);
