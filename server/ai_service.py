@@ -422,10 +422,18 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         "chunks_report": []
     }
 
-def wrap_with_confidence(value):
+def extract_field(field_data):
+    # Если ИИ вернул правильный объект
+    if isinstance(field_data, dict):
+        return {
+            "value": field_data.get("value"),
+            "confidence": field_data.get("confidence", 1.0 if field_data.get("value") else 0.0),
+            "isVerified": False
+        }
+    # Фолбэк, если ИИ по привычке вернул строку
     return {
-        "value": value,
-        "confidence": 1.0 if value else 0.0,
+        "value": field_data,
+        "confidence": 1.0 if field_data else 0.0,
         "isVerified": False
     }
 
@@ -440,14 +448,15 @@ def safe_parse_llm_json(response_text: str) -> dict:
         else:
             raw_dict = json.loads(response_text)
             
-        # Wrap for HITL Sprint 3.3
+        # Wrap for HITL Sprint 3.3 - Updated for Sprint 4 confidence passing
         wrapped_data = {
-            "organization_name": wrap_with_confidence(raw_dict.get("organization_name")),
-            "inn": wrap_with_confidence(raw_dict.get("inn")),
-            "kpp": wrap_with_confidence(raw_dict.get("kpp")),
-            "legal_address": wrap_with_confidence(raw_dict.get("legal_address")),
-            "postal_address": wrap_with_confidence(raw_dict.get("postal_address")),
-            # Fallback for old fields if any
+            "organization_name": extract_field(raw_dict.get("organization_name")),
+            "inn": extract_field(raw_dict.get("inn")),
+            "kpp": extract_field(raw_dict.get("kpp")),
+            "legal_address": extract_field(raw_dict.get("legal_address")),
+            "postal_address": extract_field(raw_dict.get("postal_address")),
+            
+            # Additional metadata (non-wrapped for now or handled separately)
             "invoice_number": raw_dict.get("invoice_number", "---"),
             "invoice_date": raw_dict.get("invoice_date", "---"),
             "total_amount": raw_dict.get("total_amount", "---"),

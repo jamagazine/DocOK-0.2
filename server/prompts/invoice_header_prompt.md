@@ -22,11 +22,11 @@
 
 [JSON SCHEMA]
 {
-  "organization_name": "string | null",
-  "inn": "string | null",
-  "kpp": "string | null",
-  "legal_address": "string | null",
-  "postal_address": "string | null"
+  "organization_name": { "value": "string | null", "confidence": "number (1.0 или 0.8)" },
+  "inn": { "value": "string | null", "confidence": "number (1.0 или 0.8)" },
+  "kpp": { "value": "string | null", "confidence": "number (1.0 или 0.8)" },
+  "legal_address": { "value": "string | null", "confidence": "number (1.0 или 0.8)" },
+  "postal_address": { "value": "string | null", "confidence": "number (1.0 или 0.8)" }
 }
 
 [INPUT TEXT]
