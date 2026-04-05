@@ -8,6 +8,9 @@ import numpy as np
 from PIL import Image
 from thefuzz import fuzz
 
+CLIENT_INN = "5904003027"  # ПАО ММК-Пермь
+CLIENT_ADDRESS = "614058, ПЕРМСКИЙ КРАЙ, ПЕРМЬ Г, ПРОМЫШЛЕННАЯ УЛ, ДОМ 110"
+
 def deskew_image(pil_img):
     """
     Straightens a tilted scan (OCR Stage 1 Optimization).
@@ -1199,6 +1202,39 @@ def clean_and_build_markdown(ocr_json):
     markdown_output = "### [ENTITIES_ZONE_CLEANED]\n"
     markdown_output += "\n".join(supplier_lines)
     return markdown_output
+
+def generate_invoice_summary(data: dict) -> str:
+    """
+    Sprint 1/2: Генерация Markdown-сводки для правой панели.
+    Извлекает ключевые поля из структуры документа LLM.
+    """
+    doc = data.get("document", {})
+    
+    # Извлекаем основные поля
+    inv_no = doc.get("invoice_number", "---")
+    inv_date = doc.get("invoice_date", "---")
+    supplier = doc.get("organization_name", "---")
+    inn = doc.get("inn", "---")
+    total = doc.get("total_amount", "---")
+    currency = doc.get("currency", "RUB")
+    
+    # Формируем Markdown таблицу
+    lines = [
+        "### 🧾 Сводка по документу",
+        "",
+        "| Поле | Значение |",
+        "| :--- | :--- |",
+        f"| **Номер счета** | {inv_no} |",
+        f"| **Дата** | {inv_date} |",
+        f"| **Поставщик** | {supplier} |",
+        f"| **ИНН** | {inn} |",
+        f"| **Сумма Итого** | **{total} {currency}** |",
+        "",
+        "> [!NOTE]",
+        "> Результаты извлечены нейросетью. Пожалуйста, проверьте точность данных в панели ниже."
+    ]
+    
+    return "\n".join(lines)
 
 
 
