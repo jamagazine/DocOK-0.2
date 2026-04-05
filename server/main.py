@@ -34,7 +34,7 @@ from parser_utils import (
     normalize_for_match, calculate_uncertainty, 
     transliterate, secure_filename, sanitize_dataframe, 
     convert_df_to_items, extract_text_from_pdf, extract_specification_summary,
-    excel_to_grid_markdown
+    excel_to_grid_markdown, clean_and_build_markdown
 )
 from ai_service import (
     ocr_yandex, gpt_yandex, get_token_count, 
@@ -54,6 +54,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.post("/api/v1/extract-layout")
+async def extract_layout_endpoint(ocr_json: dict = Body(...)):
+    """
+    Sprint 1: Server-side geometric processing (Y-Snapping, Anchor-based cropping).
+    """
+    try:
+        markdown_layout = clean_and_build_markdown(ocr_json)
+        return {"markdown_layout": markdown_layout}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 PROJECTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "projects")

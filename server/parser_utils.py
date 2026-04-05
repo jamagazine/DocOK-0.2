@@ -1087,6 +1087,119 @@ def ocr_to_grid_markdown(words: list) -> tuple:
 
     return header_md, "### TABLE SUPPRESSED FOR TEST ###"
 
+# --- КОНСТАНТЫ КЛИЕНТА (ММК-Пермь) ---
+CLIENT_INN = "5905271743"
+CLIENT_ADDRESS = "пермский край, г пермь, ул левченко, дом 1"
+
+def extract_flat_tokens_from_yandex(ocr_json):
+    """Превращает сложный JSON Яндекса в плоский список {'text': str, 'y_start': int, 'x_start': int}"""
+    tokens = []
+    # АГЕНТ: Адаптируй эту функцию под структуру OCR JSON в проекте
+    # Пример обхода: pages -> blocks -> lines -> words -> boundingBox
+    try:
+        # Assuming OCR JSON is passed directly or is embedded in a specific structure
+        # The logic here follows the standard Yandex Vision block format
+        if isinstance(ocr_json, list) and len(ocr_json) > 0 and 'results' in ocr_json[0]:
+            pages = ocr_json[0].get('results', [])[0].get('results', [])[0].get('textDetection', {}).get('pages', [])
+        elif isinstance(ocr_json, dict) and 'pages' in ocr_json:
+            pages = ocr_json.get('pages', [])
+        else:
+            # Maybe the input is just words list (as previously used)
+            if isinstance(ocr_json, list) and len(ocr_json) > 0 and 'text' in ocr_json[0] and ('y' in ocr_json[0] or 'y_start' in ocr_json[0]):
+                for w in ocr_json:
+                    y = w.get('y', w.get('y_start', 0))
+                    x = w.get('x', w.get('x_start', 0))
+                    tokens.append({'text': w['text'], 'y_start': y, 'x_start': x})
+                return tokens
+            pages = []
+            
+        for page in pages:
+            for block in page.get('blocks', []):
+                for line in block.get('lines', []):
+                    for word in line.get('words', []):
+                        text = word.get('text', '')
+                        vertices = word.get('boundingBox', {}).get('vertices', [])
+                        if text and vertices:
+                            y_start = min(int(v.get('y', 0)) for v in vertices)
+                            x_start = min(int(v.get('x', 0)) for v in vertices)
+                            tokens.append({'text': text, 'y_start': y_start, 'x_start': x_start})
+    except Exception as e:
+        print(f"Error parsing tokens: {e}")
+    return tokens
+
+def y_snap_tokens(tokens, threshold=15):
+    """Склеивает слова в горизонтальные строки (Y-Snapping)"""
+    if not tokens: return []
+    # Сначала сортируем по Y
+    tokens.sort(key=lambda x: x['y_start'])
+    
+    lines = []
+    current_line = []
+    
+    for t in tokens:
+        if not current_line:
+            current_line.append(t)
+            continue
+        
+        # Сравниваем с первым элементом ТЕКУЩЕЙ строки (исправлен баг)
+        if abs(t['y_start'] - current_line[0]['y_start']) <= threshold:
+            current_line.append(t)
+        else:
+            lines.append(current_line)
+            current_line = [t]
+            
+    if current_line:
+        lines.append(current_line)
+        
+    # Сортируем слова внутри каждой строки по X и склеиваем в текст
+    snapped_text_lines = []
+    for line in lines:
+        line.sort(key=lambda x: x['x_start'])
+        snapped_text_lines.append(" ".join([w['text'] for w in line]))
+        
+    return snapped_text_lines
+
+def find_bank_zone_y(tokens):
+    """Ищет самую верхнюю Y координату БИКа или 20-значного счета для обрезки мусора"""
+    bik_pattern = re.compile(r'\b04\d{7}\b')
+    account_pattern = re.compile(r'\b40[78]\d{17}\b')
+    
+    min_y = float('inf')
+    for t in tokens:
+        if bik_pattern.search(t['text']) or account_pattern.search(t['text']):
+            if t['y_start'] < min_y:
+                min_y = t['y_start']
+    return min_y if min_y != float('inf') else 0
+
+def clean_and_build_markdown(ocr_json):
+    """Главный Оркестратор Спринта 1"""
+    tokens = extract_flat_tokens_from_yandex(ocr_json)
+    if not tokens: return "NO_TEXT_FOUND"
+    
+    # 1. Находим Якорь и обрезаем рекламу сверху
+    y_start = find_bank_zone_y(tokens)
+    clean_tokens = [t for t in tokens if t['y_start'] >= y_start - 30]
+    
+    # 2. Выравниваем по строкам (Y-Snapping)
+    snapped_lines = y_snap_tokens(clean_tokens)
+    
+    # 3. Метод Исключения (Fuzzy Matching против ММК)
+    supplier_lines = []
+    for line in snapped_lines:
+        if CLIENT_INN in line:
+            continue # Точно строка клиента
+            
+        # Удаляем строки, слишком похожие на адрес ММК
+        similarity = fuzz.partial_ratio(line.lower(), CLIENT_ADDRESS.lower())
+        if similarity < 85:
+            supplier_lines.append(line)
+            
+    # 4. Формируем финальный Markdown-блок
+    markdown_output = "### [ENTITIES_ZONE_CLEANED]\n"
+    markdown_output += "\n".join(supplier_lines)
+    return markdown_output
+
+
 
 
 
