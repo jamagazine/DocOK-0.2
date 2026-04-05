@@ -995,129 +995,94 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             
     all_header_words = [w for w in words if id(w) in header_words_set]
 
-    # ── Phase 3.2.1: Anchor-based Cropping & clean_header_lines ─────────────
-    def find_header_table_start(h_words: list) -> float:
+    # ── Phase 2: find_header_start_y (Universal Anchor) ─────────────────────
+    def find_header_start_y(h_words: list) -> tuple:
         """
-        Возвращает координату Y первого слова, с которого начинается блок реквизитов.
+        Ищет верхнюю границу полезных данных.
+        Возвращает (Y_start, Тип_якоря)
         """
-        keywords = {"Получатель", "Банк получателя", "Сч. №", "БИК"}
-        for i, word in enumerate(h_words):
-            text = word["text"].strip()
-            if any(kw in text for kw in keywords):
-                # Проверяем соседей по строке (допуск 30px по Y)
-                nearby = [w["text"] for w in h_words[i:i+10] if abs(float(w["y"]) - float(word["y"])) < 30]
-                if any(k in " ".join(nearby) for k in ["ИНН", "КПП", "БИК", "Сч. №", "Банк"]):
-                    return float(word["y"])
-        return 0.0
+        # Tags for Invoice
+        tags = {"ИНН", "КПП", "БИК", "Сч. №", "Банк", "получателя"}
+        
+        words_sorted_y = sorted(h_words, key=lambda w: w['y'])
+        
+        # Priority 1: Tag Cloud (Invoice)
+        for i, w in enumerate(words_sorted_y):
+            if any(t in w['text'] for t in tags):
+                # Count tags in 40px vertical window
+                cloud_count = 1
+                for j in range(i + 1, len(words_sorted_y)):
+                    w2 = words_sorted_y[j]
+                    if w2['y'] - w['y'] > 40: break
+                    if any(t in w2['text'] for t in tags):
+                        cloud_count += 1
+                if cloud_count >= 2:
+                    return w['y'], "Tag Cloud (Invoice)"
 
-    sorted_h_words = sorted(all_header_words, key=lambda w: (float(w['y']), float(w['x'])))
-    y_top_table = find_header_table_start(sorted_h_words)
+        # Priority 2: KP / Date marker (Clause)
+        for w in h_words:
+            t = w['text'].lower()
+            if "коммерческое" in t or "предложение" in t or t == "от:":
+                return w['y'], "KP / Date Marker"
+                
+        return 0.0, "None (Default)"
+
+    # Identify Y_start
+    y_start, anchor_type = find_header_start_y(all_header_words)
     
-    # Filter and Snapping
-    clean_header_words = [w for w in sorted_h_words if float(w['y']) >= (y_top_table - 10)]
+    # ── Phase 3: Slicing & Partitioning ──────────────────────────────────────
+    # Crop words below anchor
+    clean_words = sorted([w for w in all_header_words if w['y'] >= (y_start - 10)], key=lambda x: (x['y'], x['x']))
     
-    # Y-Snapping to create clean_header_lines
-    clean_header_lines = []
-    if clean_header_words:
-        row_buf = [clean_header_words[0]]
-        for i in range(1, len(clean_header_words)):
-            if abs(clean_header_words[i]['y'] - row_buf[0]['y']) < 15:
-                row_buf.append(clean_header_words[i])
+    # Group into lines (Y-Snapping)
+    current_lines_data = [] # List of (y, text)
+    if clean_words:
+        row = [clean_words[0]]
+        for i in range(1, len(clean_words)):
+            if abs(clean_words[i]['y'] - row[0]['y']) < 15:
+                row.append(clean_words[i])
             else:
-                row_buf.sort(key=lambda x: x['x'])
-                clean_header_lines.append(" ".join(w['text'] for w in row_buf))
-                row_buf = [clean_header_words[i]]
-        row_buf.sort(key=lambda x: x['x'])
-        clean_header_lines.append(" ".join(w['text'] for w in row_buf))
+                row.sort(key=lambda x: x['x'])
+                current_lines_data.append((row[0]['y'], " ".join(w['text'] for w in row)))
+                row = [clean_words[i]]
+        row.sort(key=lambda x: x['x'])
+        current_lines_data.append((row[0]['y'], " ".join(w['text'] for w in row)))
 
-    # ── Phase 3.2.2: Slicing (Marker-based isolated blocks) ────────────────
-    idx_supplier = -1
-    idx_buyer = -1
+    # Find Y_title (Separator line)
+    y_title = -1
+    title_pattern = re.compile(r'(Счет|Счёт|Коммерческое предложение).*?№', re.IGNORECASE)
+    for y, line in current_lines_data:
+        if title_pattern.search(line):
+            y_title = y
+            break
+            
+    # Default Y_title if not found
+    if y_title == -1:
+        # Fallback to the middle of the header lines if title not found
+        y_title = current_lines_data[len(current_lines_data)//2][0] if current_lines_data else 0
+
+    # Partition into zones
+    bank_lines = [l for y, l in current_lines_data if y < y_title]
+    entities_lines = [l for y, l in current_lines_data if y >= y_title]
     
-    # Markers for slicing
-    sup_markers = ["Поставщик:", "Продавец:"]
-    buy_markers = ["Покупатель:", "Грузополучатель:"]
+    bank_data_text = "\n".join(bank_lines)
+    entities_data_text = "\n".join(entities_lines)
 
-    for i, line in enumerate(clean_header_lines):
-        if any(m in line for m in sup_markers) and idx_supplier == -1:
-            idx_supplier = i
-        if any(m in line for m in buy_markers) and idx_buyer == -1:
-            idx_buyer = i
-
-    # Fallback/Safety
-    if idx_supplier == -1: idx_supplier = min(2, len(clean_header_lines))
-    if idx_buyer == -1:    idx_buyer = max(idx_supplier + 1, len(clean_header_lines) - 2)
-
-    # 3 Isolated Blocks
-    bank_invoice_block = "\n".join(clean_header_lines[:idx_supplier])
-    supplier_block     = "\n".join(clean_header_lines[idx_supplier:idx_buyer])
-    buyer_block        = "\n".join(clean_header_lines[idx_buyer:])
-
-    # ── Phase 4: Isolated Extraction (Targeted RegEx) ──────────────────
-    def extract_attrs(text, role="SUPPLIER"):
-        data = {
-            "org": "Не найден", "inn": "Не найден", "addr": "Не найден",
-            "bik": "Не найден", "acc": "Не найден", "invoice_num": "Не найден"
-        }
-        if not text: return data
-        
-        # 1. Accounts (20 chars) and BIK (9 chars)
-        ac_matches = re.findall(r'\b\d{20}\b', text)
-        if ac_matches: data["acc"] = ", ".join(ac_matches)
-        
-        bik_m = re.search(r'(?:БИК)\s*(\d{9})', text, re.IGNORECASE)
-        if not bik_m: bik_m = re.search(r'\b(04\d{7})\b', text)
-        if bik_m: data["bik"] = bik_m.group(1) if bik_m.groups() else bik_m.group(0)
-
-        # 2. INN Validation
-        for part in text.split():
-            clean_inn = validate_and_clean_inn(part)
-            if clean_inn:
-                if role == "BUYER" and clean_inn == CLIENT_INN:
-                    data["inn"] = clean_inn
-                    break
-                elif role == "SUPPLIER" and clean_inn != CLIENT_INN:
-                    data["inn"] = clean_inn
-                    break
-
-        # 3. Organization Name
-        org_q = re.search(r'(?:ООО|ИП|АО|ЗАО|ПАО|ОАО|Общество\s+с\s+ограниченной\s+ответственностью)[\s\w]*?[«"”](.+?)[»"”]', text, re.IGNORECASE)
-        if org_q: 
-            data["org"] = org_q.group(0).strip()
-        else:
-            org_s = re.search(r'(ООО|ИП|АО)\s*([А-Яа-я\-]+)', text)
-            if org_s: data["org"] = org_s.group(0).strip()
-
-        # 4. Address (Lazy Window)
-        addr_m = re.search(r'\b\d{6}\b.{0,100}', text)
-        if not addr_m:
-            addr_m = re.search(r'(?:г\.|город|г\.о\.)\s*[\w\s\-\.\,]{0,100}', text, re.IGNORECASE)
-        if addr_m: data["addr"] = addr_m.group(0).strip()
-
-        # 5. Invoice/Ref Number
-        inv_m = re.search(r'(?:Счет|Счёт|№)\s*(?:№\s*)?([А-Яа-я0-9\-/]+)', text, re.IGNORECASE)
-        if inv_m: data["invoice_num"] = inv_m.group(1) if inv_m.groups() else inv_m.group(0)
-        
-        return data
-
-    bank_res = extract_attrs(bank_invoice_block, "BANK")
-    sup_res  = extract_attrs(supplier_block,     "SUPPLIER")
-    buy_res  = extract_attrs(buyer_block,        "BUYER")
-
-    # ── Phase 5: Final Output ─────────────────────────────────────────────
+    # ── Phase 4: Final Output ─────────────────────────────────────────────
     header_md = "\n".join([
-        "### [SUPPLIER_VERIFIED_DATA] ###",
-        f"- Organization: {sup_res['org']}",
-        f"- INN: {sup_res['inn']}",
-        f"- Address: {sup_res['addr']}",
-        f"- Bank_BIK: {bank_res['bik']}",
-        f"- Account: {bank_res['acc']}",
+        "### [UNIVERSAL_DUMP] ###",
+        f"- Found_Anchor: {anchor_type}",
+        f"- Y_Start: {y_start}",
+        f"- Y_Title: {y_title}",
         "",
-        "### [BUYER_VERIFIED_DATA] ###",
-        f"- Organization: {CLIENT_NAME}",
-        f"- INN: {buy_res['inn']}",
-        f"- Invoice_Num: {bank_res['invoice_num']}",
-        ""
+        "### [ZONE_BANK_RAW] ###",
+        bank_data_text if bank_data_text else "Пусто",
+        "",
+        "### [ZONE_ENTITIES_RAW] ###",
+        entities_data_text if entities_data_text else "Пусто",
+        "",
+        "### [CLEAN_HEADER_LINES_CHECK] ###",
+        "\n".join([f"{i}. {l}" for i, (y, l) in enumerate(current_lines_data)])
     ])
 
     return header_md, "### TABLE SUPPRESSED FOR TEST ###"
