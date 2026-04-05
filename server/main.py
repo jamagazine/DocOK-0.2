@@ -38,7 +38,8 @@ from parser_utils import (
 )
 from ai_service import (
     ocr_yandex, gpt_yandex, get_token_count, 
-    parse_gpt_json, process_chunks_with_gpt
+    parse_gpt_json, process_chunks_with_gpt,
+    process_header_with_llm
 )
 
 app = FastAPI()
@@ -502,10 +503,13 @@ async def process_invoice(
             metadata_source = (full_header_text + "\n" + (extracted_text[:1000] if extracted_text else "")).strip()
             if not metadata_source: metadata_source = "Empty Document"
 
-            # DEBUG MODE: AI Disabled
-            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'DEBUG MODE: ИИ отключен (Raw MD mode)...'}, ensure_ascii=False)}\n\n"
+            # SYMBOLIC SEMANTIC EXTRACTION (Sprint 2)
+            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
+            
+            # Pass full OCR data to the semantic extractor
+            main_doc = await process_header_with_llm(raw_ocr_data, api_key, folder_id)
+            
             all_items = []
-            main_doc = {"name": original_name}
             footer_data = {}
             total_tokens = 0
 

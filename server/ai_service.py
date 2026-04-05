@@ -421,3 +421,57 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         "footer": final_json["footer"],
         "chunks_report": []
     }
+
+def safe_parse_llm_json(response_text: str) -> dict:
+    """Безопасно извлекает JSON из ответа LLM, игнорируя markdown-теги."""
+    try:
+        match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if match:
+            clean_json_str = match.group(0)
+            return json.loads(clean_json_str)
+        return json.loads(response_text)
+    except json.JSONDecodeError as e:
+        print(f"LLM JSON Decode Error: {e}")
+        print(f"Raw LLM response: {response_text}")
+        return {
+            "organization_name": None, "inn": None, "kpp": None,
+            "legal_address": None, "postal_address": None
+        }
+
+async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dict:
+    """
+    1. Очищает OCR через геометрию (Python).
+    2. Вставляет Markdown в промпт.
+    3. Вызывает LLM и возвращает плоский JSON.
+    """
+    from parser_utils import clean_and_build_markdown
+    
+    # 1. Получаем чистый Markdown из нашего микросервиса
+    markdown_payload = clean_and_build_markdown(ocr_json)
+    
+    if markdown_payload == "NO_TEXT_FOUND":
+        return safe_parse_llm_json("")
+
+    # 2. Читаем промпт
+    with open(os.path.join(os.path.dirname(__file__), "prompts", "invoice_header_prompt.md"), "r", encoding="utf-8") as f:
+        prompt_template = f.read()
+        
+    parts = prompt_template.split("[INSTRUCTION]")
+    system_prompt = parts[0].replace("[SYSTEM PROMPT]", "").strip()
+    instruction = "[INSTRUCTION]" + parts[1].replace("{markdown_payload}", markdown_payload).strip()
+    
+    # 3. Вызываем LLM
+    try:
+        llm_response, _ = await gpt_yandex(
+            text=instruction, 
+            api_key=api_key, 
+            folder_id=folder_id, 
+            system_prompt=system_prompt,
+            model_type="lite"
+        )
+    except Exception as e:
+        print(f"Error calling LLM for header parsing: {e}")
+        llm_response = ""
+    
+    # 4. Безопасно парсим
+    return safe_parse_llm_json(llm_response)
