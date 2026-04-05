@@ -3,6 +3,7 @@ import json
 import re
 import asyncio
 import os
+from thefuzz import fuzz
 
 async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
     """
@@ -513,4 +514,42 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         llm_response = ""
     
     # 4. Безопасно парсим
-    return safe_parse_llm_json(llm_response)
+    wrapped_data = safe_parse_llm_json(llm_response)
+    
+    # 5. Кросс-восстановление адресов (Python Validation Strategy - Sprint 4/5)
+    legal = wrapped_data["legal_address"]
+    postal = wrapped_data["postal_address"]
+    
+    # Случай А: Одно из полей пустое или слишком короткое (< 20 симв)
+    if legal.get("value") and (not postal.get("value") or len(str(postal["value"])) < 20):
+        wrapped_data["postal_address"] = {
+            "value": legal["value"],
+            "confidence": 0.8,
+            "isVerified": False
+        }
+    elif postal.get("value") and (not legal.get("value") or len(str(legal["value"])) < 20):
+        wrapped_data["legal_address"] = {
+            "value": postal["value"],
+            "confidence": 0.8,
+            "isVerified": False
+        }
+    # Случай Б: Оба заполнены, но один явно полнее (Fuzzy Match > 70)
+    elif legal.get("value") and postal.get("value"):
+        similarity = fuzz.token_set_ratio(str(legal["value"]), str(postal["value"]))
+        if similarity > 70:
+            len_diff = abs(len(str(legal["value"])) - len(str(postal["value"])))
+            if len_diff > 15:
+                if len(str(legal["value"])) > len(str(postal["value"])):
+                    wrapped_data["postal_address"] = {
+                        "value": legal["value"],
+                        "confidence": 0.8,
+                        "isVerified": False
+                    }
+                else:
+                    wrapped_data["legal_address"] = {
+                        "value": postal["value"],
+                        "confidence": 0.8,
+                        "isVerified": False
+                    }
+    
+    return wrapped_data
