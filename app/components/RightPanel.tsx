@@ -595,7 +595,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                       );
                     }
 
-                    if (fields || activeFileData?.summary_md) {
+                    if (currentStage === 'invoice' || fields || activeFileData?.summary_md) {
                       const cipher = fields?.cipher || "---";
                       const destination = fields?.destination || "---";
                       const notes = fields?.notes || "---";

@@ -38,7 +38,7 @@ export const InvoicesInfoList: React.FC = () => {
       <Accordion type="single" collapsible className="w-full space-y-2">
         {invoiceFiles.map((file) => {
           const isFullyVerified = isDocumentFullyVerified(file);
-          const fields = file.summary_fields || {};
+          const supplier = file.supplierData || {} as any;
 
           return (
             <AccordionItem value={file.id!} key={file.id} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
@@ -67,8 +67,8 @@ export const InvoicesInfoList: React.FC = () => {
                       <div key={f.key} className="flex flex-col gap-1">
                         <label className="text-[10px] text-slate-400 font-medium pl-1">{f.label}</label>
                         <ConfidenceInput 
-                          initialValue={fields[f.key] || null}
-                          confidence={fields[f.key] ? 1.0 : 0.0}
+                          initialValue={supplier[f.key]?.value || null}
+                          confidence={supplier[f.key]?.confidence || 0.0}
                           isVerified={file.verifiedFields?.[f.key] || false}
                           onConfirm={() => {
                             if (file.id) verifyField(file.id, f.key);
