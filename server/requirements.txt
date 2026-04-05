@@ -13,5 +13,6 @@ pdfplumber
 rapidfuzz
 tabulate
 opencv-python-headless
-numpythefuzz
+numpy
+thefuzz
 python-Levenshtein

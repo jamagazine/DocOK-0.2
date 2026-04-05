@@ -1230,7 +1230,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
 
     const results = await Promise.all(fileArray.map(async (file) => {
-      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...' } }));
+      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...', type: stage } }));
 
       let serverFilename = '';
       try {

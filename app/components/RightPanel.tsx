@@ -43,6 +43,7 @@ import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/
 import { ConfidenceInput } from './Table/EditableCell';
 import { SupplierData, FieldWithConfidence } from '../types';
 import { isDocumentFullyVerified } from '../utils/validation';
+import { InvoicesInfoList } from './InvoicesInfoList';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -605,60 +606,39 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                             <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
                             
                             {/* Cipher / Header */}
-                            <div className="flex flex-col">
-                              <div className="text-xl font-black text-slate-900 tracking-tight leading-none">
-                                {cipher}
-                              </div>
-                            </div>
+                            {currentStage === 'spec' ? (
+                              <>
+                                <div className="flex flex-col">
+                                  <div className="text-xl font-black text-slate-900 tracking-tight leading-none">
+                                    {cipher}
+                                  </div>
+                                </div>
 
-                            {/* Supplier Details (Sprint 3 HITL) */}
-                            {currentStage === 'invoice' && fields && (
-                              <div className="flex flex-col gap-4 border-t border-slate-100 pt-4">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Реквизиты поставщика</div>
-                                
-                                <div className="space-y-3">
-                                  {[
-                                    { key: 'organization_name', label: 'Организация' },
-                                    { key: 'inn', label: 'ИНН' },
-                                    { key: 'kpp', label: 'КПП' },
-                                    { key: 'legal_address', label: 'Юр. адрес' },
-                                    { key: 'postal_address', label: 'Почтовый адрес' }
-                                  ].map((f) => (
-                                    <div key={f.key} className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-slate-400 font-medium pl-1">{f.label}</label>
-                                      <ConfidenceInput 
-                                        initialValue={fields[f.key] || null}
-                                        confidence={fields[f.key] ? 1.0 : 0.0}
-                                        isVerified={activeFileData?.verifiedFields?.[f.key] || false}
-                                        onConfirm={() => {
-                                          if (activeFileId) verifyField(activeFileId, f.key);
-                                          toast.success(`${f.label} подтвержден`);
-                                        }}
-                                      />
+                                {/* Destination */}
+                                <div className="flex flex-col gap-2">
+                                  <div className="flex items-center gap-2 text-slate-400">
+                                    <Info className="w-4 h-4" />
+                                    <span className="text-[10px] font-bold uppercase tracking-tight">Назначение объекта</span>
+                                  </div>
+                                  <div className="text-[12px] text-slate-700 font-medium leading-relaxed">
+                                    {destination}
+                                  </div>
+                                </div>
+
+                                {/* Notes */}
+                                {notes !== "---" && (
+                                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50 flex flex-col gap-1.5">
+                                    <div className="text-[11px] text-slate-600 italic leading-snug">
+                                      {notes}
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
+                                  </div>
+                                )}
+                              </>
+                            ) : null}
 
-                            {/* Destination */}
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center gap-2 text-slate-400">
-                                <Info className="w-4 h-4" />
-                                <span className="text-[10px] font-bold uppercase tracking-tight">Назначение объекта</span>
-                              </div>
-                              <div className="text-[12px] text-slate-700 font-medium leading-relaxed">
-                                {destination}
-                              </div>
-                            </div>
-
-                            {/* Notes */}
-                            {notes !== "---" && (
-                              <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50 flex flex-col gap-1.5">
-                                <div className="text-[11px] text-slate-600 italic leading-snug">
-                                  {notes}
-                                </div>
-                              </div>
+                            {/* Supplier Details (Sprint 3 HITL - Accordion list) */}
+                            {currentStage === 'invoice' && (
+                              <InvoicesInfoList />
                             )}
 
                             {/* Stats Bar */}

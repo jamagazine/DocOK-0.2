@@ -6,6 +6,7 @@ import pdfplumber
 import cv2
 import numpy as np
 from PIL import Image
+from thefuzz import fuzz
 
 def deskew_image(pil_img):
     """

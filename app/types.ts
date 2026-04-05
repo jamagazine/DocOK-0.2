@@ -40,6 +40,7 @@ export interface UploadStatus {
   pages_count?: number;
   is_scan?: boolean;
   pdf_type?: string;
+  type?: Stage;
   supplierData?: SupplierData;
   verifiedFields?: Record<string, boolean>;
 }
