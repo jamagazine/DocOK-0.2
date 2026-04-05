@@ -761,7 +761,8 @@ async def storage_list(projectId: str):
                 "is_scan": entry.get("is_scan", False),
                 "pdf_type": entry.get("pdf_type", "UNKNOWN"),
                 "type": entry.get("type", "spec"),
-                "verifiedFields": entry.get("verifiedFields", {})
+                "verifiedFields": entry.get("verifiedFields", {}),
+                "supplierData": entry.get("supplierData", {})
             })
     return files
 
@@ -770,7 +771,7 @@ async def storage_update_file(name: str, projectId: str, data: dict):
     m = _load_manifest(projectId)
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name:
-            v.update({ki: vi for ki, vi in data.items() if ki in ["status", "cost", "tokens", "verifiedFields", "type"]})
+            v.update({ki: vi for ki, vi in data.items() if ki in ["status", "cost", "tokens", "verifiedFields", "type", "supplierData"]})
             _save_manifest(m, projectId); return {"ok": True}
     raise HTTPException(status_code=404)
 

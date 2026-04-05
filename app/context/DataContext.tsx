@@ -805,7 +805,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
               is_scan: f.is_scan,
               pdf_type: f.pdf_type,
               type: f.type,
-              verifiedFields: f.verifiedFields || {}
+              verifiedFields: f.verifiedFields || {},
+              supplierData: f.supplierData || {}
             };
           });
           setUploadStatuses(statuses);
