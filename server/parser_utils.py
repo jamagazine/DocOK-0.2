@@ -959,10 +959,17 @@ def ocr_to_grid_markdown(words: list) -> tuple:
     cfg = _load_client_settings()
     CLIENT_INN  = cfg.get("client_inn",  "5905271743")
     CLIENT_NAME = cfg.get("name_keywords", ["ММК-Пермь"])[0] if cfg.get("name_keywords") else "ММК-Пермь"
+    
+    CLIENT_KEYWORDS = [CLIENT_INN]
+    if cfg.get("client_kpp"): CLIENT_KEYWORDS.append(cfg.get("client_kpp"))
+    CLIENT_KEYWORDS.extend(cfg.get("name_keywords", []))
+    CLIENT_KEYWORDS.extend(cfg.get("address_keywords", []))
+    CLIENT_KEYWORDS.extend(cfg.get("phone_keywords", []))
 
     # ── Phase 1: Discovery Pass (Legacy Reference) ───────────────────────────
-    # We still run this to get INNs for priority validation if needed
     supplier_ref = _discover_supplier(words, CLIENT_INN)
+    SUPPLIER_INN = supplier_ref["inn"]
+    SUPPLIER_NAME = supplier_ref["name"]
     
     # ── Phase 2: Classification & Consolidation ──────────────────────────────
     words.sort(key=lambda w: w['y'])
