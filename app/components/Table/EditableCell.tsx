@@ -99,16 +99,19 @@ EditableCell.displayName = 'EditableCell';
 interface ConfidenceInputProps {
   initialValue: string | null;
   confidence?: number;
-  onConfirm: (val: string) => void;
+  isVerified: boolean;
+  onConfirm: () => void;
+  onChange?: (val: string) => void;
 }
 
 export const ConfidenceInput: React.FC<ConfidenceInputProps> = ({ 
   initialValue, 
   confidence = 1.0, 
-  onConfirm 
+  isVerified,
+  onConfirm,
+  onChange
 }) => {
   const [value, setValue] = useState(initialValue || '');
-  const [isVerified, setIsVerified] = useState(false);
 
   // Логика HITL: если уверенность ниже 95% или значение не найдено (null)
   const needsVerification = !isVerified && (confidence < 0.95 || initialValue === null || value === '');
@@ -118,7 +121,10 @@ export const ConfidenceInput: React.FC<ConfidenceInputProps> = ({
       <input
         type="text"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onChange?.(e.target.value);
+        }}
         className={cn(
           "w-full p-2 border rounded-md transition-colors",
           needsVerification 
@@ -129,10 +135,7 @@ export const ConfidenceInput: React.FC<ConfidenceInputProps> = ({
       />
       {needsVerification && (
         <button
-          onClick={() => {
-            setIsVerified(true);
-            onConfirm(value);
-          }}
+          onClick={onConfirm}
           className="absolute right-2 px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 focus:outline-none"
         >
           Подтвердить

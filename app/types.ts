@@ -40,6 +40,13 @@ export interface UploadStatus {
   pages_count?: number;
   is_scan?: boolean;
   pdf_type?: string;
+  supplierData?: SupplierData;
+  verifiedFields?: Record<string, boolean>;
+}
+
+export interface FileItem extends UploadStatus {
+  id?: string;
+  name?: string;
 }
 
 export interface UploadedFile {

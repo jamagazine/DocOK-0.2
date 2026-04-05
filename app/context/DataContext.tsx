@@ -405,6 +405,7 @@ interface DataContextType {
   // New project sync functions
   saveTableData: () => Promise<void>;
   fetchHistory: (type: 'text' | 'xlsx') => void;
+  verifyField: (fileId: string, fieldName: string) => void;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -2516,6 +2517,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 
   // Обратная совместимость: getCurrentRows возвращает displayRows из pipeline
+  const verifyField = useCallback((fileId: string, fieldName: string) => {
+    setUploadStatuses((prev) => {
+      const file = prev[fileId];
+      if (!file) return prev;
+      return {
+        ...prev,
+        [fileId]: {
+          ...file,
+          verifiedFields: {
+            ...(file.verifiedFields || {}),
+            [fieldName]: true
+          }
+        }
+      };
+    });
+  }, []);
+
   const getCurrentRows = useCallback(() => dataPipeline.displayRows, [dataPipeline]);
 
   return (
@@ -2620,7 +2638,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         deleteProject,
         importProject,
         activeCategory,
-        setActiveCategory
+        setActiveCategory,
+        verifyField
       }}
     >
       {children}

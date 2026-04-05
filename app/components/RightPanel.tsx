@@ -42,6 +42,7 @@ import { useData, SpecRow, InvoiceRow, EstimateRow } from '../context/DataContex
 import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/fileUtils';
 import { ConfidenceInput } from './Table/EditableCell';
 import { SupplierData, FieldWithConfidence } from '../types';
+import { isDocumentFullyVerified } from '../utils/validation';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -195,8 +196,12 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     matchInvoiceToSpec, getCurrentRows, projectName,
     activeHeaderIds, setActiveHeaderIds, getNavigatorTree,
     keepSelectedRows, undo, redo, canUndo, canRedo,
-    uploadStatuses, activeFileId, setActiveFileId, reprocessAi
+    uploadStatuses, activeFileId, setActiveFileId, reprocessAi, verifyField
   } = useData();
+
+  const activeFileData = activeFileId ? uploadStatuses[activeFileId] : undefined;
+  const isFullyVerified = isDocumentFullyVerified(activeFileData);
+  const effectiveCanProceed = canProceed && isFullyVerified;
 
   const [spyId, setSpyId] = React.useState<string | null>(null);
 
@@ -624,9 +629,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                                       <ConfidenceInput 
                                         initialValue={fields[f.key] || null}
                                         confidence={fields[f.key] ? 1.0 : 0.0}
-                                        onConfirm={(val) => {
-                                          // Update local state or notify context
-                                          // In a real app, we'd call an API here
+                                        isVerified={activeFileData?.verifiedFields?.[f.key] || false}
+                                        onConfirm={() => {
+                                          if (activeFileId) verifyField(activeFileId, f.key);
                                           toast.success(`${f.label} подтвержден`);
                                         }}
                                       />
@@ -776,15 +781,17 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   completeStage(currentStage);
                   onNextStage();
                 }}
-                disabled={!canProceed}
+                disabled={!effectiveCanProceed}
                 className={cn(
                   "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12 shadow-sm border border-transparent",
                   expanded ? "flex-1 px-4" : "w-12 p-0",
-                  canProceed
+                  effectiveCanProceed
                     ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                     : "bg-slate-200 text-slate-400 cursor-not-allowed opacity-50"
                 )}
-                title={canProceed ? "Подтвердить и продолжить" : "Загрузите данные для продолжения"}
+                title={!effectiveCanProceed 
+                  ? (!isFullyVerified ? "Подтвердите желтые поля в панели информации" : "Загрузите данные для продолжения")
+                  : "Подтвердить и продолжить"}
               >
                 <Check className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
                 {expanded && <span className="uppercase tracking-widest text-[#9fffcb] text-[10px] font-black">Применить</span>}
