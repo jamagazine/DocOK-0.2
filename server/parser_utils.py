@@ -832,6 +832,7 @@ def excel_to_grid_markdown(file_path: str) -> str:
     if not rows_data:
         return ""
 
+
     last_real_row = 0
     for idx, r in enumerate(rows_data):
         if any(str(c).strip() for c in r):
@@ -948,13 +949,7 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
 
 def ocr_to_grid_markdown(words: list) -> tuple:
     """
-    STAGE 3 FINAL — Semantic Discovery & Iron Curtain Separator.
-
-    Phase 0: Load client config (Buyer) from client_settings.json.
-    Phase 1: Discovery Pass — find Supplier INN + Name dynamically.
-    Phase 2: Row grouping + Iron Curtain distribution.
-    Phase 3: Label cleanup (strip cross-entity markers).
-    Phase 4: Emit structured VERIFIED MD template.
+    STAGE 3.1 — RegEx Entity Extraction (Consolidated Header).
     """
     if not words:
         return "", ""
@@ -964,24 +959,14 @@ def ocr_to_grid_markdown(words: list) -> tuple:
     cfg = _load_client_settings()
     CLIENT_INN  = cfg.get("client_inn",  "5905271743")
     CLIENT_NAME = cfg.get("name_keywords", ["ММК-Пермь"])[0] if cfg.get("name_keywords") else "ММК-Пермь"
-    
-    CLIENT_KEYWORDS = []
-    CLIENT_KEYWORDS.append(CLIENT_INN)
-    if cfg.get("client_kpp"): CLIENT_KEYWORDS.append(cfg.get("client_kpp"))
-    CLIENT_KEYWORDS.extend(cfg.get("name_keywords", []))
-    CLIENT_KEYWORDS.extend(cfg.get("address_keywords", []))
-    CLIENT_KEYWORDS.extend(cfg.get("phone_keywords", []))
-    # lower it for robust search
-    CLIENT_KEYWORDS_LOWER = [k.lower() for k in CLIENT_KEYWORDS]
 
-    # ── Phase 1: Discovery Pass ───────────────────────────────────────────────
+    # ── Phase 1: Discovery Pass (Legacy Reference) ───────────────────────────
+    # We still run this to get INNs for priority validation if needed
     supplier_ref = _discover_supplier(words, CLIENT_INN)
-    SUPPLIER_INN  = supplier_ref["inn"]   # may be None
-    SUPPLIER_NAME = supplier_ref["name"]  # may be None
-
-    # ── Phase 2: Row Grouping ─────────────────────────────────────────────────
+    
+    # ── Phase 2: Classification & Consolidation ──────────────────────────────
     words.sort(key=lambda w: w['y'])
-    rows_grouped: list[list] = []
+    rows_grouped = []
     if words:
         cur_row = [words[0]]
         for i in range(1, len(words)):
@@ -992,10 +977,7 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                 cur_row = [words[i]]
         rows_grouped.append(cur_row)
 
-    # ── Phase 3: Exclusion Principle (Iron Curtain Distribution) ─────────────
-    s_lines:  list[str] = []
-    b_lines:  list[str] = []
-    tr_lines: list[str] = []
+    header_words: list = []
     table_raw  = [
         "### TABLE ###",
         "| № | Наименование товара | Кол-во | Ед. | Цена | Скидка | Сумма |",
@@ -1003,9 +985,7 @@ def ocr_to_grid_markdown(words: list) -> tuple:
     ]
     footer_raw = ["### FOOTER_DATA ###"]
 
-    state       = "HEADER"
-    seen_unique: set[str] = set()
-
+    state = "HEADER"
     for row in rows_grouped:
         row.sort(key=lambda x: x['x'])
         full_line = " ".join(w['text'] for w in row).strip()
@@ -1018,70 +998,8 @@ def ocr_to_grid_markdown(words: list) -> tuple:
         elif state == "TABLE" and any(k in l_line for k in ["итого", "всего", "в том числе"]):
             state = "FOOTER"
 
-        # ── HEADER processing ────────────────────────────────────────────────
         if state == "HEADER":
-            if not full_line or len(full_line) < 2:
-                continue
-            norm = re.sub(r'\W', '', full_line).lower()
-            if norm in seen_unique:
-                continue
-            seen_unique.add(norm)
-
-            s_up = full_line.upper()
-            
-            # Step 1: Check if line belongs to Buyer (client)
-            is_buyer = any(k in l_line for k in CLIENT_KEYWORDS_LOWER)
-            
-            # Sub-step: Split if Supplier INN is also mysteriously in the same row
-            if is_buyer and SUPPLIER_INN and SUPPLIER_INN in full_line:
-                # Need to cut the row!
-                split_x = -1
-                for w in row:
-                    if SUPPLIER_INN in w['text']:
-                        split_x = w['x'] - 10
-                        break
-                if split_x != -1:
-                    left  = " ".join(w['text'] for w in row if w['x'] <  split_x).strip()
-                    right = " ".join(w['text'] for w in row if w['x'] >= split_x).strip()
-                    # Put parts into respective bins
-                    if left:
-                        (b_lines if any(k in left.lower() for k in CLIENT_KEYWORDS_LOWER) else s_lines).append(left)
-                    if right:
-                        (b_lines if any(k in right.lower() for k in CLIENT_KEYWORDS_LOWER) else s_lines).append(right)
-                    continue
-
-            # Core Ban check: NEVER let supplier info into Buyer bin
-            if is_buyer:
-                if SUPPLIER_INN and SUPPLIER_INN in full_line:
-                    is_buyer = False
-                elif SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up:
-                    is_buyer = False
-
-            if is_buyer:
-                b_lines.append(full_line)
-                continue
-
-            # Step 2: It's NOT Buyer. Check if it's Supplier explicitly
-            is_supplier = False
-            if SUPPLIER_INN and SUPPLIER_INN in full_line: is_supplier = True
-            elif SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in s_up: is_supplier = True
-            elif any(k in s_up for k in ["БИК 04", "СЧ.", "СЧЕТ", "Р/С", "К/С", "КПП"]): is_supplier = True
-            
-            if is_supplier:
-                s_lines.append(full_line)
-                continue
-
-            # Step 3: Trash Bin filter
-            # If no digits OR no legal words
-            legal_markers = ["ООО", "ИП", "ОАО", "ЗАО", "ПАО", "АДРЕС", "УЛ", "ДОМ", "БАНК", "СЧЕТ", "ИНН", "КПП", "ФИЛИАЛ"]
-            if not any(c.isdigit() for c in full_line) and not any(k in s_up for k in legal_markers):
-                tr_lines.append(full_line)
-            else:
-                # Default "don't know" falls into trash actually, per request, to avoid polluting supplier.
-                # Only explicit supplier data goes to supplier (like Bank account, INN, P/C, name).
-                tr_lines.append(full_line)
-
-        # ── TABLE processing ─────────────────────────────────────────────────
+            header_words.extend(row)
         elif state == "TABLE":
             rd = {"№": "", "name": "", "qty": "", "un": "", "pr": "", "tot": ""}
             for w in row:
@@ -1104,45 +1022,51 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             cols = [rd["№"].strip(), rd["name"].strip(), rd["qty"].strip(),
                     rd["un"].strip(), pk(rd["pr"]), "", f_tot]
             table_raw.append("| " + " | ".join(c.replace("|", "") for c in cols) + " |")
-
-        # ── FOOTER processing ─────────────────────────────────────────────────
         elif state == "FOOTER":
             if full_line:
                 footer_raw.append(full_line)
 
-    # ── Phase 4: Label Cleanup ────────────────────────────────────────────────
-    # Strip cross-entity markers from each bucket
-    _buyer_marker_re    = re.compile(r'Покупатель\s*:.*', re.IGNORECASE)
-    _supplier_marker_re = re.compile(r'Поставщик\s*:.*',  re.IGNORECASE)
+    # ── Phase 3: Header Text Consolidation (Natural Reading Order) ───────────
+    header_words.sort(key=lambda w: (w['y'] // 12, w['x']))
+    full_header_text = " ".join(w['text'] for w in header_words)
 
-    # Clean up single words like "Покупатель:" that ended up in Supplier bin
-    s_lines = [_buyer_marker_re.sub('', ln).strip() for ln in s_lines]
-    s_lines = [ln.replace('Покупатель:', '').strip() for ln in s_lines]
-    s_lines = [ln for ln in s_lines if ln]          # drop empty after strip
+    # ── Phase 4: RegEx Extraction ────────────────────────────────────────────
+    # INN: 10 or 12 digits + Checksum
+    inn_candidates = re.findall(r'\b\d{10}\b|\b\d{12}\b', full_header_text)
+    inns = sorted(list(set([inn for inn in inn_candidates if validate_inn_logic(inn)])))
 
-    b_lines = [_supplier_marker_re.sub('', ln).strip() for ln in b_lines]
-    b_lines = [ln.replace('Поставщик:', '').strip() for ln in b_lines]
-    b_lines = [ln for ln in b_lines if ln]
+    # KPP: 9 digits near keywords ИНН or КПП
+    kpp_candidates = re.findall(r'\b\d{9}\b', full_header_text)
+    kpps = []
+    for kpp in kpp_candidates:
+        idx = full_header_text.find(kpp)
+        window = full_header_text[max(0, idx-20):min(len(full_header_text), idx+30)].upper()
+        if "КПП" in window or "ИНН" in window:
+            if kpp not in kpps: kpps.append(kpp)
 
-    # ── Phase 5: Structured MD Output ────────────────────────────────────────
-    sup_org = SUPPLIER_NAME or "Не найден"
-    sup_inn = SUPPLIER_INN  or "Не найден"
+    # BIK: starts with 04, 9 digits
+    biks = sorted(list(set(re.findall(r'\b04\d{7}\b', full_header_text))))
 
+    # Accounts: 20 digits starting with 407, 408, or 301
+    accounts = sorted(list(set(re.findall(r'\b(?:407|408|301)\d{17}\b', full_header_text))))
+
+    # Phones: Federal (+7/8) and City/Local formats
+    phone_pattern = re.compile(
+        r'(?<!\d)(?:(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\(\d{3}\)\s*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\b\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b)(?!\d)'
+    )
+    phones = sorted(list(set(phone_pattern.findall(full_header_text))))
+
+    # ── Phase 5: Output (Verification Stage) ─────────────────────────────────
     header_md = "\n".join([
-        "### [SUPPLIER_VERIFIED_DATA] ###",
-        f"- Organization: {sup_org}",
-        f"- INN: {sup_inn}",
-        "- Raw_Lines:",
-        *[f"  {ln}" for ln in s_lines],
+        "### [HEADER_RAW_TEXT] ###",
+        full_header_text,
         "",
-        "### [BUYER_VERIFIED_DATA] ###",
-        f"- Organization: {CLIENT_NAME}",
-        f"- INN: {CLIENT_INN}",
-        "- Raw_Lines:",
-        *[f"  {ln}" for ln in b_lines],
-        "",
-        "### [TRASH_BIN] ###",
-        *tr_lines,
+        "### [EXTRACTED_ENTITIES] ###",
+        f"- Found INNs: {inns if inns else 'None'}",
+        f"- Found KPPs: {kpps if kpps else 'None'}",
+        f"- Found BIKs: {biks if biks else 'None'}",
+        f"- Found Accounts: {accounts if accounts else 'None'}",
+        f"- Found Phones: {phones if phones else 'None'}",
     ])
 
     table_md = "\n".join(table_raw) + "\n\n" + "\n".join(footer_raw)
