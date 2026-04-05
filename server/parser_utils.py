@@ -1131,7 +1131,7 @@ def extract_flat_tokens_from_yandex(ocr_json):
         print(f"Error parsing tokens: {e}")
     return tokens
 
-def y_snap_tokens(tokens, threshold=15):
+def y_snap_tokens(tokens, threshold=5):
     """Склеивает слова в горизонтальные строки (Y-Snapping)"""
     if not tokens: return []
     # Сначала сортируем по Y
@@ -1171,8 +1171,8 @@ def y_snap_tokens(tokens, threshold=15):
             
             if last_x_end is not None:
                 gap = x_start - last_x_end
-                if gap > 25:
-                    line_text += "    "
+                if gap > 15:
+                    line_text += "  |  "
                 else:
                     line_text += " "
             
