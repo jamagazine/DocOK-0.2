@@ -508,6 +508,10 @@ async def process_invoice(
             
             # Pass full OCR data to the semantic extractor
             main_doc = await process_header_with_llm(raw_ocr_data, api_key, folder_id)
+
+            # Sprint 4: Diagnostics
+            if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
+                print(f"Warning: LLM returned empty data for file [{original_name}]")
             
             all_items = []
             footer_data = {}

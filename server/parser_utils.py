@@ -1182,7 +1182,7 @@ def clean_and_build_markdown(ocr_json):
     
     # 1. Находим Якорь и обрезаем рекламу сверху
     y_start = find_bank_zone_y(tokens)
-    clean_tokens = [t for t in tokens if t['y_start'] >= y_start - 30]
+    clean_tokens = [t for t in tokens if t['y_start'] >= y_start - 60]
     
     # 2. Выравниваем по строкам (Y-Snapping)
     snapped_lines = y_snap_tokens(clean_tokens)
