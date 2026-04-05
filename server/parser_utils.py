@@ -1159,7 +1159,27 @@ def y_snap_tokens(tokens, threshold=15):
     snapped_text_lines = []
     for line in lines:
         line.sort(key=lambda x: x['x_start'])
-        snapped_text_lines.append(" ".join([w['text'] for w in line]))
+        
+        line_text = ""
+        last_x_end = None
+        
+        for w in line:
+            x_start = w['x_start']
+            text = w['text']
+            # В tokens.append() пока нет x_end, используем аппроксимацию: x_start + длина слова * 10
+            x_end = w.get('x_end', x_start + len(text) * 10)
+            
+            if last_x_end is not None:
+                gap = x_start - last_x_end
+                if gap > 25:
+                    line_text += "    "
+                else:
+                    line_text += " "
+            
+            line_text += text
+            last_x_end = x_end
+            
+        snapped_text_lines.append(line_text)
         
     return snapped_text_lines
 
