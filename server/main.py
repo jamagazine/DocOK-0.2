@@ -688,7 +688,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "estimated_tokens": estimated_tokens,
         "raw_markdown": ext_text,
         "summary_md": summary_md,
-        "summary_fields": summary_fields
+        "summary_fields": summary_fields,
+        "type": stage
     }
     _save_manifest(manifest, projectId)
     
@@ -753,7 +754,9 @@ async def storage_list(projectId: str):
                 "summary_fields": entry.get("summary_fields", None),
                 "pages_count": entry.get("pages_count", 0),
                 "is_scan": entry.get("is_scan", False),
-                "pdf_type": entry.get("pdf_type", "UNKNOWN")
+                "pdf_type": entry.get("pdf_type", "UNKNOWN"),
+                "type": entry.get("type", "spec"),
+                "verifiedFields": entry.get("verifiedFields", {})
             })
     return files
 
@@ -762,7 +765,7 @@ async def storage_update_file(name: str, projectId: str, data: dict):
     m = _load_manifest(projectId)
     for k, v in m.items():
         if isinstance(v, dict) and v.get("originalName")==name:
-            v.update({ki: vi for ki, vi in data.items() if ki in ["status", "cost", "tokens"]})
+            v.update({ki: vi for ki, vi in data.items() if ki in ["status", "cost", "tokens", "verifiedFields", "type"]})
             _save_manifest(m, projectId); return {"ok": True}
     raise HTTPException(status_code=404)
 

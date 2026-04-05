@@ -422,14 +422,38 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         "chunks_report": []
     }
 
+def wrap_with_confidence(value):
+    return {
+        "value": value,
+        "confidence": 1.0 if value else 0.0,
+        "isVerified": False
+    }
+
 def safe_parse_llm_json(response_text: str) -> dict:
     """Безопасно извлекает JSON из ответа LLM, игнорируя markdown-теги."""
     try:
         match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        raw_dict = {}
         if match:
             clean_json_str = match.group(0)
-            return json.loads(clean_json_str)
-        return json.loads(response_text)
+            raw_dict = json.loads(clean_json_str)
+        else:
+            raw_dict = json.loads(response_text)
+            
+        # Wrap for HITL Sprint 3.3
+        wrapped_data = {
+            "organization_name": wrap_with_confidence(raw_dict.get("organization_name")),
+            "inn": wrap_with_confidence(raw_dict.get("inn")),
+            "kpp": wrap_with_confidence(raw_dict.get("kpp")),
+            "legal_address": wrap_with_confidence(raw_dict.get("legal_address")),
+            "postal_address": wrap_with_confidence(raw_dict.get("postal_address")),
+            # Fallback for old fields if any
+            "invoice_number": raw_dict.get("invoice_number", "---"),
+            "invoice_date": raw_dict.get("invoice_date", "---"),
+            "total_amount": raw_dict.get("total_amount", "---"),
+            "currency": raw_dict.get("currency", "RUB")
+        }
+        return wrapped_data
     except json.JSONDecodeError as e:
         print(f"LLM JSON Decode Error: {e}")
         print(f"Raw LLM response: {response_text}")

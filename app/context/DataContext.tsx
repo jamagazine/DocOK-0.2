@@ -803,7 +803,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
               summary_fields: f.summary_fields,
               pages_count: f.pages_count,
               is_scan: f.is_scan,
-              pdf_type: f.pdf_type
+              pdf_type: f.pdf_type,
+              type: f.type,
+              verifiedFields: f.verifiedFields || {}
             };
           });
           setUploadStatuses(statuses);
@@ -2517,22 +2519,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 
   // Обратная совместимость: getCurrentRows возвращает displayRows из pipeline
-  const verifyField = useCallback((fileId: string, fieldName: string) => {
+  const verifyField = useCallback(async (fileId: string, fieldName: string) => {
     setUploadStatuses((prev) => {
       const file = prev[fileId];
       if (!file) return prev;
+      
+      const newDocs = {
+        ...(file.verifiedFields || {}),
+        [fieldName]: true
+      };
+
+      // Background sync to server
+      fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileId)}?projectId=${activeProjectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verifiedFields: newDocs })
+      }).catch(err => console.error("Sync error:", err));
+
       return {
         ...prev,
         [fileId]: {
           ...file,
-          verifiedFields: {
-            ...(file.verifiedFields || {}),
-            [fieldName]: true
-          }
+          verifiedFields: newDocs
         }
       };
     });
-  }, []);
+  }, [activeProjectId]);
 
   const getCurrentRows = useCallback(() => dataPipeline.displayRows, [dataPipeline]);
 
