@@ -949,7 +949,7 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
 
 def ocr_to_grid_markdown(words: list) -> tuple:
     """
-    STAGE 3.1 — RegEx Entity Extraction (Consolidated Header).
+    STAGE 3.2 FINAL — Error Correction & Spatial Anchors (RegEx Entity Extraction).
     """
     if not words:
         return "", ""
@@ -960,18 +960,14 @@ def ocr_to_grid_markdown(words: list) -> tuple:
     CLIENT_INN  = cfg.get("client_inn",  "5905271743")
     CLIENT_NAME = cfg.get("name_keywords", ["ММК-Пермь"])[0] if cfg.get("name_keywords") else "ММК-Пермь"
     
-    CLIENT_KEYWORDS = [CLIENT_INN]
-    if cfg.get("client_kpp"): CLIENT_KEYWORDS.append(cfg.get("client_kpp"))
-    CLIENT_KEYWORDS.extend(cfg.get("name_keywords", []))
-    CLIENT_KEYWORDS.extend(cfg.get("address_keywords", []))
-    CLIENT_KEYWORDS.extend(cfg.get("phone_keywords", []))
+    CLIENT_SETTINGS_KWS = [CLIENT_INN]
+    if cfg.get("client_kpp"): CLIENT_SETTINGS_KWS.append(cfg.get("client_kpp"))
+    CLIENT_SETTINGS_KWS.extend(cfg.get("name_keywords", []))
+    CLIENT_SETTINGS_KWS.extend(cfg.get("address_keywords", []))
+    CLIENT_SETTINGS_KWS.extend(cfg.get("phone_keywords", []))
+    CLIENT_SETTINGS_KWS_LOWER = [k.lower() for k in CLIENT_SETTINGS_KWS]
 
-    # ── Phase 1: Discovery Pass (Legacy Reference) ───────────────────────────
-    supplier_ref = _discover_supplier(words, CLIENT_INN)
-    SUPPLIER_INN = supplier_ref["inn"]
-    SUPPLIER_NAME = supplier_ref["name"]
-    
-    # ── Phase 2: Classification & Consolidation ──────────────────────────────
+    # ── Phase 1: Classification & Consolidation ──────────────────────────────
     words.sort(key=lambda w: w['y'])
     rows_grouped = []
     if words:
@@ -1033,58 +1029,51 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             if full_line:
                 footer_raw.append(full_line)
 
-    # ── Phase 3: Header Text Consolidation (Natural Reading Order) ───────────
+    # ── Phase 2: Metadata Extraction (Document Info) ─────────────────────────
     header_words.sort(key=lambda w: (w['y'] // 12, w['x']))
     full_header_text = " ".join(w['text'] for w in header_words)
 
-    # ── Phase 4: RegEx Extraction ────────────────────────────────────────────
-    # INN: 10 or 12 digits + Checksum
+    doc_type = "Счет"
+    doc_num = "Не найден"
+    doc_date = "Не найдена"
+
+    # Pattern: [Type] № [Number] (от) [Date]
+    meta_m = re.search(r'(Счет-фактура|Счет(?: на оплату)?|УПД).*?№\s*([^\sот]+)(?:\s*от\s*|\s+)(\d{2}\.\d{2}\.\d{4}|\d{2}\s[а-яА-Я]+\s\d{4})', full_header_text, re.IGNORECASE)
+    if meta_m:
+        doc_type = meta_m.group(1).strip().capitalize()
+        doc_num = meta_m.group(2).strip()
+        doc_date = meta_m.group(3).strip()
+    else:
+        # Fallback loose search
+        m_num = re.search(r'№\s*([A-Za-zА-Яа-я0-9\-]+)', full_header_text)
+        m_date = re.search(r'(\d{2}\.\d{2}\.\d{4})', full_header_text)
+        if m_num: doc_num = m_num.group(1)
+        if m_date: doc_date = m_date.group(1)
+
+    # ── Phase 3: RegEx Entities & Legal Forms ────────────────────────────────
     inn_candidates = re.findall(r'\b\d{10}\b|\b\d{12}\b', full_header_text)
     inns = sorted(list(set([inn for inn in inn_candidates if validate_inn_logic(inn)])))
+    
+    sup_inn = next((i for i in inns if i != CLIENT_INN), "Не найден")
+    b_inn = CLIENT_INN
 
-    # KPP: 9 digits near keywords ИНН or КПП
-    kpp_candidates = re.findall(r'\b\d{9}\b', full_header_text)
-    kpps = []
-    for kpp in kpp_candidates:
-        idx = full_header_text.find(kpp)
-        window = full_header_text[max(0, idx-20):min(len(full_header_text), idx+30)].upper()
-        if "КПП" in window or "ИНН" in window:
-            if kpp not in kpps: kpps.append(kpp)
-
-    # BIK: starts with 04, 9 digits
+    # Extract all components normally
+    kpp_c = re.findall(r'\b\d{9}\b', full_header_text)
+    kpps = [k for k in kpp_c if "КПП" in full_header_text[max(0, full_header_text.find(k)-20):full_header_text.find(k)+30].upper()]
     biks = sorted(list(set(re.findall(r'\b04\d{7}\b', full_header_text))))
-
-    # Accounts: 20 digits starting with 407, 408, or 301
     accounts = sorted(list(set(re.findall(r'\b(?:407|408|301)\d{17}\b', full_header_text))))
-
-    # Phones: Federal (+7/8) and City/Local formats
-    phone_pattern = re.compile(
-        r'(?<!\d)(?:(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\(\d{3}\)\s*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\b\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b)(?!\d)'
-    )
+    phone_pattern = re.compile(r'(?<!\d)(?:(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\(\d{3}\)\s*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\b\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b)(?!\d)')
     phones = sorted(list(set(phone_pattern.findall(full_header_text))))
 
-    # ── Phase 5: Structure and Profiles ──────────────────────────────────────
-    sup_inn = SUPPLIER_INN or next((i for i in inns if i != CLIENT_INN), "Не найден")
-    b_inn = CLIENT_INN
-    
-    b_kpp = cfg.get("client_kpp", "590501001")
-    s_kpp = next((k for k in kpps if k != b_kpp), "Не найден")
-    if b_kpp not in kpps: b_kpp = "Не найден (Используется из настроек)"
-    
-    buyer_phone_kws = cfg.get("phone_keywords", [])
-    b_phone = ", ".join(buyer_phone_kws) if buyer_phone_kws else "Не найден"
-    s_phones = [p for p in phones if not any(re.sub(r'\D', '', bk) in re.sub(r'\D', '', p) for bk in buyer_phone_kws)]
-    s_phone = ", ".join(s_phones) if s_phones else "Не найден"
+    # Legal Forms definitions
+    LEGAL_FORMS = {
+        "ООО": ["Общество с ограниченной ответственностью", "ООО"],
+        "ИП": ["Индивидуальный предприниматель", "ИП"],
+        "АО": ["Акционерное общество", "АО", "ЗАО", "ПАО", "ОАО"]
+    }
 
-    s_bik = biks[0] if biks else "Не найден"
-    s_corr = next((a for a in accounts if a.startswith('301')), "Не найден")
-    s_settl = next((a for a in accounts if a.startswith('407') or a.startswith('408')), "Не найден")
-
-    # Group lines for Address/Bank and Raw_Lines
-    s_lines, b_lines, tr_lines = [], [], []
-    s_addr_parts, b_addr_parts, s_bank_parts = [], [], []
-
-    # Reconstruct header rows for assignment
+    # ── Phase 4: Spatial Formatting (The Anchors) ────────────────────────────
+    # Re-group header words into lines properly for spatial bounds
     hw_sorted = sorted(header_words, key=lambda w: w['y'])
     h_rows = []
     if hw_sorted:
@@ -1097,65 +1086,101 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                 cr = [hw_sorted[i]]
         h_rows.append(cr)
 
+    # Find anchor Y coordinates
+    buy_inn_y = -1000
+    sup_inn_y = -1000
+    for r in h_rows:
+        rl = " ".join(w['text'] for w in r)
+        if CLIENT_INN in rl: buy_inn_y = r[0]['y']
+        if sup_inn != "Не найден" and sup_inn in rl: sup_inn_y = r[0]['y']
+
+    s_lines, b_lines, tr_lines = [], [], []
+    s_addr_parts, b_addr_parts = [], []
+    sup_org_name = "Не найден"
+    s_bank_parts = []
+
+    ADDR_PATTERNS = [
+        re.compile(r'(\d{6}),?\s*([^,]+(?:край|область|республика|г\.))[^,]+,?\s*([^,]+(?:ул\.|пер\.|пр\.|ш\.|б-р\.))[^,]+,?\s*(?:дом|д\.)\s*№?\s*(\d+[А-Яа-я]?)', re.IGNORECASE),
+        re.compile(r'(?:ул\.|пер\.|пр\.|ш\.|б-р\.).+?(?:дом|д\.)\s*№?\s*\d+', re.IGNORECASE)
+    ]
+    BANK_BLOCK_KWS = ["БАНК", "БИК", "СБЕРБАНК", "ПАО", "АО", "ФИЛИАЛ"]
+
+    # Organization extraction regex builder (covers "ООО 'Ромашка'" across lines potentially)
+    org_candidates = []
     for r in h_rows:
         r.sort(key=lambda w: w['x'])
         rl = " ".join(w['text'] for w in r).strip()
-        rl_low = rl.lower()
-        if not rl or len(rl) < 2:
-            tr_lines.append(rl)
-            continue
-            
-        # Buyer assignment
-        is_buyer = any(k.lower() in rl_low for k in CLIENT_KEYWORDS)
-        if is_buyer:
+        if not rl or len(rl) < 2: continue
+        
+        y = r[0]['y']
+        rl_lower = rl.lower()
+        rl_upper = rl.upper()
+
+        is_buyer_zone = abs(y - buy_inn_y) <= 150
+        is_supplier_zone = abs(y - sup_inn_y) <= 150
+        
+        # Explicit Master Data Exclusion rule:
+        matches_buyer_kws = any(k in rl_lower for k in CLIENT_SETTINGS_KWS_LOWER)
+
+        if matches_buyer_kws or (is_buyer_zone and not is_supplier_zone):
             b_lines.append(rl)
-            if any(ak.lower() in rl_low for ak in cfg.get("address_keywords", [])):
+            # Address parsing for buyer (fallback)
+            if any(ak.lower() in rl_lower for ak in cfg.get("address_keywords", [])):
                 b_addr_parts.append(rl)
-            continue
-
-        # Supplier assignment
-        is_supplier = False
-        if sup_inn != "Не найден" and sup_inn in rl: is_supplier = True
-        elif SUPPLIER_NAME and SUPPLIER_NAME.split()[0].upper() in rl.upper(): is_supplier = True
-        elif s_kpp != "Не найден" and s_kpp in rl: is_supplier = True
-        elif any(e in rl for e in biks + accounts): is_supplier = True
-        elif any(p.replace(" ", "") in rl.replace(" ", "") for p in s_phones): is_supplier = True
-
-        if is_supplier:
+        elif is_supplier_zone:
             s_lines.append(rl)
-            if re.search(r'\b\d{6}\b', rl) or any(k in rl_low for k in ["ул", "дом", "г.", "обл."]):
-                s_addr_parts.append(rl)
-            if any(k in rl_low for k in ["банк", "пао", "ао", "филиал"]):
+            
+            # Sub-Extraction: Legal Orgs
+            is_bank_line = any(bk in rl_upper for bk in BANK_BLOCK_KWS)
+            if not is_bank_line:
+                for abbr, forms in LEGAL_FORMS.items():
+                    for form in forms:
+                        if form.lower() in rl_lower:
+                            # Might contain quotes ' ' or " "
+                            org_candidates.append(rl)
+            elif any(bk in rl_upper for bk in ["БАНК", "ПАО", "АО", "ФИЛИАЛ"]):
                 s_bank_parts.append(rl)
-            continue
-
-        # Trash assignment
-        legal_markers = ["ООО", "ИП", "ОАО", "ЗАО", "ПАО", "АДРЕС", "УЛ", "ДОМ", "БАНК", "СЧЕТ", "ИНН", "КПП", "ФИЛИАЛ"]
-        if not any(c.isdigit() for c in rl) and not any(k in rl.upper() for k in legal_markers):
-            tr_lines.append(rl)
+                
+            # Sub-Extraction: Strict Address
+            if not is_bank_line:
+                if any(ptrn.search(rl) for ptrn in ADDR_PATTERNS) or "г." in rl_lower or "ул." in rl_lower:
+                    s_addr_parts.append(rl)
         else:
+            # Out of bounds / Trash
             tr_lines.append(rl)
 
-    # Cleanup markers
+    # ── Phase 5: Structure Consolidation ─────────────────────────────────────
+    # Phone selection
+    b_phone = cfg.get("phone_keywords", ["220-22-22"])[0] if cfg.get("phone_keywords") else "220-22-22"
+    s_phones_clean = [p for p in phones if not any(re.sub(r'\D', '', bk) in re.sub(r'\D', '', p) for bk in cfg.get("phone_keywords", []))]
+    s_phone = ", ".join(s_phones_clean) if s_phones_clean else "Не найден"
+
+    # Banking selection
+    s_bik = biks[0] if biks else "Не найден"
+    s_corr = next((a for a in accounts if a.startswith('301')), "Не найден")
+    s_settl = next((a for a in accounts if a.startswith('407') or a.startswith('408')), "Не найден")
+    
+    # Text cleanup
     _buyer_marker_re    = re.compile(r'Покупатель\s*:.*', re.IGNORECASE)
     _supplier_marker_re = re.compile(r'Поставщик\s*:.*',  re.IGNORECASE)
-
-    s_lines = [_buyer_marker_re.sub('', ln).strip() for ln in s_lines]
     s_lines = [ln.replace('Поставщик:', '').strip() for ln in s_lines]
-    s_lines = [ln for ln in s_lines if ln]
-
-    b_lines = [_supplier_marker_re.sub('', ln).strip() for ln in b_lines]
     b_lines = [ln.replace('Покупатель:', '').strip() for ln in b_lines]
-    b_lines = [ln for ln in b_lines if ln]
 
-    # Finalize Fields
-    sup_org = SUPPLIER_NAME or "Не найден"
+    # Final string populations
+    sup_org = org_candidates[0] if org_candidates else "Не найден"
     sup_addr = " ".join(s_addr_parts) if s_addr_parts else "Не найден"
     sup_bank = " ".join(s_bank_parts) if s_bank_parts else "Не найден"
-    buy_addr = " ".join(b_addr_parts) if b_addr_parts else "Не найден"
+    
+    b_kpp = cfg.get("client_kpp", "590501001")
+    s_kpp = next((k for k in kpps if k != b_kpp), "Не найден")
 
-    # Formatting Output
+    # ── Phase 6: Output Emission ─────────────────────────────────────────────
     header_md = "\n".join([
+        "### [DOCUMENT_INFO] ###",
+        f"- Type: {doc_type}",
+        f"- Number: {doc_num}",
+        f"- Date: {doc_date}",
+        "",
         "### [SUPPLIER_VERIFIED_DATA] ###",
         f"- Organization: {sup_org}",
         f"- INN: {sup_inn}",
@@ -1167,21 +1192,22 @@ def ocr_to_grid_markdown(words: list) -> tuple:
         f"- Corr_Acc: {s_corr}",
         f"- Settl_Acc: {s_settl}",
         "- Raw_Lines:",
-        *[f"  {ln}" for ln in s_lines],
+        *[f"  {ln}" for ln in s_lines if ln],
         "",
         "### [BUYER_VERIFIED_DATA] ###",
         f"- Organization: {CLIENT_NAME}",
         f"- INN: {b_inn}",
         f"- KPP: {b_kpp}",
         f"- Phone: {b_phone}",
-        f"- Address: {buy_addr}",
+        f"- Address: {cfg.get('address_keywords', ['Россия, г. Пермь, ул. Левченко, 1'])[0]}",
         "- Raw_Lines:",
-        *[f"  {ln}" for ln in b_lines],
+        *[f"  {ln}" for ln in b_lines if ln],
         "",
         "### [TRASH_BIN] ###",
-        *tr_lines,
+        *[ln for ln in tr_lines if not any(c.isdigit() for c in ln) or len(ln) < 5],
     ])
 
     table_md = "\n".join(table_raw) + "\n\n" + "\n".join(footer_raw)
     return header_md, table_md
+
 
