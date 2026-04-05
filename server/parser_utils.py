@@ -1172,7 +1172,7 @@ def y_snap_tokens(tokens, threshold=5):
             if last_x_end is not None:
                 gap = x_start - last_x_end
                 if gap > 15:
-                    line_text += "  |  "
+                    line_text += "    "
                 else:
                     line_text += " "
             
