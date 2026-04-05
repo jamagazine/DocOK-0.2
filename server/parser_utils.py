@@ -961,7 +961,11 @@ def ocr_to_grid_markdown(words: list) -> tuple:
     CLIENT_INN  = cfg.get("client_inn",  "5905271743")
     CLIENT_NAME = cfg.get("name_keywords", ["ММК-Пермь"])[0] if cfg.get("name_keywords") else "ММК-Пермь"
 
-    # ── Phase 1: Classification & Table detection (Y-Snapping) ───────────────
+    # ── Phase 0.1: Raw Stream Capture ────────────────────────────────────────
+    # Capture original order before any sorting
+    raw_stream_copy = list(words)
+
+    # ── Phase 1: Classification & Table detection ────────────────────────────
     words.sort(key=lambda w: w['y'])
     rows_grouped = []
     if words:
@@ -974,9 +978,7 @@ def ocr_to_grid_markdown(words: list) -> tuple:
                 cur_row = [words[i]]
         rows_grouped.append(cur_row)
 
-    header_words: list = []
-    header_rows_text = []
-
+    header_words_set = set() # To identify header words in raw stream
     state = "HEADER"
     for row in rows_grouped:
         row.sort(key=lambda x: x['x'])
@@ -988,114 +990,134 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             continue
         
         if state == "HEADER":
-            header_words.extend(row)
-            header_rows_text.append(rl)
-
-    # ── Phase 2: Anchor Discovery (Fix: Tolerant matching) ───────────────────
-    buyer_anchor = None
-    supplier_anchor = None
-
-    for w in header_words:
-        t = w['text'].strip()
-        # Use existing function to handle punctuation and checksums
-        cand = validate_and_clean_inn(t) 
-        if cand:
-            if cand == CLIENT_INN:
-                buyer_anchor = (w['x'], w['y'], cand)
-            elif not supplier_anchor:
-                supplier_anchor = (w['x'], w['y'], cand)
-
-    # ── Phase 3: Spatial Baskets (Absolute Gravity) ──────────────────────────
-    buyer_basket_words = []
-    supplier_basket_words = []
-
-    for w in header_words:
-        # If no anchors found, skip assignment
-        if not buyer_anchor and not supplier_anchor:
-            continue
+            for w in row:
+                header_words_set.add(id(w))
             
-        # Euclidean distance (hypot) from word to anchors
-        dist_b = math.hypot(w['x'] - buyer_anchor[0], w['y'] - buyer_anchor[1]) if buyer_anchor else float('inf')
-        dist_s = math.hypot(w['x'] - supplier_anchor[0], w['y'] - supplier_anchor[1]) if supplier_anchor else float('inf')
-        
-        # Absolute gravity: assign to the physically closest anchor
-        if dist_b < dist_s:
-            buyer_basket_words.append(w)
-        else:
-            supplier_basket_words.append(w)
+    all_header_words = [w for w in words if id(w) in header_words_set]
 
-    # ── Phase 4: Token Detection ─────────────────────────────────────────────
-    def get_basket_data(basket_words):
-        # Line grouping for context within basket
-        basket_words.sort(key=lambda w: (w['y'] // 12, w['x']))
-        lines = []
-        if basket_words:
-            cr = [basket_words[0]]
-            for i in range(1, len(basket_words)):
-                if abs(basket_words[i]['y'] - cr[0]['y']) < 12:
-                    cr.append(basket_words[i])
-                else:
-                    cr.sort(key=lambda x: x['x'])
-                    lines.append(" ".join(w['text'] for w in cr))
-                    cr = [basket_words[i]]
-            cr.sort(key=lambda x: x['x'])
-            lines.append(" ".join(w['text'] for w in cr))
-        
-        txt = " ".join(lines)
-        
+    # ── Phase 3.2.1: Anchor-based Cropping & clean_header_lines ─────────────
+    def find_header_table_start(h_words: list) -> float:
+        """
+        Возвращает координату Y первого слова, с которого начинается блок реквизитов.
+        """
+        keywords = {"Получатель", "Банк получателя", "Сч. №", "БИК"}
+        for i, word in enumerate(h_words):
+            text = word["text"].strip()
+            if any(kw in text for kw in keywords):
+                # Проверяем соседей по строке (допуск 30px по Y)
+                nearby = [w["text"] for w in h_words[i:i+10] if abs(float(w["y"]) - float(word["y"])) < 30]
+                if any(k in " ".join(nearby) for k in ["ИНН", "КПП", "БИК", "Сч. №", "Банк"]):
+                    return float(word["y"])
+        return 0.0
+
+    sorted_h_words = sorted(all_header_words, key=lambda w: (float(w['y']), float(w['x'])))
+    y_top_table = find_header_table_start(sorted_h_words)
+    
+    # Filter and Snapping
+    clean_header_words = [w for w in sorted_h_words if float(w['y']) >= (y_top_table - 10)]
+    
+    # Y-Snapping to create clean_header_lines
+    clean_header_lines = []
+    if clean_header_words:
+        row_buf = [clean_header_words[0]]
+        for i in range(1, len(clean_header_words)):
+            if abs(clean_header_words[i]['y'] - row_buf[0]['y']) < 15:
+                row_buf.append(clean_header_words[i])
+            else:
+                row_buf.sort(key=lambda x: x['x'])
+                clean_header_lines.append(" ".join(w['text'] for w in row_buf))
+                row_buf = [clean_header_words[i]]
+        row_buf.sort(key=lambda x: x['x'])
+        clean_header_lines.append(" ".join(w['text'] for w in row_buf))
+
+    # ── Phase 3.2.2: Slicing (Marker-based isolated blocks) ────────────────
+    idx_supplier = -1
+    idx_buyer = -1
+    
+    # Markers for slicing
+    sup_markers = ["Поставщик:", "Продавец:"]
+    buy_markers = ["Покупатель:", "Грузополучатель:"]
+
+    for i, line in enumerate(clean_header_lines):
+        if any(m in line for m in sup_markers) and idx_supplier == -1:
+            idx_supplier = i
+        if any(m in line for m in buy_markers) and idx_buyer == -1:
+            idx_buyer = i
+
+    # Fallback/Safety
+    if idx_supplier == -1: idx_supplier = min(2, len(clean_header_lines))
+    if idx_buyer == -1:    idx_buyer = max(idx_supplier + 1, len(clean_header_lines) - 2)
+
+    # 3 Isolated Blocks
+    bank_invoice_block = "\n".join(clean_header_lines[:idx_supplier])
+    supplier_block     = "\n".join(clean_header_lines[idx_supplier:idx_buyer])
+    buyer_block        = "\n".join(clean_header_lines[idx_buyer:])
+
+    # ── Phase 4: Isolated Extraction (Targeted RegEx) ──────────────────
+    def extract_attrs(text, role="SUPPLIER"):
         data = {
-            "org": [], "index": "Не найден", "city": "Не найден", 
-            "street": "Не найден", "house_office": "Не найден", "bank": []
+            "org": "Не найден", "inn": "Не найден", "addr": "Не найден",
+            "bik": "Не найден", "acc": "Не найден", "invoice_num": "Не найден"
         }
+        if not text: return data
         
-        idx_m = re.search(r'\b\d{6}\b', txt)
-        if idx_m: data["index"] = idx_m.group(0)
+        # 1. Accounts (20 chars) and BIK (9 chars)
+        ac_matches = re.findall(r'\b\d{20}\b', text)
+        if ac_matches: data["acc"] = ", ".join(ac_matches)
         
-        org_q = re.findall(r'(?:ООО|ИП|Общество\s+с\s+ограниченной\s+ответственностью)[\s\w]*?[«"”](.+?)[»"”]', txt, re.IGNORECASE)
-        org_m = re.findall(r'(ООО|ИП|АО|ЗАО|ПАО|ОАО|Общество\s+с\s+ограниченной\s+ответственностью)\b\s*(\w+)?', txt, re.IGNORECASE)
-        data["org"] = list(set(org_q)) if org_q else [f"{m[0]} {m[1]}" for m in org_m]
+        bik_m = re.search(r'(?:БИК)\s*(\d{9})', text, re.IGNORECASE)
+        if not bik_m: bik_m = re.search(r'\b(04\d{7})\b', text)
+        if bik_m: data["bik"] = bik_m.group(1) if bik_m.groups() else bik_m.group(0)
+
+        # 2. INN Validation
+        for part in text.split():
+            clean_inn = validate_and_clean_inn(part)
+            if clean_inn:
+                if role == "BUYER" and clean_inn == CLIENT_INN:
+                    data["inn"] = clean_inn
+                    break
+                elif role == "SUPPLIER" and clean_inn != CLIENT_INN:
+                    data["inn"] = clean_inn
+                    break
+
+        # 3. Organization Name
+        org_q = re.search(r'(?:ООО|ИП|АО|ЗАО|ПАО|ОАО|Общество\s+с\s+ограниченной\s+ответственностью)[\s\w]*?[«"”](.+?)[»"”]', text, re.IGNORECASE)
+        if org_q: 
+            data["org"] = org_q.group(0).strip()
+        else:
+            org_s = re.search(r'(ООО|ИП|АО)\s*([А-Яа-я\-]+)', text)
+            if org_s: data["org"] = org_s.group(0).strip()
+
+        # 4. Address (Lazy Window)
+        addr_m = re.search(r'\b\d{6}\b.{0,100}', text)
+        if not addr_m:
+            addr_m = re.search(r'(?:г\.|город|г\.о\.)\s*[\w\s\-\.\,]{0,100}', text, re.IGNORECASE)
+        if addr_m: data["addr"] = addr_m.group(0).strip()
+
+        # 5. Invoice/Ref Number
+        inv_m = re.search(r'(?:Счет|Счёт|№)\s*(?:№\s*)?([А-Яа-я0-9\-/]+)', text, re.IGNORECASE)
+        if inv_m: data["invoice_num"] = inv_m.group(1) if inv_m.groups() else inv_m.group(0)
         
-        city_m = re.search(r'(?:г\.|город|г\.о\.)\s*([А-Яа-я\-]+)', txt, re.IGNORECASE)
-        if not city_m: city_m = re.search(r'([А-Яа-я\-]+)\s*(?:г\.|г\.о\.)', txt, re.IGNORECASE)
-        if city_m: data["city"] = city_m.group(1) if city_m.group(1) else city_m.group(0)
-
-        st_m = re.search(r'(?:ул\.|улица|пер\.|пр-кт|пр-д|шоссе|ш\.)\s*([\w\s\-]+?)(?=[,\s]|$)', txt, re.IGNORECASE)
-        if not st_m: st_m = re.search(r'([\w\s\-]+?)\s*(?:ул\.|пер\.|пр-кт|пр-д|шоссе|ш\.)', txt, re.IGNORECASE)
-        if st_m: data["street"] = st_m.group(1) if st_m.group(1) else st_m.group(0)
-
-        ho_m = re.search(r'(?:дом|д\.|стр\.|корп\.|лит\.|литера?|оф\.|офис|каб\.|цех)\s*(?:№\s*)?([А-Яа-я0-9\-]+)', txt, re.IGNORECASE)
-        if ho_m: data["house_office"] = ho_m.group(0).strip()
-
-        data["bank"] = list(set(re.findall(r'(\b\d{20}\b|БИК\s*\d{9}|БАНК\s*[\w\s\-]+)', txt, re.IGNORECASE)))
-
         return data
 
-    sup_data = get_basket_data(supplier_basket_words)
-    buy_data = get_basket_data(buyer_basket_words)
+    bank_res = extract_attrs(bank_invoice_block, "BANK")
+    sup_res  = extract_attrs(supplier_block,     "SUPPLIER")
+    buy_res  = extract_attrs(buyer_block,        "BUYER")
 
-    # ── Phase 5: Formatting Output ───────────────────────────────────────────
+    # ── Phase 5: Final Output ─────────────────────────────────────────────
     header_md = "\n".join([
-        "### [SUPPLIER_ENTITY_BASKET] ###",
-        f"- Organization_Tokens: {sup_data['org']}",
-        f"- INN: {supplier_anchor[2] if supplier_anchor else 'Не найден'}",
-        "- Address_Components:",
-        f"  * Index: {sup_data['index']}",
-        f"  * City: {sup_data['city']}",
-        f"  * Street: {sup_data['street']}",
-        f"  * House/Office: {sup_data['house_office']}",
-        f"- Bank_Tokens: {sup_data['bank']}",
+        "### [SUPPLIER_VERIFIED_DATA] ###",
+        f"- Organization: {sup_res['org']}",
+        f"- INN: {sup_res['inn']}",
+        f"- Address: {sup_res['addr']}",
+        f"- Bank_BIK: {bank_res['bik']}",
+        f"- Account: {bank_res['acc']}",
         "",
-        "### [BUYER_ENTITY_BASKET] ###",
+        "### [BUYER_VERIFIED_DATA] ###",
         f"- Organization: {CLIENT_NAME}",
-        f"- INN: {CLIENT_INN}",
-        "- Address_Components:",
-        f"  * Index: {buy_data['index']}",
-        f"  * City: {buy_data['city']}",
-        f"  * Street: {buy_data['street']}",
-        f"  * House/Office: {buy_data['house_office']}",
-        "",
-        "### [RAW_LINES_CHECK] ###",
-        *[f"{idx+1}. {line}" for idx, line in enumerate(header_rows_text)]
+        f"- INN: {buy_res['inn']}",
+        f"- Invoice_Num: {bank_res['invoice_num']}",
+        ""
     ])
 
     return header_md, "### TABLE SUPPRESSED FOR TEST ###"
