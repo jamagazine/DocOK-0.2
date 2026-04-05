@@ -991,49 +991,37 @@ def ocr_to_grid_markdown(words: list) -> tuple:
             header_words.extend(row)
             header_rows_text.append(rl)
 
-    # ── Phase 2: Anchor Discovery ────────────────────────────────────────────
+    # ── Phase 2: Anchor Discovery (Fix: Tolerant matching) ───────────────────
     buyer_anchor = None
     supplier_anchor = None
 
     for w in header_words:
         t = w['text'].strip()
-        if re.fullmatch(r'\d{10}|\d{12}', t):
-            if t == CLIENT_INN:
-                buyer_anchor = (w['x'], w['y'], t)
-            elif validate_inn_logic(t):
-                if not supplier_anchor:
-                    supplier_anchor = (w['x'], w['y'], t)
+        # Use existing function to handle punctuation and checksums
+        cand = validate_and_clean_inn(t) 
+        if cand:
+            if cand == CLIENT_INN:
+                buyer_anchor = (w['x'], w['y'], cand)
+            elif not supplier_anchor:
+                supplier_anchor = (w['x'], w['y'], cand)
 
-    # ── Phase 3: Spatial Baskets (+/- 300px Y) ───────────────────────────────
+    # ── Phase 3: Spatial Baskets (Absolute Gravity) ──────────────────────────
     buyer_basket_words = []
     supplier_basket_words = []
 
     for w in header_words:
-        dist_to_buyer = 9999
-        dist_to_supplier = 9999
+        # If no anchors found, skip assignment
+        if not buyer_anchor and not supplier_anchor:
+            continue
+            
+        # Euclidean distance (hypot) from word to anchors
+        dist_b = math.hypot(w['x'] - buyer_anchor[0], w['y'] - buyer_anchor[1]) if buyer_anchor else float('inf')
+        dist_s = math.hypot(w['x'] - supplier_anchor[0], w['y'] - supplier_anchor[1]) if supplier_anchor else float('inf')
         
-        in_buyer_range = False
-        in_supplier_range = False
-
-        if buyer_anchor:
-            if abs(w['y'] - buyer_anchor[1]) <= 300:
-                in_buyer_range = True
-                dist_to_buyer = math.sqrt((w['x'] - buyer_anchor[0])**2 + (w['y'] - buyer_anchor[1])**2)
-        
-        if supplier_anchor:
-            if abs(w['y'] - supplier_anchor[1]) <= 300:
-                in_supplier_range = True
-                dist_to_supplier = math.sqrt((w['x'] - supplier_anchor[0])**2 + (w['y'] - supplier_anchor[1])**2)
-
-        # Force proximity if overlapping
-        if in_buyer_range and in_supplier_range:
-            if dist_to_buyer < dist_to_supplier:
-                buyer_basket_words.append(w)
-            else:
-                supplier_basket_words.append(w)
-        elif in_buyer_range:
+        # Absolute gravity: assign to the physically closest anchor
+        if dist_b < dist_s:
             buyer_basket_words.append(w)
-        elif in_supplier_range:
+        else:
             supplier_basket_words.append(w)
 
     # ── Phase 4: Token Detection ─────────────────────────────────────────────
@@ -1069,11 +1057,11 @@ def ocr_to_grid_markdown(words: list) -> tuple:
         
         city_m = re.search(r'(?:г\.|город|г\.о\.)\s*([А-Яа-я\-]+)', txt, re.IGNORECASE)
         if not city_m: city_m = re.search(r'([А-Яа-я\-]+)\s*(?:г\.|г\.о\.)', txt, re.IGNORECASE)
-        if city_m: data["city"] = city_m.group(1 if city_m.group(1) else 0).strip()
+        if city_m: data["city"] = city_m.group(1) if city_m.group(1) else city_m.group(0)
 
         st_m = re.search(r'(?:ул\.|улица|пер\.|пр-кт|пр-д|шоссе|ш\.)\s*([\w\s\-]+?)(?=[,\s]|$)', txt, re.IGNORECASE)
         if not st_m: st_m = re.search(r'([\w\s\-]+?)\s*(?:ул\.|пер\.|пр-кт|пр-д|шоссе|ш\.)', txt, re.IGNORECASE)
-        if st_m: data["street"] = st_m.group(0).strip()
+        if st_m: data["street"] = st_m.group(1) if st_m.group(1) else st_m.group(0)
 
         ho_m = re.search(r'(?:дом|д\.|стр\.|корп\.|лит\.|литера?|оф\.|офис|каб\.|цех)\s*(?:№\s*)?([А-Яа-я0-9\-]+)', txt, re.IGNORECASE)
         if ho_m: data["house_office"] = ho_m.group(0).strip()
