@@ -423,11 +423,17 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     }
 
 def extract_field(field_data):
-    # Если ИИ вернул правильный объект
     if isinstance(field_data, dict):
+        # Пытаемся получить confidence, кастуем во float, при ошибке ставим 1.0
+        try:
+            raw_conf = field_data.get("confidence", 1.0)
+            conf = float(raw_conf)
+        except (ValueError, TypeError):
+            conf = 1.0
+            
         return {
             "value": field_data.get("value"),
-            "confidence": field_data.get("confidence", 1.0 if field_data.get("value") else 0.0),
+            "confidence": conf,
             "isVerified": False
         }
     # Фолбэк, если ИИ по привычке вернул строку
