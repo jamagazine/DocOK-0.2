@@ -127,6 +127,7 @@ export const InvoicesInfoList: React.FC = () => {
                                 value={fieldData.value}
                                 confidence={fieldData.confidence ?? 1.0}
                                 isVerified={!!file.verifiedFields?.[f.key]}
+                                note={fieldData.note}
                                 onVerify={() => file.id && verifyField(file.id, f.key)}
                                 onChange={(val) => file.id && updateSupplierField(file.id, f.key, val)}
                               />
@@ -160,6 +161,7 @@ export const InvoicesInfoList: React.FC = () => {
                                 value={fieldData.value}
                                 confidence={fieldData.confidence ?? 1.0}
                                 isVerified={!!file.verifiedFields?.[f.key]}
+                                note={fieldData.note}
                                 onVerify={() => file.id && verifyField(file.id, f.key)}
                                 onChange={(val) => file.id && updateSupplierField(file.id, f.key, val)}
                               />

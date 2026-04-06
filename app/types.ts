@@ -108,6 +108,7 @@ export interface FieldWithConfidence<T> {
   value: T;
   confidence: number; // от 0.0 до 1.0 (например, 0.98 = 98% уверенности)
   isVerified: boolean; // Флаг, подтвердил ли человек это поле
+  note?: string; // Пояснение к статусу или результату фильтрации
 }
 
 export interface SupplierData {

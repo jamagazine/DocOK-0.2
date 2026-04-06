@@ -1,7 +1,10 @@
 {
-  "client_inn": "5905271743",
-  "client_kpp": "590501001",
-  "name_keywords": ["ММК-Пермь", "ММК Пермь"],
-  "address_keywords": ["614022", "Левченко", "Пермский край", "г. Пермь", "литер Р"],
-  "phone_keywords": ["220-22-22"]
+  "client_anchor": {
+    "inn": "5905271743",
+    "address_tokens": {
+      "index": "614022",
+      "house": "1",
+      "office": "3"
+    }
+  }
 }

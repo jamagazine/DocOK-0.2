@@ -8,9 +8,10 @@ interface EditableFieldProps {
   isVerified: boolean;
   onVerify: () => void;
   onChange: (newVal: string) => void;
+  note?: string; // Пояснение (например, "Адрес скопирован")
 }
 
-export function EditableField({ label, value, confidence, isVerified, onVerify, onChange }: EditableFieldProps) {
+export function EditableField({ label, value, confidence, isVerified, onVerify, onChange, note }: EditableFieldProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [tempValue, setTempValue] = useState(value || "");
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -22,6 +23,8 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
     return "bg-red-500";
   };
 
+  const isGreen = isVerified || confidence >= 0.95;
+
   useEffect(() => { setTempValue(value || ""); }, [value]);
 
   const handleSave = () => {
@@ -32,7 +35,11 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
   return (
     <div className="group py-2 border-b border-border/40 last:border-0 relative">
       <div className="flex items-center gap-2 mb-1">
-        <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} title={`Уверенность: ${confidence}`} />
+        <div 
+          className={`w-2 h-2 rounded-full ${getStatusColor()} 
+            ${isGreen ? 'opacity-30 group-hover:opacity-100 transition-opacity' : 'opacity-100'}`} 
+          title={note || `Уверенность: ${Math.round(confidence * 100)}%`} 
+        />
         <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
       </div>
       
