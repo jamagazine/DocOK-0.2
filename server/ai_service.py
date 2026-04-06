@@ -5,6 +5,15 @@ import asyncio
 import os
 from thefuzz import fuzz
 
+def find_account_by_context(text: str, prefix: str) -> str:
+    """Ищет 20-значное число с заданным префиксом (407 или 301)."""
+    import re
+    # Удаляем пробелы и тире для точного поиска 20 цифр подряд
+    clean_text = text.replace(" ", "").replace("-", "")
+    pattern = rf'\b{prefix}\d{{17}}\b'
+    matches = re.findall(pattern, clean_text)
+    return matches[0] if matches else None
+
 async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
     """
     Robust Hybrid OCR Engine (Vision V1).
@@ -597,6 +606,37 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         wrapped_data["postal_address"]["value"] = wrapped_data["legal_address"]["value"]
         wrapped_data["postal_address"]["confidence"] = 0.5
         wrapped_data["postal_address"]["note"] = "Адрес продублирован из Юридического (оригинал не найден)"
+
+    # --- БЛОК КОНТЕКСТНОЙ СОРТИРОВКИ БАНКОВ ---
+    raw_text = str(markdown_payload)
+    acc_val = wrapped_data.get("bank_account", {}).get("value")
+    corr_val = wrapped_data.get("corr_account", {}).get("value")
+
+    # 1. Если в Р/С (407) попал номер на 301 (К/С банка)
+    if acc_val and str(acc_val).startswith('301'):
+        # Переносим его в К/С, если там пусто
+        if not corr_val or corr_val == "---":
+            wrapped_data["corr_account"]["value"] = acc_val
+            wrapped_data["corr_account"]["confidence"] = 1.0
+
+        # Пытаемся найти настоящий Р/С (на 407) в тексте
+        found_407 = find_account_by_context(raw_text, "407")
+        if found_407:
+            wrapped_data["bank_account"]["value"] = found_407
+            wrapped_data["bank_account"]["confidence"] = 0.95
+            wrapped_data["bank_account"]["note"] = "Р/С автоматически найден по префиксу 407"
+        else:
+            wrapped_data["bank_account"]["value"] = None
+            wrapped_data["bank_account"]["note"] = "Ошибка: в поле Р/С был К/С. Реальный Р/С не найден."
+
+    # 2. Если К/С пуст, попробуем найти его по префиксу 301
+    if not wrapped_data["corr_account"]["value"] or wrapped_data["corr_account"]["value"] == "---":
+        found_301 = find_account_by_context(raw_text, "301")
+        if found_301:
+            wrapped_data["corr_account"]["value"] = found_301
+            wrapped_data["corr_account"]["confidence"] = 0.9
+            wrapped_data["corr_account"]["note"] = "К/С автоматически найден по префиксу 301"
+    # ------------------------------------------
 
     from validators import validate_inn, validate_kpp, validate_bank_account, validate_bik
 
