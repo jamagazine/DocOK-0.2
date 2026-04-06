@@ -116,4 +116,7 @@ export interface SupplierData {
   kpp: FieldWithConfidence<string | null>;
   legal_address: FieldWithConfidence<string | null>;
   postal_address: FieldWithConfidence<string | null>;
+  bank_name?: FieldWithConfidence<string | null>;
+  bank_bik?: FieldWithConfidence<string | null>;
+  bank_account?: FieldWithConfidence<string | null>;
 }

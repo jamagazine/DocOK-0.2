@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
 import { calculateHierarchy } from '../utils/hierarchy';
-import { Stage, FileStatus, UploadStatus } from '../types';
+import { Stage, FileStatus, UploadStatus, SupplierData } from '../types';
 
 export interface YandexConfig {
   apiKey: string;
@@ -806,7 +806,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               pdf_type: f.pdf_type,
               type: f.type,
               verifiedFields: f.verifiedFields || {},
-              supplierData: f.supplierData || {}
+              supplierData: (f.supplierData as SupplierData) || {}
             };
           });
           setUploadStatuses(statuses);
