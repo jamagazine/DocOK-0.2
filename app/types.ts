@@ -50,65 +50,11 @@ export interface FileItem extends UploadStatus {
   name?: string;
 }
 
-export interface UploadedFile {
-  id: string;
-  name: string;
-  status: 'ok' | 'loading' | 'error' | 'reset';
-  method: 'Local' | 'AI';
-  uploadTime: string;
-}
-
-export interface SpecRow {
-  id: string;
-  index: number;
-  name: string;
-  brand: string;
-  code: string;
-  supplier: string;
-  quantity: number;
-  unit: string;
-  weight: number;
-  notes: string;
-  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
-}
-
-export interface InvoiceRow {
-  id: string;
-  index: number;
-  article: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  vat: number;
-  priceWithVat: number;
-  discount: number;
-  priceDiscounted: number;
-  sumNoDiscount: number;
-  sumWithVat: number;
-  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
-  is_header?: boolean;
-  isUncertain?: boolean;
-}
-
-export interface EstimateRow {
-  id: string;
-  index: number;
-  type: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  costPrice: number;
-  markup: number;
-  clientPrice: number;
-  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
-  is_header?: boolean;
-}
-
 export interface FieldWithConfidence<T> {
   value: T;
-  confidence: number; // от 0.0 до 1.0 (например, 0.98 = 98% уверенности)
-  isVerified: boolean; // Флаг, подтвердил ли человек это поле
-  note?: string; // Пояснение к статусу или результату фильтрации
+  confidence: number;
+  isVerified: boolean;
+  note?: string;
 }
 
 export interface SupplierData {
@@ -122,4 +68,81 @@ export interface SupplierData {
   bank_account?: FieldWithConfidence<string | null>;
   corr_account?: FieldWithConfidence<string | null>;
   phone?: FieldWithConfidence<string | null>;
+  [key: string]: any;
+}
+
+export interface MaterialPosition {
+  pos: string;
+  name: string;
+  brand: string;
+  code: string;
+  supplier: string;
+  unit: string;
+  quantity: string;
+  mass: string;
+  note: string;
+  is_header?: boolean;
+}
+
+export interface SpecRow extends MaterialPosition {
+  id: string;
+  fileId?: string;
+  originalRowsIds?: string[];
+  children?: SpecRow[];
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  level?: number;
+  parentId?: string | null;
+  // Field-mapping aliases (mass/weight and note/notes)
+  mass: string;
+  weight?: string;
+  note: string;
+  notes?: string;
+}
+
+export interface InvoiceRow {
+  id: string;
+  fileId?: string;
+  documentName?: string;
+  isUncertain?: boolean;
+  article: string;
+  name: string;
+  supplier: string;
+  quantity: string | number;
+  unit: string;
+  price: string | number;
+  vatRate?: string;
+  vatAmount?: string | number;
+  total: string | number;
+  discount?: string | number;
+  priceAfterDiscount?: string | number;
+  totalBeforeDiscount?: string | number;
+  level?: number;
+  parentId?: string | null;
+  match_data?: {
+    target_id: string | null;
+    target_name: string | null;
+    score: number;
+    status?: 'perfect' | 'warning' | 'none';
+  };
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  is_header?: boolean;
+  vat?: number; // Legacy/Compat
+}
+
+export interface EstimateRow {
+  id: string;
+  fileId?: string;
+  workType: string;
+  name: string;
+  unit?: string;
+  quantity: string | number;
+  costPrice: string | number;
+  clientPrice: string | number;
+  costSum: string | number;
+  clientSum: string | number;
+  supplier: string;
+  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
+  is_header?: boolean;
+  level?: number;
+  parentId?: string | null;
 }

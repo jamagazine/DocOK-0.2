@@ -1,5 +1,4 @@
-import React from 'react';
-import { Loader2 } from "lucide-react";
+import { Loader2, Download } from "lucide-react";
 import { useData } from '../context/DataContext';
 import {
   Accordion,
@@ -7,8 +6,10 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from './ui/accordion';
+import { Button } from "./ui/button";
 import { FileItem } from '../types';
 import { EditableField } from './EditableField';
+import { exportSupplierToExcel } from '../utils/exportUtils';
 
 export const InvoicesInfoList: React.FC = () => {
   const { uploadStatuses, verifyField, updateSupplierField, invoiceRows } = useData();
@@ -170,8 +171,26 @@ export const InvoicesInfoList: React.FC = () => {
                       </div>
                     </AccordionContent>
                   </AccordionItem>
-
                 </Accordion>
+
+                <div className="mt-4 pt-4 border-t flex justify-end">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-8 gap-2 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      exportSupplierToExcel(
+                        data?.organization_name?.value || file.name,
+                        data,
+                        invoiceRows.filter(row => row.fileId === file.id)
+                      );
+                    }}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Скачать Excel
+                  </Button>
+                </div>
               </AccordionContent>
             </AccordionItem>
           );

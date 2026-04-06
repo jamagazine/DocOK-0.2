@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { MaterialPosition, parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
+import { parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
 import { calculateHierarchy } from '../utils/hierarchy';
-import { Stage, FileStatus, UploadStatus, SupplierData } from '../types';
+import { Stage, FileStatus, UploadStatus, SupplierData, MaterialPosition, SpecRow, InvoiceRow, EstimateRow } from '../types';
 
 export interface YandexConfig {
   apiKey: string;
@@ -153,20 +153,6 @@ export const applySortAndFilter = <T extends { id: string }>(rows: T[], config: 
   });
 };
 
-export interface SpecRow extends MaterialPosition {
-  id: string;
-  fileId?: string;
-  originalRowsIds?: string[];
-  children?: SpecRow[];
-  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
-  level?: number;
-  parentId?: string | null;
-  // Field-mapping aliases (mass/weight and note/notes)
-  mass: string;
-  weight?: string;
-  note: string;
-  notes?: string;
-}
 
 export const SPEC_COLUMNS = [
   { key: 'pos', label: '№', width: 60, align: 'center', sortable: false },
@@ -192,34 +178,6 @@ export const SPEC_TARGET_FIELDS = [
   { key: 'note', label: 'Примечания' },
 ];
 
-export interface InvoiceRow {
-  id: string;
-  fileId?: string;
-  documentName?: string;
-  isUncertain?: boolean;
-  article: string;
-  name: string;
-  supplier: string;
-  quantity: string | number;
-  unit: string;
-  price: string | number;
-  vatRate?: string;
-  vatAmount?: string | number;
-  total: string | number;
-  discount?: string | number;
-  priceAfterDiscount?: string | number;
-  totalBeforeDiscount?: string | number;
-  level?: number;
-  parentId?: string | null;
-  match_data?: {
-    target_id: string | null;
-    target_name: string | null;
-    score: number;
-    status?: 'perfect' | 'warning' | 'none';
-  };
-  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
-  is_header?: boolean;
-}
 
 export function emptyInvoiceRow(): InvoiceRow {
   return {
@@ -271,23 +229,6 @@ export function emptyEstimateRow(): EstimateRow {
   };
 }
 
-export interface EstimateRow {
-  id: string;
-  fileId?: string;
-  workType: string;
-  name: string;
-  unit?: string;
-  quantity: string | number;
-  costPrice: string | number;
-  clientPrice: string | number;
-  costSum: string | number;
-  clientSum: string | number;
-  supplier: string;
-  row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
-  is_header?: boolean;
-  level?: number;
-  parentId?: string | null;
-}
 
 interface DataContextType {
   projectName: string;
