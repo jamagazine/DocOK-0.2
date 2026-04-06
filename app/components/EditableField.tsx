@@ -63,7 +63,9 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
            onDoubleClick={() => setIsEditing(true)}
         >
            <div className="flex flex-col flex-1 min-w-0">
-             <span className="text-sm break-words whitespace-pre-wrap leading-tight text-foreground/90">{value || "—"}</span>
+             <span className="text-[13px] tracking-tight break-words whitespace-pre-wrap leading-tight text-foreground/90 font-medium">
+               {value || "—"}
+             </span>
              {confidence === 0.5 && note && (
                <p className="text-[9px] text-orange-500/80 italic mt-0.5 leading-none">
                  {note}

@@ -598,7 +598,7 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         wrapped_data["postal_address"]["confidence"] = 0.5
         wrapped_data["postal_address"]["note"] = "Адрес продублирован из Юридического (оригинал не найден)"
 
-    from server.validators import validate_inn, validate_kpp
+    from validators import validate_inn, validate_kpp
 
     # 5. Математический арбитраж (ИНН/КПП)
     inn_val = wrapped_data.get("inn", {}).get("value")

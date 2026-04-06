@@ -37,11 +37,10 @@ import { twMerge } from 'tailwind-merge';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Skeleton } from './ui/skeleton';
-import type { Stage, RightPanelTab } from '../types';
-import { useData, SpecRow, InvoiceRow, EstimateRow } from '../context/DataContext';
+import type { Stage, RightPanelTab, SpecRow, InvoiceRow, EstimateRow, SupplierData, FieldWithConfidence } from '../types';
+import { useData } from '../context/DataContext';
 import { exportGeometryToXLSX, exportToXLSX, exportSpecToExcel } from '../utils/fileUtils';
 import { ConfidenceInput } from './Table/EditableCell';
-import { SupplierData, FieldWithConfidence } from '../types';
 import { isDocumentFullyVerified } from '../utils/validation';
 import { InvoicesInfoList } from './InvoicesInfoList';
 
@@ -767,7 +766,14 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   : "Подтвердить и продолжить"}
               >
                 <Check className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
-                {expanded && <span className="uppercase tracking-widest text-[#9fffcb] text-[10px] font-black">Применить</span>}
+                {expanded && (
+                  <span className={cn(
+                    "uppercase tracking-widest text-[10px] font-black",
+                    effectiveCanProceed ? "text-[#9fffcb]" : "text-slate-400"
+                  )}>
+                    Применить
+                  </span>
+                )}
               </button>
             ) : (
               <button
