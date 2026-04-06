@@ -465,6 +465,7 @@ def safe_parse_llm_json(response_text: str) -> dict:
             "bank_name": extract_field(raw_dict.get("bank_name")),
             "bank_bik": extract_field(raw_dict.get("bank_bik")),
             "bank_account": extract_field(raw_dict.get("bank_account")),
+            "phone": extract_field(raw_dict.get("phone")),
             
             # Additional metadata (non-wrapped for now or handled separately)
             "invoice_number": raw_dict.get("invoice_number", "---"),

@@ -119,4 +119,5 @@ export interface SupplierData {
   bank_name?: FieldWithConfidence<string | null>;
   bank_bik?: FieldWithConfidence<string | null>;
   bank_account?: FieldWithConfidence<string | null>;
+  phone?: FieldWithConfidence<string | null>;
 }

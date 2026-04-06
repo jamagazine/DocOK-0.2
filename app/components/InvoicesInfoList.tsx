@@ -96,7 +96,8 @@ export const InvoicesInfoList: React.FC = () => {
                       { key: 'inn', label: 'ИНН' },
                       { key: 'kpp', label: 'КПП' },
                       { key: 'legal_address', label: 'Юр. адрес' },
-                      { key: 'postal_address', label: 'Почтовый адрес' }
+                      { key: 'postal_address', label: 'Почтовый адрес' },
+                      { key: 'phone', label: 'Телефон' }
                     ].map((f) => (
                       <div key={f.key} className="flex flex-col gap-1.5 overflow-hidden">
                         <label className="text-[11px] text-slate-500 font-semibold pl-1 uppercase tracking-tight">
