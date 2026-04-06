@@ -465,9 +465,10 @@ async def process_invoice(
                         
                         # Для реквизитов берем только ПЕРВУЮ страницу, чтобы избежать наслоения координат Y
                         # (каждая новая страница в PDF начинается с Y=0)
-                        full_header_text = clean_and_build_markdown(pages_data[0] if pages_data else [])
+                        header_ai_data = pages_data[0] if pages_data else []
+                        full_header_text = clean_and_build_markdown(header_ai_data)
                         p_method = "pdf_text"
-                        # raw_ocr_data для ИИ (весь документ) остается полным
+                        # raw_ocr_data для таблиц (весь документ) остается полным
                         raw_ocr_data = [token for page in pages_data for token in page]
 
                     # --- ПУТЬ 2: СКАН / ПРИНУДИТЕЛЬНЫЙ OCR ---
@@ -537,7 +538,8 @@ async def process_invoice(
             yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
             
             # Pass full OCR data or local text to the semantic extractor
-            main_doc = await process_header_with_llm(raw_ocr_data, api_key, folder_id)
+            ai_data_to_pass = header_ai_data if p_method == "pdf_text" else raw_ocr_data
+            main_doc = await process_header_with_llm(ai_data_to_pass, api_key, folder_id)
 
             # --- ИНЪЕКЦИЯ МЕТОДА ДЛЯ ФРОНТЕНДА ---
             if isinstance(main_doc, dict):
@@ -571,7 +573,7 @@ async def process_invoice(
                 supp_safe = main_doc if isinstance(main_doc, dict) else {}
                 manifest[disk_name].update({
                     "cost": cost, 
-                    "status": "READY_MD_LOCAL" if p_method == "pdf_text" else "READY_MD_OCR",
+                    "status": "READY_MD_OCR", # Унифицировано для Фронтенда
                     "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
                     "supplierData": {
@@ -727,13 +729,14 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
 
     manifest = _load_manifest(projectId)
     existing = manifest.get(secured_name, {})
+    p_method = "pdf_text" if final_status == "READY_MD_OCR" and original_filename.lower().endswith(".pdf") else (existing.get("method", "") if isinstance(existing, dict) else "")
     manifest[secured_name] = {
         "originalName": original_filename,
         "status": final_status,
         "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
         "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
         "model": existing.get("model", "") if isinstance(existing, dict) else "",
-        "method": "pdf_text" if final_status == "READY_MD_LOCAL" and original_filename.lower().endswith(".pdf") else (existing.get("method", "") if isinstance(existing, dict) else ""),
+        "method": p_method,
         "estimated_cost": estimated_cost,
         "estimated_tokens": estimated_tokens,
         "raw_markdown": ext_text,
@@ -775,7 +778,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "file_status": final_status,
         "pages_count": pages_count,
         "is_scan": is_scan_val,
-        "pdf_type": current_pdf_type
+        "pdf_type": current_pdf_type,
+        "method": p_method
     }
 
 @app.get("/api/storage/files")

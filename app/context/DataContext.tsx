@@ -1206,7 +1206,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               ...prev[file.name],
               status: finalStatus,
               time: currentTime,
-              method: 'MD_Instant'
+              method: resData.method || 'MD_Instant'
             }
           }));
           updateFileStatusOnServer(file.name, finalStatus);
@@ -1263,11 +1263,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       const prevData = prev[fileName] || {};
                       const incomingDoc = data.data?.document || data.supplierData || {};
 
-                      return {
+                       return {
                         ...prev,
                         [fileName]: { 
                            ...prevData, 
                            status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
+                           method: data.data?.method || data.method || prevData.method,
                            supplierData: {
                               ...(prevData.supplierData || {}),
                               ...incomingDoc,

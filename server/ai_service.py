@@ -564,7 +564,7 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
             api_key=api_key, 
             folder_id=folder_id, 
             system_prompt=system_prompt,
-            model_type="lite"
+            model_type="pro"
         )
     except Exception as e:
         print(f"Error calling LLM for header parsing: {e}")
