@@ -1317,17 +1317,55 @@ export function DataProvider({ children }: { children: ReactNode }) {
           if (activeProjectId) formData.append('projectId', activeProjectId);
           formData.append('file_id', item.serverFilename);
 
-          try {
-            setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
-            await fetch('http://localhost:8000/api/process-invoice', {
-              method: 'POST',
-              body: formData,
-              headers: {
-                'x-api-key': yandexConfig.apiKey,
-                'x-folder-id': yandexConfig.catalogId
+            try {
+              setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
+              const response = await fetch('http://localhost:8000/api/process-invoice', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                  'x-api-key': yandexConfig.apiKey,
+                  'x-folder-id': yandexConfig.catalogId
+                }
+              });
+
+              const reader = response.body?.getReader();
+              const decoder = new TextDecoder();
+
+              if (reader) {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+
+                  const chunk = decoder.decode(value);
+                  const lines = chunk.split('\n').filter(line => line.trim() && line.startsWith('data: '));
+
+                  for (const line of lines) {
+                    try {
+                      // Remove "data: " prefix
+                      const dataStr = line.substring(6);
+                      const data = JSON.parse(dataStr);
+                      
+                      // 1. Обновляем промежуточный статус в uploadStatuses
+                      setUploadStatuses((prev: any) => ({
+                        ...prev,
+                        [item.file.name]: { 
+                           ...prev[item.file.name], 
+                           status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
+                           supplierData: data.data?.document || data.supplierData || prev[item.file.name]?.supplierData 
+                        }
+                      }));
+
+                      // 2. Если это финальный чанк - принудительно обновляем с диска
+                      if (data.status === 'final') {
+                         await fetchStorageFiles(); 
+                      }
+                    } catch (e) {
+                      console.error("Ошибка парсинга чанка:", e);
+                    }
+                  }
+                }
               }
-            });
-            await fetchStorageFiles();
+
           } catch (e) { console.error(e); }
         }
       }
