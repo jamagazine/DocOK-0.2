@@ -444,18 +444,31 @@ async def process_invoice(
                     first_page = pdf.pages[0]
                     # Если букв > 50 и не запрошен принудительный OCR -> это Цифровой PDF
                     if len(first_page.chars) > 50 and not is_force_ocr:
-                        print(f"⚡ [HYBRID] Цифровой PDF обнаружен: {original_name}. Извлекаем текст локально.")
-                        all_text = ""
-                        for pg in pdf.pages:
-                            # layout=True помогает сохранить структуру колонок, что критично для GPT
-                            page_text = pg.extract_text(layout=True) or pg.extract_text() or ""
-                            all_text += page_text + "\n\n"
-                        
-                        extracted_text = all_text.strip()
-                        full_header_text = extracted_text[:2500] # Берем с запасом для реквизитов
-                        p_method = "pdf_text"
-                        raw_ocr_data = [] # empty arrays vs passing empty strings
+                        # ⚡ [HYBRID] Цифровой PDF: извлекаем слова как объекты OCR
+                        words_for_zonal = []
                         num_pages = len(pdf.pages)
+                        for pg in pdf.pages:
+                            # Вытаскиваем слова с координатами
+                            page_words = pg.extract_words()
+                            for w in page_words:
+                                # Формируем структуру, совместимую с нашим zonal-парсером
+                                words_for_zonal.append({
+                                    "text": w["text"],
+                                    "x": float(w["x0"]),
+                                    "y": float(w["top"]),
+                                    "w": float(w["x1"] - w["x0"]),
+                                    "h": float(w["bottom"] - w["top"])
+                                })
+                        
+                        # Теперь используем нашу крутую зональную сборку (как для сканов!)
+                        from parser_utils import clean_and_build_markdown
+                        # Передаем список слов в сборщик
+                        markdown_payload = clean_and_build_markdown(words_for_zonal)
+                        
+                        extracted_text = markdown_payload
+                        full_header_text = markdown_payload
+                        p_method = "pdf_text"
+                        raw_ocr_data = words_for_zonal # для совместимости
                         has_low_confidence = False
                         full_header_buffer = full_header_text
                         all_ocr_text = extracted_text
@@ -561,10 +574,13 @@ async def process_invoice(
             if disk_name in manifest:
                 manifest[disk_name].update({
                     "cost": cost, 
-                    "status": "READY_MD_OCR" if p_method == "ocr_table" else "READY_MD_LOCAL", 
+                    "status": "READY_MD_LOCAL" if p_method == "pdf_text" else "READY_MD_OCR",
+                    "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
-                    "supplierData": final_struct.get("document", {}),
-                    "method": p_method
+                    "supplierData": {
+                        **main_doc,
+                        "method": p_method # Дублируем внутрь для фронтенда
+                    }
                 })
                 _save_manifest(manifest, projectId)
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
