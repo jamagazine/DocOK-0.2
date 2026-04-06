@@ -326,7 +326,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
   return (
     <div
       className={cn(
-        "flex flex-col bg-white border-l border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full overflow-hidden shadow-lg z-20",
+        "relative bg-white border-l border-slate-200 transition-all duration-300 ease-in-out shrink-0 h-full overflow-hidden shadow-lg z-20",
         expanded ? "w-72" : "w-16"
       )}
     >
@@ -334,8 +334,8 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
       {/* Header - Attic */}
       <div className={cn(
-        "p-4 border-b border-slate-200 shrink-0 h-[72px]",
-        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
+        "absolute top-0 left-0 right-0 z-30 bg-white p-4 border-b border-slate-200 h-[72px] overflow-hidden",
+        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4"
       )}>
         {!expanded && (
           <button
@@ -377,7 +377,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
       </div>
 
       {/* Middle Content */}
-      <div className={cn("flex-1 flex flex-col min-h-0 overflow-y-auto no-scrollbar", expanded ? "px-3 py-2 gap-4" : "items-center px-2 py-4 gap-4")}>
+      <div className={cn("absolute inset-0 z-10 flex flex-col overflow-y-auto scrollbar-hide pt-[84px] pb-[110px]", expanded ? "px-3 gap-4" : "items-center px-2 gap-4")}>
         {activeTab === 'tools' && (
           <div className="flex flex-col h-full w-full gap-4 overflow-hidden">
             {expanded ? (
@@ -641,7 +641,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                               </div>
                             </div>
                           ) : currentStage === 'invoice' ? (
-                            <div className="flex flex-col gap-2 w-full">
+                            <div className="flex flex-col gap-2 w-full h-auto">
                                <InvoicesInfoList />
                             </div>
                           ) : null}
@@ -737,8 +737,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         )}
       </div>
 
-      {/* Footer - Basement (Next Button) */}
-      <div className="border-t border-slate-200 px-4 py-2 flex flex-col justify-center items-center h-auto min-h-[72px] bg-slate-50 gap-2 overflow-hidden shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+      <div className="absolute bottom-0 left-0 right-0 z-30 h-[80px] bg-white border-t border-slate-200 p-4 flex flex-col justify-center items-center overflow-hidden shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
         {completedStages.includes(currentStage) && (
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100 mb-1 animate-in fade-in slide-in-from-bottom-1">
             <Check className="w-3 h-3" />

@@ -52,8 +52,7 @@ export const InvoicesInfoList: React.FC = () => {
           return !!d.inn?.value;
         }).length}
       </div>
-      <div className="max-h-[calc(100vh-250px)] overflow-y-auto scrollbar-hide px-1">
-        <Accordion type="multiple" className="w-full space-y-2">
+        <Accordion type="multiple" className="w-full space-y-2 px-1">
           {invoiceFiles.map((file) => {
             const supplierData = file.supplierData as any;
             const data = supplierData?.document || supplierData || {};
@@ -197,7 +196,6 @@ export const InvoicesInfoList: React.FC = () => {
             );
           })}
         </Accordion>
-      </div>
     </div>
   );
 };
