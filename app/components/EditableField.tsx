@@ -49,23 +49,21 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
   return (
     <div className="group py-2 border-b border-border/40 last:border-0 relative">
       <div className="flex items-center gap-2 mb-1 h-4">
-        <div 
-          className={`w-2 h-2 rounded-full ${getStatusColor()} 
-            ${(isGreen && !note) ? 'opacity-30 group-hover:opacity-100 transition-opacity' : 'opacity-100'}`} 
-          title={note ? `${note} (${Math.round(confidence * 100)}%)` : `Уверенность: ${Math.round(confidence * 100)}%`} 
-        />
-        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
-        
-        <button 
-          onClick={handleCopy}
-          className={cn(
-            "p-0.5 rounded transition-all opacity-0 group-hover:opacity-100 shrink-0",
-            copied ? "text-green-500 scale-110" : "text-muted-foreground hover:bg-slate-100"
+        <div className="w-4 h-4 flex items-center justify-center shrink-0">
+          {copied ? (
+            <Check className="w-3.5 h-3.5 text-green-500 animate-in zoom-in duration-200" />
+          ) : (
+            <div 
+              className={cn(
+                "w-2 h-2 rounded-full transition-all",
+                getStatusColor(),
+                (isGreen && !note) ? 'opacity-30 group-hover:opacity-100' : 'opacity-100'
+              )}
+              title={note || `Уверенность: ${Math.round(confidence * 100)}%`}
+            />
           )}
-          title={copied ? "Скопировано!" : "Копировать реквизит"}
-        >
-          {copied ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
-        </button>
+        </div>
+        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
       </div>
       
       {isEditing ? (
@@ -82,11 +80,13 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
         </div>
       ) : (
         <div 
-           className="flex items-start justify-between gap-4 cursor-pointer"
+           className="flex items-start justify-between gap-4 cursor-pointer group/value"
            onDoubleClick={() => setIsEditing(true)}
+           onClick={handleCopy}
+           title="Нажмите, чтобы скопировать / Двойной клик для редактирования"
         >
-           <div className="flex flex-col flex-1 min-w-0">
-             <span className="text-[13px] tracking-tight break-words whitespace-pre-wrap leading-tight text-foreground/90 font-medium">
+           <div className="flex flex-col flex-1 min-w-0 transition-colors hover:text-indigo-600/80">
+             <span className="text-[12px] tracking-tighter break-words whitespace-pre-wrap leading-tight font-medium">
                {value || "—"}
              </span>
              {confidence === 0.5 && note && (
