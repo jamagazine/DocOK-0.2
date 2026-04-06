@@ -406,6 +406,7 @@ interface DataContextType {
   saveTableData: () => Promise<void>;
   fetchHistory: (type: 'text' | 'xlsx') => void;
   verifyField: (fileId: string, fieldName: string) => void;
+  updateSupplierField: (fileId: string, fieldName: string, newValue: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
@@ -2547,6 +2548,58 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   }, [activeProjectId]);
 
+  const updateSupplierField = useCallback(async (fileId: string, fieldName: string, newValue: string) => {
+    setUploadStatuses((prev) => {
+      const file = prev[fileId];
+      if (!file) return prev;
+      
+      const currentSupplierData = (file.supplierData as any) || {};
+      const data = currentSupplierData.document || currentSupplierData;
+      
+      const updatedField = {
+        value: newValue,
+        confidence: 1.0,
+        isVerified: true
+      };
+
+      const newSupplierData = {
+        ...currentSupplierData,
+        document: currentSupplierData.document ? {
+          ...currentSupplierData.document,
+          [fieldName]: updatedField
+        } : undefined
+      };
+
+      if (!currentSupplierData.document) {
+        newSupplierData[fieldName] = updatedField;
+      }
+
+      const newVerifiedFields = {
+        ...(file.verifiedFields || {}),
+        [fieldName]: true
+      };
+
+      // Background sync to server
+      fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileId)}?projectId=${activeProjectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          supplierData: newSupplierData,
+          verifiedFields: newVerifiedFields
+        })
+      }).catch(err => console.error("Sync error:", err));
+
+      return {
+        ...prev,
+        [fileId]: {
+          ...file,
+          supplierData: newSupplierData,
+          verifiedFields: newVerifiedFields
+        }
+      };
+    });
+  }, [activeProjectId]);
+
   const getCurrentRows = useCallback(() => dataPipeline.displayRows, [dataPipeline]);
 
   return (
@@ -2652,7 +2705,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         importProject,
         activeCategory,
         setActiveCategory,
-        verifyField
+        verifyField,
+        updateSupplierField
       }}
     >
       {children}

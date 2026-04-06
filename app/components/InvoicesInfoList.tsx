@@ -7,13 +7,11 @@ import {
   AccordionTrigger,
 } from './ui/accordion';
 import { FileItem } from '../types';
-import { ConfidenceInput } from './Table/EditableCell';
-import { toast } from 'sonner';
+import { EditableField } from './EditableField';
 
 export const InvoicesInfoList: React.FC = () => {
-  const { uploadStatuses, verifyField } = useData();
+  const { uploadStatuses, verifyField, updateSupplierField } = useData();
 
-  // Find all files that are of type 'invoice'
   const invoiceFiles = Object.entries(uploadStatuses)
     .filter(([_, status]) => status.type === 'invoice')
     .map(([filename, status]) => ({
@@ -24,32 +22,35 @@ export const InvoicesInfoList: React.FC = () => {
 
   if (invoiceFiles.length === 0) {
     return (
-      <div className="text-center text-slate-500 py-8 text-sm bg-slate-50/50 rounded-xl border border-dashed border-slate-200 mx-1">
+      <div className="text-center text-slate-500 py-8 text-sm opacity-50">
         Нет загруженных счетов
       </div>
     );
   }
 
   const getStatusColor = (file: FileItem, data: any) => {
-    const fields = ['organization_name', 'inn', 'kpp', 'legal_address', 'postal_address'];
-    const allVerified = fields.every(key => !!file.verifiedFields?.[key]);
-    if (allVerified) return 'bg-emerald-500';
+    const fields = ['organization_name', 'inn', 'kpp', 'legal_address', 'postal_address', 'phone', 'bank_name', 'bank_bik', 'bank_account'];
+    
+    const hasEmpty = fields.some(key => {
+      // some fields might be purely optional, but we will count red if org_name or inn is empty
+      const isRequired = ['organization_name', 'inn', 'legal_address'].includes(key);
+      if (isRequired && !data[key]?.value) return true;
+      return false;
+    });
 
-    const hasLowConfidence = fields.some(key => (data[key]?.confidence ?? 1.0) < 0.95);
+    if (hasEmpty) return 'bg-red-500';
+
+    const hasLowConfidence = fields.some(key => data[key]?.value && (data[key]?.confidence ?? 1.0) < 0.95);
     if (hasLowConfidence) return 'bg-yellow-500';
 
-    const hasEmptyFields = fields.some(key => !data[key]?.value);
-    if (hasEmptyFields) return 'bg-rose-500';
+    const allVerified = fields.every(key => !data[key]?.value || !!file.verifiedFields?.[key]);
+    if (allVerified) return 'bg-green-500';
 
-    return 'bg-blue-500'; // Default / processing
+    return 'bg-blue-500';
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1 mb-1">
-        Документы ({invoiceFiles.length})
-      </div>
-      
+    <div className="flex flex-col gap-2 w-full">
       <Accordion type="multiple" className="w-full space-y-2">
         {invoiceFiles.map((file) => {
           const supplierData = file.supplierData as any;
@@ -61,97 +62,71 @@ export const InvoicesInfoList: React.FC = () => {
             <AccordionItem 
               value={file.id!} 
               key={file.id} 
-              className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm transition-all hover:border-slate-300"
+              className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm"
             >
-              <AccordionTrigger className="hover:no-underline px-3 py-2.5 hover:bg-slate-50/50 transition-colors group">
-                <div className="flex items-center gap-2.5 w-full pr-2 overflow-hidden">
+              <AccordionTrigger className="hover:no-underline px-3 py-3 hover:bg-slate-50 transition-colors">
+                <div className="flex items-center gap-2.5 w-full pr-2">
                   <div 
-                    className={`w-2 h-2 rounded-full flex-shrink-0 animate-pulse ${statusColor}`} 
-                    title="Статус проверки"
+                    className={`w-2.5 h-2.5 rounded-full flex-shrink-0 animate-pulse ${statusColor}`} 
                   />
                   <div className="flex flex-col items-start min-w-0 flex-1">
-                    <span className="text-[13px] font-bold text-slate-700 truncate w-full text-left leading-tight">
+                    <span className="text-[13px] font-bold text-slate-800 truncate w-full text-left">
                       {orgName}
                     </span>
-                    {data.organization_name?.value && (
-                      <span className="text-[10px] text-slate-400 italic truncate w-full text-left font-normal mt-0.5">
-                        {file.name}
-                      </span>
-                    )}
                   </div>
                 </div>
               </AccordionTrigger>
               
-              <AccordionContent className="px-3 pb-4 pt-2 border-t border-slate-50">
-                <div className="flex flex-col gap-5">
+              <AccordionContent className="px-3 pb-3 pt-1 border-t border-slate-50">
+                <div className="flex flex-col gap-4">
                   
-                  {/* Group 1: LEGAL DETAILS */}
-                  <div className="space-y-3">
-                    <div className="text-[10px] font-bold text-indigo-500/80 uppercase tracking-wider mb-2 flex items-center gap-2">
-                      <span className="w-1 h-3 bg-indigo-500/30 rounded-full" />
-                      ЮРИДИЧЕСКИЕ РЕКВИЗИТЫ
-                    </div>
+                  {/* Группа 1: Юридические реквизиты */}
+                  <div className="flex flex-col bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+                    <div className="text-[10px] uppercase font-black text-slate-400 tracking-wider mb-1 px-1">Юридические реквизиты</div>
                     {[
-                      { key: 'organization_name', label: 'Организация' },
                       { key: 'inn', label: 'ИНН' },
                       { key: 'kpp', label: 'КПП' },
+                      { key: 'phone', label: 'Телефон' },
                       { key: 'legal_address', label: 'Юр. адрес' },
-                      { key: 'postal_address', label: 'Почтовый адрес' },
-                      { key: 'phone', label: 'Телефон' }
-                    ].map((f) => (
-                      <div key={f.key} className="flex flex-col gap-1.5 overflow-hidden">
-                        <label className="text-[11px] text-slate-500 font-semibold pl-1 uppercase tracking-tight">
-                          {f.label}
-                        </label>
-                        <div className="break-all overflow-wrap-anywhere">
-                          <ConfidenceInput 
-                            initialValue={data[f.key]?.value || null}
-                            confidence={data[f.key]?.confidence ?? 1.0}
+                      { key: 'postal_address', label: 'Почтовый адрес' }
+                    ].map((f) => {
+                        const fieldData = data[f.key] || {};
+                        return (
+                          <EditableField 
+                            key={f.key}
+                            label={f.label}
+                            value={fieldData.value}
+                            confidence={fieldData.confidence ?? 1.0}
                             isVerified={!!file.verifiedFields?.[f.key]}
-                            onConfirm={() => {
-                              if (file.id) verifyField(file.id, f.key);
-                              toast.success(`${f.label} подтвержден`, {
-                                style: { fontSize: '12px' }
-                              });
-                            }}
+                            onVerify={() => file.id && verifyField(file.id, f.key)}
+                            onChange={(val) => file.id && updateSupplierField(file.id, f.key, val)}
                           />
-                        </div>
-                      </div>
-                    ))}
+                        )
+                    })}
                   </div>
 
-                  {/* Group 2: PAYMENT DETAILS */}
-                  <div className="space-y-3 pt-2 border-t border-slate-100">
-                    <div className="text-[10px] font-bold text-emerald-600/80 uppercase tracking-wider mb-2 flex items-center gap-2">
-                      <span className="w-1 h-3 bg-emerald-500/30 rounded-full" />
-                      ПЛАТЕЖНЫЕ РЕКВИЗИТЫ
-                    </div>
+                  {/* Группа 2: Платежные реквизиты */}
+                  <div className="flex flex-col bg-slate-50/50 p-2 rounded-lg border border-slate-100">
+                    <div className="text-[10px] uppercase font-black text-slate-400 tracking-wider mb-1 px-1">Платежные реквизиты</div>
                     {[
-                      { key: 'bank_name', label: 'Название банка' },
+                      { key: 'bank_name', label: 'Банк' },
                       { key: 'bank_bik', label: 'БИК' },
-                      { key: 'bank_account', label: 'Расчетный счет' }
-                    ].map((f) => (
-                      <div key={f.key} className="flex flex-col gap-1.5 overflow-hidden">
-                        <label className="text-[11px] text-slate-500 font-semibold pl-1 uppercase tracking-tight">
-                          {f.label}
-                        </label>
-                        <div className="break-all">
-                          <ConfidenceInput 
-                            initialValue={data[f.key]?.value || null}
-                            confidence={data[f.key]?.confidence ?? 1.0}
+                      { key: 'bank_account', label: 'Счёт' }
+                    ].map((f) => {
+                        const fieldData = data[f.key] || {};
+                        return (
+                          <EditableField 
+                            key={f.key}
+                            label={f.label}
+                            value={fieldData.value}
+                            confidence={fieldData.confidence ?? 1.0}
                             isVerified={!!file.verifiedFields?.[f.key]}
-                            onConfirm={() => {
-                              if (file.id) verifyField(file.id, f.key);
-                              toast.success(`${f.label} подтвержден`, {
-                                style: { fontSize: '12px' }
-                              });
-                            }}
+                            onVerify={() => file.id && verifyField(file.id, f.key)}
+                            onChange={(val) => file.id && updateSupplierField(file.id, f.key, val)}
                           />
-                        </div>
-                      </div>
-                    ))}
+                        )
+                    })}
                   </div>
-
                 </div>
               </AccordionContent>
             </AccordionItem>

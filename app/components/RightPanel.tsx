@@ -378,7 +378,7 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
       </div>
 
       {/* Middle Content */}
-      <div className={cn("flex-1 flex flex-col min-h-0 overflow-hidden", expanded ? "px-4 py-4 gap-4" : "items-center px-2 py-4 gap-4")}>
+      <div className={cn("flex-1 flex flex-col min-h-0 overflow-y-auto no-scrollbar", expanded ? "px-3 py-2 gap-4" : "items-center px-2 py-4 gap-4")}>
         {activeTab === 'tools' && (
           <div className="flex flex-col h-full w-full gap-4 overflow-hidden">
             {expanded ? (
@@ -541,10 +541,10 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
         )}
 
         {activeTab === 'info' && (
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-4">
             {expanded ? (
               <>
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-3">
                   {(() => {
                     let activeFileData = activeFileId ? uploadStatuses[activeFileId] : undefined;
                     if (!activeFileData) {
@@ -601,9 +601,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                       const notes = fields?.notes || "---";
 
                       return (
-                        <div className="flex flex-col gap-4">
-                          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden flex flex-col gap-5">
-                            <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500" />
+                        <div className="flex flex-col gap-3">
+                          <div className="bg-white px-4 py-4 rounded-xl border border-slate-200 shadow-sm relative overflow-visible flex flex-col gap-4">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500 rounded-l-xl" />
                             
                             {/* Cipher / Header */}
                             {currentStage === 'spec' ? (
