@@ -293,14 +293,6 @@ interface DataContextType {
   getCurrentRows: () => any[];
   matchInvoiceToSpec: () => Promise<void>;
 
-  // OCR Confirmation
-  showOCRConfirm: boolean;
-  setShowOCRConfirm: (val: boolean) => void;
-  ocrConfirmationQueue: {file: File, serverFilename: string, stage: Stage}[];
-  hasLargeOcrFile: boolean;
-  confirmOCR: () => Promise<void>;
-  cancelOCR: () => void;
-
   // Pipeline output
   displayRows: any[];
   totalProcessedCount: number;
@@ -386,18 +378,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (activeProjectId) {
-      localStorage.setItem('docok_activeProjectId', JSON.stringify(activeProjectId));
-    } else {
-      localStorage.removeItem('docok_activeProjectId');
-    }
-  }, [activeProjectId]);
-
-  const [showOCRConfirm, setShowOCRConfirm] = useState(false);
-  const [ocrConfirmationQueue, setOcrConfirmationQueue] = useState<{file: File, serverFilename: string, stage: Stage}[]>([]);
-  const [hasLargeOcrFile, setHasLargeOcrFile] = useState(false);
 
   const [currentStage, setCurrentStageRaw] = useState<Stage>(() => {
     if (typeof window !== 'undefined') {
@@ -1244,99 +1224,68 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const ocrQueue = results.filter(r => r !== null) as {file: File, serverFilename: string, stage: Stage, isLarge: boolean}[];
 
     if (ocrQueue.length > 0) {
-      const anyLarge = ocrQueue.some(q => q.isLarge);
-      const isBatchLarge = ocrQueue.length > 3 || anyLarge;
+      for (const item of ocrQueue) {
+        const formData = new FormData();
+        formData.append('doc_type', item.stage);
+        if (activeProjectId) formData.append('projectId', activeProjectId);
+        formData.append('file_id', item.serverFilename);
 
-      if (isBatchLarge) {
-        setOcrConfirmationQueue(ocrQueue);
-        setHasLargeOcrFile(anyLarge);
-        setShowOCRConfirm(true);
-      } else {
-        for (const item of ocrQueue) {
-          const formData = new FormData();
-          formData.append('doc_type', item.stage);
-          if (activeProjectId) formData.append('projectId', activeProjectId);
-          formData.append('file_id', item.serverFilename);
+          try {
+            setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
+            const response = await fetch('http://localhost:8000/api/process-invoice', {
+              method: 'POST',
+              body: formData,
+              headers: {
+                'x-api-key': yandexConfig.apiKey,
+                'x-folder-id': yandexConfig.catalogId
+              }
+            });
 
-            try {
-              setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
-              const response = await fetch('http://localhost:8000/api/process-invoice', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                  'x-api-key': yandexConfig.apiKey,
-                  'x-folder-id': yandexConfig.catalogId
-                }
-              });
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
 
-              const reader = response.body?.getReader();
-              const decoder = new TextDecoder();
+            if (reader) {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-              if (reader) {
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n').filter(line => line.trim() && line.startsWith('data: '));
 
-                  const chunk = decoder.decode(value);
-                  const lines = chunk.split('\n').filter(line => line.trim() && line.startsWith('data: '));
-
-                  for (const line of lines) {
-                    try {
-                      // Remove "data: " prefix
-                      const dataStr = line.substring(6);
-                      const data = JSON.parse(dataStr);
-                      
-                      // 1. Обновляем промежуточный статус в uploadStatuses
-                      setUploadStatuses((prev: any) => ({
-                        ...prev,
-                        [item.file.name]: { 
-                           ...prev[item.file.name], 
-                           status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
-                           supplierData: data.data?.document || data.supplierData || prev[item.file.name]?.supplierData 
-                        }
-                      }));
-
-                      // 2. Если это финальный чанк - принудительно обновляем с диска
-                      if (data.status === 'final') {
-                         await fetchStorageFiles(); 
+                for (const line of lines) {
+                  try {
+                    const dataStr = line.substring(6);
+                    const data = JSON.parse(dataStr);
+                    
+                    setUploadStatuses((prev: any) => ({
+                      ...prev,
+                      [item.file.name]: { 
+                         ...prev[item.file.name], 
+                         status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
+                         supplierData: data.data?.document || data.supplierData || prev[item.file.name]?.supplierData 
                       }
-                    } catch (e) {
-                      console.error("Ошибка парсинга чанка:", e);
+                    }));
+
+                    if (data.status === 'final') {
+                       await fetchStorageFiles(); 
                     }
+                  } catch (e) {
+                    console.error("Ошибка парсинга чанка:", e);
                   }
                 }
               }
-
-          } catch (e) { console.error(e); }
-        }
+            }
+        } catch (e) { console.error(e); }
       }
     }
     syncProjectFilesCount();
-  }, [yandexConfig, activeProjectId, syncProjectFilesCount, updateFileStatusOnServer]);
+  }, [yandexConfig, activeProjectId, syncProjectFilesCount, updateFileStatusOnServer, fetchStorageFiles]);
 
   const reprocessAi = useCallback(async (fileName: string) => {
     const file = filesMap[fileName];
     if (!file) return;
     await handleFile([file], currentStage, true);
   }, [filesMap, currentStage, handleFile]);
-
-  const confirmOCR = useCallback(async () => {
-    const queue = [...ocrConfirmationQueue];
-    setOcrConfirmationQueue([]);
-    setShowOCRConfirm(false);
-    setHasLargeOcrFile(false);
-
-    for (const item of queue) {
-      await reprocessAi(item.file.name);
-    }
-  }, [ocrConfirmationQueue, reprocessAi]);
-
-  const cancelOCR = useCallback(() => {
-    setOcrConfirmationQueue([]);
-    setShowOCRConfirm(false);
-    setHasLargeOcrFile(false);
-    toast.info('Автоматический OCR отменен. Вы можете запустить его вручную кнопкой напротив каждого файла.');
-  }, []);
 
 
 
@@ -2635,12 +2584,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
         toggleSelectAllPage,
         selectAllRows,
         deleteSelectedRows,
-        showOCRConfirm,
-        setShowOCRConfirm,
-        ocrConfirmationQueue,
-        hasLargeOcrFile,
-        confirmOCR,
-        cancelOCR,
         currentPage,
         setCurrentPage,
         rowsPerPage,

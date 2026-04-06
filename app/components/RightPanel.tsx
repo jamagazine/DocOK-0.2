@@ -753,24 +753,18 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                   completeStage(currentStage);
                   onNextStage();
                 }}
-                disabled={!effectiveCanProceed}
                 className={cn(
                   "flex items-center justify-center gap-2 rounded-xl font-extrabold transition-all h-12 shadow-sm border border-transparent",
                   expanded ? "flex-1 px-4" : "w-12 p-0",
-                  effectiveCanProceed
-                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                    : "bg-slate-200 text-slate-400 cursor-not-allowed opacity-50"
+                  "bg-emerald-600 hover:bg-emerald-700 text-white"
                 )}
                 title={!effectiveCanProceed 
-                  ? (!isFullyVerified ? "Подтвердите желтые поля в панели информации" : "Загрузите данные для продолжения")
+                  ? (!isFullyVerified ? "Есть непроверенные поля, но вы можете продолжить" : "Загрузите данные для продолжения")
                   : "Подтвердить и продолжить"}
               >
                 <Check className={cn(expanded ? "w-4 h-4" : "w-5 h-5")} />
                 {expanded && (
-                  <span className={cn(
-                    "uppercase tracking-widest text-[10px] font-black",
-                    effectiveCanProceed ? "text-[#9fffcb]" : "text-slate-400"
-                  )}>
+                  <span className="uppercase tracking-widest text-[#9fffcb] text-[10px] font-black">
                     Применить
                   </span>
                 )}

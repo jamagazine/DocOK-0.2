@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Check, Edit2 } from "lucide-react";
+import { Check, Edit2, Copy } from "lucide-react";
+import { cn } from "../utils/cn";
 
 interface EditableFieldProps {
   label: string;
@@ -13,6 +14,7 @@ interface EditableFieldProps {
 
 export function EditableField({ label, value, confidence, isVerified, onVerify, onChange, note }: EditableFieldProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [tempValue, setTempValue] = useState(value || "");
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -35,15 +37,35 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
     if (tempValue !== value) onChange(tempValue);
   };
 
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (value) {
+      navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
   return (
     <div className="group py-2 border-b border-border/40 last:border-0 relative">
-      <div className="flex items-center gap-2 mb-1">
+      <div className="flex items-center gap-2 mb-1 h-4">
         <div 
           className={`w-2 h-2 rounded-full ${getStatusColor()} 
             ${(isGreen && !note) ? 'opacity-30 group-hover:opacity-100 transition-opacity' : 'opacity-100'}`} 
           title={note ? `${note} (${Math.round(confidence * 100)}%)` : `Уверенность: ${Math.round(confidence * 100)}%`} 
         />
         <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
+        
+        <button 
+          onClick={handleCopy}
+          className={cn(
+            "p-0.5 rounded transition-all opacity-0 group-hover:opacity-100 shrink-0",
+            copied ? "text-green-500 scale-110" : "text-muted-foreground hover:bg-slate-100"
+          )}
+          title={copied ? "Скопировано!" : "Копировать реквизит"}
+        >
+          {copied ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
+        </button>
       </div>
       
       {isEditing ? (

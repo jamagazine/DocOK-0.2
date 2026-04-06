@@ -4,11 +4,10 @@ import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { CenterPanel } from './components/CenterPanel';
 import { ResetConfirmation } from './components/ResetConfirmation';
-import { OCRConfirmationModal } from './components/OCRConfirmationModal';
 import { DashboardLeftPanel } from './components/DashboardLeftPanel';
 import { DashboardCenterPanel } from './components/DashboardCenterPanel';
 import { DashboardRightPanel } from './components/DashboardRightPanel';
-import type { Stage, UploadedFile } from './types';
+import type { Stage, FileItem } from './types';
 import { DataProvider, useData } from './context/DataContext';
 import { Upload } from 'lucide-react';
 
@@ -17,8 +16,7 @@ function AppContent() {
   const [rightExpanded, setRightExpanded] = useState(true);
   const { 
     currentStage, setCurrentStage, invoiceRows, specRows, filesMap, handleFile, 
-    uploadStatuses, generateEstimate, isDragging, setIsDragging, viewContext, setViewContext,
-    showOCRConfirm, setShowOCRConfirm, ocrConfirmationQueue, hasLargeOcrFile, confirmOCR, cancelOCR
+    uploadStatuses, generateEstimate, isDragging, setIsDragging, viewContext, setViewContext
   } = useData();
 
   const stageOrder: Stage[] = ['spec', 'invoice', 'estimate'];
@@ -39,7 +37,7 @@ function AppContent() {
   }, [currentStage, specRows, invoiceRows, generateEstimate]);
 
   const fileEntries = Object.entries((uploadStatuses || {}) as Record<string, any>);
-  const filesList: UploadedFile[] = fileEntries.map(([filename, data]) => {
+  const filesList: FileItem[] = fileEntries.map(([filename, data]) => {
     const s = (data.status || '').toLowerCase();
     const st = s.includes('ошиб') ? 'error' : s.includes('готов') ? 'ok' : 'loading';
     const md = s.includes('ии') ? 'AI' : 'Local';
@@ -48,7 +46,7 @@ function AppContent() {
       name: filename,
       status: st,
       method: md,
-      uploadTime: data.time
+      time: data.time
     };
   });
 
@@ -136,13 +134,6 @@ function AppContent() {
         </div>
       </div>
       <ResetConfirmation />
-      <OCRConfirmationModal
-        isOpen={showOCRConfirm}
-        onConfirm={confirmOCR}
-        onCancel={cancelOCR}
-        count={ocrConfirmationQueue.length}
-        hasLargeFile={hasLargeOcrFile}
-      />
       <div className="flex h-screen w-screen overflow-hidden bg-slate-50 font-sans text-slate-900">
         {viewContext === 'workspace' ? (
           // ─── Project Workspace ───────────────────────────────────────────────
