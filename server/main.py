@@ -378,10 +378,12 @@ async def process_invoice(
     file: UploadFile | None = File(None),
     file_id: str | None = Form(None),
     doc_type: str = Form("invoice"),
-    parse_method: str = Form("auto"), 
+    parse_method: str = Form("auto"),
+    force_ocr: str = Form("false"),
     x_api_key: str | None = Header(None),
     x_folder_id: str | None = Header(None)
 ):
+    is_force_ocr = force_ocr.lower() == "true"
     api_key, folder_id = get_yandex_keys()
     if x_api_key: api_key = x_api_key
     if x_folder_id: folder_id = x_folder_id
@@ -435,46 +437,65 @@ async def process_invoice(
         try:
             # 1. OCR / Parsing Phase
             if filename.endswith(".pdf"):
-                from parser_utils import ocr_to_grid_markdown, deskew_image
                 import pdfplumber
-                all_ocr_text = ""
-                full_header_buffer = ""
-                raw_ocr_data = [] # To store full JSONs for all pages
                 
+                # Проверяем наличие текстового слоя на первой странице
                 with pdfplumber.open(temp_path) as pdf:
-                    num_pages = len(pdf.pages)
-                    for i, pg in enumerate(pdf.pages):
-                        # 1. DPI OPTIMIZATION (200 DPI to fit 4MB limit)
-                        p_img = pg.to_image(resolution=200).original
+                    first_page = pdf.pages[0]
+                    # Если букв > 50 и не запрошен принудительный OCR -> это Цифровой PDF
+                    if len(first_page.chars) > 50 and not is_force_ocr:
+                        print(f"⚡ [HYBRID] Цифровой PDF обнаружен: {original_name}. Извлекаем текст локально.")
+                        all_text = ""
+                        for pg in pdf.pages:
+                            # layout=True помогает сохранить структуру колонок, что критично для GPT
+                            page_text = pg.extract_text(layout=True) or pg.extract_text() or ""
+                            all_text += page_text + "\n\n"
                         
-                        # 2. DESKEWING (OpenCV alignment)
-                        p_img = deskew_image(p_img)
+                        extracted_text = all_text.strip()
+                        full_header_text = extracted_text[:2500] # Берем с запасом для реквизитов
+                        p_method = "pdf_text"
+                        raw_ocr_data = [] # empty arrays vs passing empty strings
+                        num_pages = len(pdf.pages)
+                        has_low_confidence = False
+                        full_header_buffer = full_header_text
+                        all_ocr_text = extracted_text
+
+                    else:
+                        # --- КЛАССИЧЕСКИЙ ПУТЬ ЧЕРЕЗ СКАНЕР (OCR) ---
+                        if is_force_ocr:
+                            print(f"🔍 [HYBRID] Принудительный OCR запрошен для: {original_name}.")
+                            
+                        from parser_utils import ocr_to_grid_markdown, deskew_image
+                        all_ocr_text = ""
+                        full_header_buffer = ""
+                        raw_ocr_data = [] 
                         
-                        # 3. Preparation for OCR
-                        img_byte_arr = io.BytesIO()
-                        p_img.save(img_byte_arr, format='PNG')
+                        num_pages = len(pdf.pages)
+                        for i, pg in enumerate(pdf.pages):
+                            p_img = pg.to_image(resolution=200).original
+                            p_img = deskew_image(p_img)
+                            
+                            img_byte_arr = io.BytesIO()
+                            p_img.save(img_byte_arr, format='PNG')
+                            
+                            txt_res, low_res, words_res, raw_json = await ocr_yandex(base64.b64encode(img_byte_arr.getvalue()).decode('utf-8'), api_key, folder_id)
+                            raw_ocr_data.append(raw_json)
+                            
+                            h, t = ocr_to_grid_markdown(words_res)
+                            if h: full_header_buffer += f"\n{h}"
+                            if t: all_ocr_text += f"\n\n{t}"
+                            if low_res: has_low_confidence = True
+                            
+                            await asyncio.sleep(1.5)
                         
-                        # 4. Call Yandex OCR
-                        txt_res, low_res, words_res, raw_json = await ocr_yandex(base64.b64encode(img_byte_arr.getvalue()).decode('utf-8'), api_key, folder_id)
-                        raw_ocr_data.append(raw_json)
-                        
-                        # 5. Process to Grid MD
-                        h, t = ocr_to_grid_markdown(words_res)
-                        if h: full_header_buffer += f"\n{h}"
-                        if t: all_ocr_text += f"\n\n{t}"
-                        if low_res: has_low_confidence = True
-                        
-                        # Mandatory Throttling: Strict adherence to 1 RPS entry limit
-                        await asyncio.sleep(1.5)
+                        extracted_text = all_ocr_text.strip()
+                        full_header_text = full_header_buffer.strip()
+                        p_method = "ocr_table"
                 
                 # Save Raw OCR Log for Debugging
                 raw_log_p = get_file_path(projectId, disk_name, "_raw_ocr.json")
                 with open(raw_log_p, "w", encoding="utf-8") as f:
                     json.dump(raw_ocr_data, f, ensure_ascii=False, indent=2)
-
-                extracted_text = all_ocr_text.strip()
-                full_header_text = full_header_buffer.strip()
-                p_method = "ocr_table"
             elif filename.endswith((".xlsx", ".xls", ".csv")):
                 from parser_utils import excel_to_grid_markdown
                 extracted_text = excel_to_grid_markdown(temp_path)

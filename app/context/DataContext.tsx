@@ -252,7 +252,7 @@ interface DataContextType {
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
-  reprocessAi: (fileName: string) => Promise<void>;
+  reprocessAi: (fileName: string, forceOcr?: boolean) => Promise<void>;
   removeFile: (fileName: string, nuclear?: boolean) => void;
   retryFile: (fileName: string, stage: Stage) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
@@ -1147,7 +1147,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, [activeProjectId, projects]);
 
-  const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false) => {
+  const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false, forceOcr: boolean = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
@@ -1229,6 +1229,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         formData.append('doc_type', item.stage);
         if (activeProjectId) formData.append('projectId', activeProjectId);
         formData.append('file_id', item.serverFilename);
+        if (forceOcr) formData.append('force_ocr', "true");
 
           try {
             setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
@@ -1281,10 +1282,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     syncProjectFilesCount();
   }, [yandexConfig, activeProjectId, syncProjectFilesCount, updateFileStatusOnServer, fetchStorageFiles]);
 
-  const reprocessAi = useCallback(async (fileName: string) => {
+  const reprocessAi = useCallback(async (fileName: string, forceOcr: boolean = false) => {
     const file = filesMap[fileName];
     if (!file) return;
-    await handleFile([file], currentStage, true);
+    await handleFile([file], currentStage, true, forceOcr);
   }, [filesMap, currentStage, handleFile]);
 
 

@@ -1,4 +1,4 @@
-import { Loader2, Download } from "lucide-react";
+import { Loader2, Download, Sparkles } from "lucide-react";
 import { useData } from '../context/DataContext';
 import {
   Accordion,
@@ -12,7 +12,7 @@ import { EditableField } from './EditableField';
 import { exportSupplierToExcel } from '../utils/exportUtils';
 
 export const InvoicesInfoList: React.FC = () => {
-  const { uploadStatuses, verifyField, updateSupplierField, invoiceRows } = useData();
+  const { uploadStatuses, verifyField, updateSupplierField, invoiceRows, reprocessAi } = useData();
 
   const invoiceFiles = Object.entries(uploadStatuses)
     .filter(([_, status]) => status.type === 'invoice')
@@ -97,6 +97,19 @@ export const InvoicesInfoList: React.FC = () => {
                     <div className="flex-shrink-0 text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
                       {itemCount} поз.
                     </div>
+                    {/* Кнопка принудительного OCR для цифровых PDF */}
+                    {file.supplierData?.method === "pdf_text" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          reprocessAi(file.id!, true);
+                        }}
+                        className="flex-shrink-0 ml-1 p-1.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                        title="Текст извлечен быстро. Нажмите, чтобы принудительно прогнать через OCR-сканер (если данные искажены)."
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </AccordionTrigger>
                 
