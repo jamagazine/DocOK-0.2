@@ -1199,80 +1199,101 @@ def normalize_to_standard_grid(words, width, height):
     """Приводит любые координаты (points или pixels) к единой сетке 0-1000."""
     standard_words = []
     for w in words:
+        # Защита от деления на ноль и пустых координат
+        w_width = width if width else 1000
+        w_height = height if height else 1000
+        
+        # Для Яндекса координаты x/y могут быть в словаре, для PDF - напрямую
+        x = w.get('x', w.get('x_start', 0))
+        y = w.get('y', w.get('y_start', 0))
+        
         standard_words.append({
             "text": w["text"],
-            "x": (w.get("x", w.get("x_start", 0)) / width) * 1000,
-            "y": (w.get("y", w.get("y_start", 0)) / height) * 1000,
-            "w": (w.get("w", 0) / width) * 1000,
-            "h": (w.get("h", 0) / height) * 1000
+            "x": (x / w_width) * 1000,
+            "y": (y / w_height) * 1000,
         })
     return standard_words
 
 def build_zonal_markdown(words):
-    """
-    Унифицированный сборщик зон. 
-    words: список объектов с координатами в сетке 0-1000.
-    """
-    # 1. Сортируем по Y, затем по X
+    """Унифицированный сборщик зон с построчным поиском якоря."""
+    if not words: return "NO_TEXT_FOUND"
+    
+    # 1. Сортируем слова по Y, затем по X
     words.sort(key=lambda x: (x['y'], x['x']))
     
-    # 2. Ищем Якорь (Счет на оплату)
-    y_anchor = 0
-    for w in words:
-        if "счет" in w['text'].lower() and ("№" in w['text'] or "на" in w['text'].lower()):
-            y_anchor = w['y']
-            break
+    # 2. Группируем в строки для поиска якоря
+    lines_with_y = []
+    current_line_words = [words[0]]
+    last_y = words[0]['y']
     
-    if y_anchor == 0: # Если не нашли "Счет", ищем ИНН
-        for w in words:
-            if "инн" in w['text'].lower():
-                y_anchor = w['y']
+    for w in words[1:]:
+        if abs(w['y'] - last_y) < 15: # Порог 1.5% высоты страницы
+            current_line_words.append(w)
+        else:
+            lines_with_y.append({
+                "text": " ".join([t['text'] for t in sorted(current_line_words, key=lambda x: x['x'])]),
+                "y": last_y
+            })
+            current_line_words = [w]
+            last_y = w['y']
+    lines_with_y.append({
+        "text": " ".join([t['text'] for t in sorted(current_line_words, key=lambda x: x['x'])]),
+        "y": last_y
+    })
+
+    # 3. Ищем Якорь (Счет №) по склеенным строкам
+    y_anchor = 400 # Дефолт - середина шапки
+    for line in lines_with_y:
+        txt = line['text'].lower()
+        # Ищем в одной строке и "счет", и признак номера/оплаты
+        if "счет" in txt and ("№" in txt or "на" in txt or "оплату" in txt):
+            y_anchor = line['y']
+            break
+            
+    if y_anchor == 400: # Резервный поиск по ИНН
+        for line in lines_with_y:
+            if "инн" in line['text'].lower():
+                y_anchor = line['y']
                 break
 
-    # 3. Разделение на зоны
-    bank_zone_words = [w for w in words if w['y'] < y_anchor - 10]
-    entities_zone_words = [w for w in words if y_anchor - 10 <= w['y'] < y_anchor + 250]
+    # 4. Разделение на зоны
+    bank_words = [w for w in words if w['y'] < y_anchor - 5]
+    entity_words = [w for w in words if y_anchor - 5 <= w['y'] < y_anchor + 300]
 
-    def join_lines(zone_words):
-        if not zone_words: return ""
-        lines = []
-        current_line = []
-        last_y = zone_words[0]['y']
-        
-        for w in zone_words:
-            # Если разрыв по Y меньше порога (1.5% высоты), считаем одной строкой
-            if abs(w['y'] - last_y) < 15:
-                current_line.append(w)
+    def join_words(w_list):
+        if not w_list: return ""
+        res_lines = []
+        curr_line = [w_list[0]]
+        l_y = w_list[0]['y']
+        for w in w_list[1:]:
+            if abs(w['y'] - l_y) < 15: 
+                curr_line.append(w)
             else:
-                lines.append(" ".join([t['text'] for t in sorted(current_line, key=lambda x: x['x'])]))
-                current_line = [w]
-                last_y = w['y']
-        if current_line:
-            lines.append(" ".join([t['text'] for t in sorted(current_line, key=lambda x: x['x'])]))
-        return "\n".join(lines)
+                res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]))
+                curr_line = [w]; l_y = w['y']
+        res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]))
+        return "\n".join(res_lines)
 
-    # 4. Формируем финальный MD
     output = "### [ZONE_BANK_RAW] ###\n"
-    output += join_lines(bank_zone_words)
+    output += join_words(bank_words) if bank_words else ""
     output += "\n\n### [ZONE_ENTITIES_RAW] ###\n"
-    output += join_lines(entities_zone_words)
+    output += join_words(entity_words) if entity_words else ""
     
     return output
 
 def clean_and_build_markdown(ocr_json_or_words):
-    """Обновленный оркестратор (теперь понимает оба формата)"""
-    if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and 'text' in ocr_json_or_words[0]:
-        # Это уже плоский список слов (из PDF)
-        # Для PDF считаем стандартную ширину/высоту (A4 points) если нет данных
+    """Единый адаптер (маршрутизатор) для сканов и PDF."""
+    # Если это список словарей с ключом 'text' (из PDF pdfplumber)
+    if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
+        # Стандартный лист А4 = 595x842 пунктов
         return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842))
     
-    # Иначе парсим как Яндекс JSON
+    # Иначе парсим как ответ Yandex Vision
     tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)
     if not tokens: return "NO_TEXT_FOUND"
     
-    # Берем размеры страницы из первого блока Яндекса (обычно там есть width/height)
-    # Если нет - используем средние значения
-    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1600, 2300))
+    # Среднее разрешение скана
+    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330))
 
 def generate_invoice_summary(data: dict) -> str:
     """

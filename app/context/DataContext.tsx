@@ -1258,14 +1258,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     const dataStr = line.substring(6);
                     const data = JSON.parse(dataStr);
                     
-                    setUploadStatuses((prev: any) => ({
-                      ...prev,
-                      [item.file.name]: { 
-                         ...prev[item.file.name], 
-                         status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
-                         supplierData: data.data?.document || data.supplierData || prev[item.file.name]?.supplierData 
-                      }
-                    }));
+                    setUploadStatuses((prev: any) => {
+                      const fileName = item.file.name;
+                      const prevData = prev[fileName] || {};
+                      const incomingDoc = data.data?.document || data.supplierData || {};
+
+                      return {
+                        ...prev,
+                        [fileName]: { 
+                           ...prevData, 
+                           status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
+                           supplierData: {
+                              ...(prevData.supplierData || {}),
+                              ...incomingDoc,
+                              method: data.data?.method || incomingDoc.method || prevData.supplierData?.method
+                           }
+                        }
+                      };
+                    });
 
                     if (data.status === 'final') {
                        await fetchStorageFiles(); 

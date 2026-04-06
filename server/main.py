@@ -438,47 +438,39 @@ async def process_invoice(
             # 1. OCR / Parsing Phase
             if filename.endswith(".pdf"):
                 import pdfplumber
+                from parser_utils import clean_and_build_markdown, deskew_image, ocr_to_grid_markdown
                 
-                # Проверяем наличие текстового слоя на первой странице
                 with pdfplumber.open(temp_path) as pdf:
                     first_page = pdf.pages[0]
-                    # Если букв > 50 и не запрошен принудительный OCR -> это Цифровой PDF
+                    # Цифровой PDF (быстрый путь)
                     if len(first_page.chars) > 50 and not is_force_ocr:
-                        # ⚡ [HYBRID] Цифровой PDF: извлекаем слова как объекты OCR
-                        words_for_zonal = []
-                        num_pages = len(pdf.pages)
+                        print(f"⚡ [HYBRID] Цифровой PDF: {original_name}")
+                        unified_words = []
                         for pg in pdf.pages:
-                            # Вытаскиваем слова с координатами
-                            page_words = pg.extract_words()
-                            for w in page_words:
-                                # Формируем структуру, совместимую с нашим zonal-парсером
-                                words_for_zonal.append({
+                            # Собираем слова для зонального сборщика
+                            for w in pg.extract_words():
+                                unified_words.append({
                                     "text": w["text"],
                                     "x": float(w["x0"]),
-                                    "y": float(w["top"]),
-                                    "w": float(w["x1"] - w["x0"]),
-                                    "h": float(w["bottom"] - w["top"])
+                                    "y": float(w["top"])
                                 })
                         
-                        # Теперь используем нашу крутую зональную сборку (как для сканов!)
-                        from parser_utils import clean_and_build_markdown
-                        # Передаем список слов в сборщик
-                        markdown_payload = clean_and_build_markdown(words_for_zonal)
+                        # Собираем Markdown реквизитов!
+                        markdown_payload = clean_and_build_markdown(unified_words)
                         
                         extracted_text = markdown_payload
                         full_header_text = markdown_payload
+                        raw_ocr_data = unified_words # Передаем массив слов дальше
                         p_method = "pdf_text"
-                        raw_ocr_data = words_for_zonal # для совместимости
+                        num_pages = len(pdf.pages)
                         has_low_confidence = False
-                        full_header_buffer = full_header_text
-                        all_ocr_text = extracted_text
-
+                        
                     else:
                         # --- КЛАССИЧЕСКИЙ ПУТЬ ЧЕРЕЗ СКАНЕР (OCR) ---
                         if is_force_ocr:
                             print(f"🔍 [HYBRID] Принудительный OCR запрошен для: {original_name}.")
                             
-                        from parser_utils import ocr_to_grid_markdown, deskew_image, clean_and_build_markdown
+                        # Чистим логику OCR чтобы работала в том же цикле
                         all_ocr_text = ""
                         raw_ocr_data = [] 
                         
@@ -547,6 +539,11 @@ async def process_invoice(
                 raw_text=full_header_text if p_method == "pdf_text" else None 
             )
 
+            # --- ИНЪЕКЦИЯ МЕТОДА ДЛЯ ФРОНТЕНДА ---
+            if isinstance(main_doc, dict):
+                main_doc["method"] = p_method
+            # --------------------------------------
+
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
                 print(f"Warning: LLM returned empty data for file [{original_name}]")
@@ -556,8 +553,6 @@ async def process_invoice(
             total_tokens = 0
 
             # Final structural assembly
-            if isinstance(main_doc, dict):
-                main_doc["method"] = p_method
             final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)
             if footer_data: final_struct["footer"] = footer_data
 
