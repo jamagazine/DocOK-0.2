@@ -34,3 +34,35 @@ def validate_kpp(kpp: str, inn: str = "") -> bool:
     
     kpp = re.sub(r'\D', '', str(kpp))
     return len(kpp) == 9
+
+def validate_bank_account(account: str, bic: str, is_corr: bool = False) -> bool:
+    """Проверка контрольной цифры р/с или к/с по алгоритму ЦБ РФ."""
+    if not account or not bic: return False
+    account = re.sub(r'\D', '', str(account))
+    bic = re.sub(r'\D', '', str(bic))
+    
+    if len(account) != 20 or len(bic) != 9:
+        return False
+    
+    # ПРАВИЛО ЦБ:
+    # Для к/с (корреспондентский): берем '0' + 5-ю и 6-ю цифры БИК
+    # Для р/с (расчетный): берем последние три цифры БИК
+    if is_corr:
+        prefix = '0' + bic[4:6]
+    else:
+        prefix = bic[6:9]
+    
+    # Формируем 23-значное число (Префикс + Счет)
+    full_str = prefix + account
+    weights = [7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1]
+    
+    checksum = 0
+    for i in range(23):
+        checksum += int(full_str[i]) * weights[i]
+    
+    return (checksum % 10) == 0
+
+def validate_bik(bik: str) -> bool:
+    """Проверка формата БИК (9 цифр, начинается на 04)."""
+    bik = re.sub(r'\D', '', str(bik))
+    return len(bik) == 9 and bik.startswith('04')

@@ -598,7 +598,7 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         wrapped_data["postal_address"]["confidence"] = 0.5
         wrapped_data["postal_address"]["note"] = "Адрес продублирован из Юридического (оригинал не найден)"
 
-    from validators import validate_inn, validate_kpp
+    from validators import validate_inn, validate_kpp, validate_bank_account, validate_bik
 
     # 5. Математический арбитраж (ИНН/КПП)
     inn_val = wrapped_data.get("inn", {}).get("value")
@@ -611,5 +611,28 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     if not validate_kpp(kpp_val, inn_val):
         wrapped_data["kpp"]["confidence"] = 0.01
         wrapped_data["kpp"]["note"] = "Неверный формат КПП (должно быть 9 цифр)"
+
+    # 6. Валидация банковских реквизитов
+    bik_field = wrapped_data.get("bank_bik", {})
+    bik_val = bik_field.get("value")
+    
+    # Валидация БИК
+    if bik_val and not validate_bik(bik_val):
+        wrapped_data["bank_bik"]["confidence"] = 0.01
+        wrapped_data["bank_bik"]["note"] = "Неверный формат БИК (должно быть 9 цифр, начало 04)"
+
+    # Валидация Расчетного счета (р/с)
+    rs_field = wrapped_data.get("bank_account", {})
+    if rs_field.get("value") and bik_val:
+        if not validate_bank_account(rs_field["value"], bik_val, is_corr=False):
+            wrapped_data["bank_account"]["confidence"] = 0.01
+            wrapped_data["bank_account"]["note"] = "Ошибка контрольного ключа р/с (не совпадает с БИК)"
+
+    # Валидация Корреспондентского счета (к/с)
+    ks_field = wrapped_data.get("corr_account", {})
+    if ks_field.get("value") and bik_val:
+        if not validate_bank_account(ks_field["value"], bik_val, is_corr=True):
+            wrapped_data["corr_account"]["confidence"] = 0.01
+            wrapped_data["corr_account"]["note"] = "Ошибка контрольного ключа к/с (не совпадает с БИК)"
 
     return wrapped_data
