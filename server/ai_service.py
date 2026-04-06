@@ -425,14 +425,14 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
 
 def normalize_phone(phone_str: str) -> str:
     if not phone_str or phone_str == "---": return phone_str
+    # Оставляем только цифры
     digits = "".join(re.findall(r'\d', phone_str))
-    # Убираем ведущую 8 или 7, если номер 11-значный
-    if len(digits) == 11 and digits[0] in ['7', '8']:
-        digits = digits[1:]
-    if len(digits) == 10:
-        return f"+7 ({digits[0:3]}) {digits[3:6]}-{digits[6:8]}-{digits[8:10]}"
+    if len(digits) >= 10:
+        # Берем последние 10 цифр (игнорируем любые 7, 8 или случайные префиксы)
+        d10 = digits[-10:]
+        return f"+7 ({d10[:3]}) {d10[3:6]}-{d10[6:8]}-{d10[8:10]}"
     return phone_str
-
+    
 def get_address_tokens(addr_str: str) -> dict:
     if not addr_str: return {"index": None, "house": None, "office": None}
     addr_str = addr_str.lower()

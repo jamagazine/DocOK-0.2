@@ -19,6 +19,7 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
   const getStatusColor = () => {
     if (isVerified) return "bg-green-500";
     if (confidence >= 0.95) return "bg-green-500";
+    if (confidence === 0.5) return "bg-orange-400"; // Оранжевый для дублей
     if (confidence >= 0.5) return "bg-yellow-500";
     return "bg-red-500";
   };
@@ -60,7 +61,14 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
            className="flex items-start justify-between gap-4 cursor-pointer"
            onDoubleClick={() => setIsEditing(true)}
         >
-           <span className="text-sm break-words whitespace-pre-wrap flex-1 leading-tight text-foreground/90">{value || "—"}</span>
+           <div className="flex flex-col flex-1 min-w-0">
+             <span className="text-sm break-words whitespace-pre-wrap leading-tight text-foreground/90">{value || "—"}</span>
+             {confidence === 0.5 && note && (
+               <p className="text-[9px] text-orange-500/80 italic mt-0.5 leading-none">
+                 {note}
+               </p>
+             )}
+           </div>
            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button onClick={() => setIsEditing(true)} className="p-1 hover:bg-accent rounded text-muted-foreground">
                  <Edit2 className="w-3.5 h-3.5" />
