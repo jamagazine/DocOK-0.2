@@ -424,33 +424,28 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     }
 
 def normalize_phone(phone_str: str) -> str:
-    if not phone_str or phone_str == "---": 
-        return phone_str
-    # Извлекаем только цифры
-    digits = re.sub(r'\D', '', phone_str)
+    if not phone_str or phone_str == "---": return phone_str
+    digits = "".join(re.findall(r'\d', phone_str))
+    # Убираем ведущую 8 или 7, если номер 11-значный
     if len(digits) == 11 and digits[0] in ['7', '8']:
-        return f"+7 ({digits[1:4]}) {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
-    elif len(digits) == 10:
+        digits = digits[1:]
+    if len(digits) == 10:
         return f"+7 ({digits[0:3]}) {digits[3:6]}-{digits[6:8]}-{digits[8:10]}"
     return phone_str
 
 def get_address_tokens(addr_str: str) -> dict:
     if not addr_str: return {"index": None, "house": None, "office": None}
     addr_str = addr_str.lower()
-    
-    # Ищем индекс (6 цифр)
-    index_match = re.search(r'\b\d{6}\b', addr_str)
-    index = index_match.group(0) if index_match else None
-    
-    # Ищем дом (д., дом, д, строение, стр.)
-    house_match = re.search(r'\b(?:д\.|дом|д|стр\.|строение)\s*№?\s*(\d+[а-я]?|\d+\/\d+)\b', addr_str)
-    house = house_match.group(1) if house_match else None
-    
-    # Ищем офис (оф., офис, каб., кабинет, кв., квартира)
-    office_match = re.search(r'\b(?:оф\.|офис|каб\.|кабинет|кв\.|квартира)\s*№?\s*(\d+[а-я]?)\b', addr_str)
-    office = office_match.group(1) if office_match else None
-    
-    return {"index": index, "house": house, "office": office}
+    idx = re.search(r'\b\d{6}\b', addr_str)
+    # Ищем дом (д., дом, д, стр.)
+    hs = re.search(r'\b(?:д\.|дом|д|стр\.|строение)\s*№?\s*(\d+[а-я]?|\d+\/\d+)\b', addr_str)
+    # Ищем офис (оф., офис, каб., кв.)
+    off = re.search(r'\b(?:оф\.|офис|каб\.|кабинет|кв\.|квартира)\s*№?\s*(\d+[а-я]?)\b', addr_str)
+    return {
+        "index": idx.group(0) if idx else None,
+        "house": hs.group(1) if hs else None,
+        "office": off.group(1) if off else None
+    }
 
 def check_address_anchor(addr_str: str, anchor_tokens: dict) -> str:
     if not addr_str or not anchor_tokens:
@@ -568,81 +563,39 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     # 4. Безопасно парсим
     wrapped_data = safe_parse_llm_json(llm_response)
     
-    # --- БЛОК НОРМАЛИЗАЦИИ И ЯКОРЕЙ ---
-    # Чтение настроек клиента
-    client_settings = {}
-    try:
-        settings_path = os.path.join(os.path.dirname(__file__), 'client_settings.json')
-        if os.path.exists(settings_path):
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                client_settings = json.load(f).get("client_anchor", {})
-    except Exception as e:
-        print(f"Error loading client settings: {e}")
+    # ДАННЫЕ КЛИЕНТА (ММК)
+    CLIENT_INN = "5905271743"
+    CLIENT_ANCHOR = {"index": "614022", "house": "1", "office": "3"}
 
-    anchor_tokens = client_settings.get("address_tokens", {})
+    # 1. Проверка по ИНН (Если ИИ притащил ИНН покупателя)
+    if wrapped_data.get("inn") and wrapped_data["inn"].get("value") == CLIENT_INN:
+        for key in wrapped_data: 
+            if isinstance(wrapped_data[key], dict) and "value" in wrapped_data[key]:
+                wrapped_data[key]["value"] = None # Стираем всё, это не поставщик
+        return wrapped_data
 
-    # 1. Нормализация телефона
+    # 2. Нормализация телефона
     if wrapped_data.get("phone") and wrapped_data["phone"].get("value"):
         wrapped_data["phone"]["value"] = normalize_phone(wrapped_data["phone"]["value"])
 
-    # 2. Проверка адресов на утечку и умный клон
-    for field in ["legal_address", "postal_address"]:
-        if wrapped_data.get(field) and wrapped_data[field].get("value"):
-            status = check_address_anchor(wrapped_data[field]["value"], anchor_tokens)
-            if status == "ERROR":
-                wrapped_data[field]["value"] = None # Стираем данные клиента (якорь ММК)
-                wrapped_data[field]["confidence"] = 1.0 
-            elif status == "WARNING":
-                wrapped_data[field]["confidence"] = 0.7 
-                wrapped_data[field]["note"] = "Внимание: адрес совпадает со зданием клиента"
+    # 3. Агрессивный фильтр адресов
+    for f_name in ["legal_address", "postal_address"]:
+        val = wrapped_data.get(f_name, {}).get("value")
+        if not val: continue
+        
+        t = get_address_tokens(val)
+        # Если совпал Индекс+Дом ИЛИ Дом+Офис - это 100% клиент
+        is_leak = (t["index"] == CLIENT_ANCHOR["index"] and t["house"] == CLIENT_ANCHOR["house"]) or \
+                  (t["house"] == CLIENT_ANCHOR["house"] and t["office"] == CLIENT_ANCHOR["office"])
+        
+        if is_leak:
+            wrapped_data[f_name]["value"] = None
+            wrapped_data[f_name]["note"] = "Данные покупателя удалены автоматически"
 
-    # 3. Умный Клон (из юридического в почтовый)
-    legal = wrapped_data.get("legal_address", {})
-    postal = wrapped_data.get("postal_address", {})
+    # 4. Умный Клон: Если почтовый пуст, а юридический есть - клонируем с пометкой
+    if not wrapped_data["postal_address"]["value"] and wrapped_data["legal_address"]["value"]:
+        wrapped_data["postal_address"]["value"] = wrapped_data["legal_address"]["value"]
+        wrapped_data["postal_address"]["confidence"] = 0.5
+        wrapped_data["postal_address"]["note"] = "Адрес продублирован из Юридического (оригинал не найден)"
 
-    if not postal.get("value") and legal.get("value"):
-        wrapped_data["postal_address"] = {
-            "value": legal["value"],
-            "confidence": 0.5,
-            "isVerified": False,
-            "note": "Адрес не найден в счете, скопирован из юридического"
-        }
-    # ----------------------------------
-
-    # 5. Кросс-восстановление адресов (Python Validation Strategy - Sprint 4/5)
-    legal = wrapped_data["legal_address"]
-    postal = wrapped_data["postal_address"]
-    
-    # Случай А: Одно из полей пустое или слишком короткое (< 20 симв)
-    if legal.get("value") and (not postal.get("value") or len(str(postal["value"])) < 20):
-        wrapped_data["postal_address"] = {
-            "value": legal["value"],
-            "confidence": 0.8,
-            "isVerified": False
-        }
-    elif postal.get("value") and (not legal.get("value") or len(str(legal["value"])) < 20):
-        wrapped_data["legal_address"] = {
-            "value": postal["value"],
-            "confidence": 0.8,
-            "isVerified": False
-        }
-    # Случай Б: Оба заполнены, но один явно полнее (Fuzzy Match > 70)
-    elif legal.get("value") and postal.get("value"):
-        similarity = fuzz.token_set_ratio(str(legal["value"]), str(postal["value"]))
-        if similarity > 70:
-            len_diff = abs(len(str(legal["value"])) - len(str(postal["value"])))
-            if len_diff > 15:
-                if len(str(legal["value"])) > len(str(postal["value"])):
-                    wrapped_data["postal_address"] = {
-                        "value": legal["value"],
-                        "confidence": 0.8,
-                        "isVerified": False
-                    }
-                else:
-                    wrapped_data["legal_address"] = {
-                        "value": postal["value"],
-                        "confidence": 0.8,
-                        "isVerified": False
-                    }
-    
     return wrapped_data
