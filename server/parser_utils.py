@@ -1195,33 +1195,84 @@ def find_bank_zone_y(tokens):
                 min_y = t['y_start']
     return min_y if min_y != float('inf') else 0
 
-def clean_and_build_markdown(ocr_json):
-    """Главный Оркестратор Спринта 1"""
-    tokens = extract_flat_tokens_from_yandex(ocr_json)
+def normalize_to_standard_grid(words, width, height):
+    """Приводит любые координаты (points или pixels) к единой сетке 0-1000."""
+    standard_words = []
+    for w in words:
+        standard_words.append({
+            "text": w["text"],
+            "x": (w.get("x", w.get("x_start", 0)) / width) * 1000,
+            "y": (w.get("y", w.get("y_start", 0)) / height) * 1000,
+            "w": (w.get("w", 0) / width) * 1000,
+            "h": (w.get("h", 0) / height) * 1000
+        })
+    return standard_words
+
+def build_zonal_markdown(words):
+    """
+    Унифицированный сборщик зон. 
+    words: список объектов с координатами в сетке 0-1000.
+    """
+    # 1. Сортируем по Y, затем по X
+    words.sort(key=lambda x: (x['y'], x['x']))
+    
+    # 2. Ищем Якорь (Счет на оплату)
+    y_anchor = 0
+    for w in words:
+        if "счет" in w['text'].lower() and ("№" in w['text'] or "на" in w['text'].lower()):
+            y_anchor = w['y']
+            break
+    
+    if y_anchor == 0: # Если не нашли "Счет", ищем ИНН
+        for w in words:
+            if "инн" in w['text'].lower():
+                y_anchor = w['y']
+                break
+
+    # 3. Разделение на зоны
+    bank_zone_words = [w for w in words if w['y'] < y_anchor - 10]
+    entities_zone_words = [w for w in words if y_anchor - 10 <= w['y'] < y_anchor + 250]
+
+    def join_lines(zone_words):
+        if not zone_words: return ""
+        lines = []
+        current_line = []
+        last_y = zone_words[0]['y']
+        
+        for w in zone_words:
+            # Если разрыв по Y меньше порога (1.5% высоты), считаем одной строкой
+            if abs(w['y'] - last_y) < 15:
+                current_line.append(w)
+            else:
+                lines.append(" ".join([t['text'] for t in sorted(current_line, key=lambda x: x['x'])]))
+                current_line = [w]
+                last_y = w['y']
+        if current_line:
+            lines.append(" ".join([t['text'] for t in sorted(current_line, key=lambda x: x['x'])]))
+        return "\n".join(lines)
+
+    # 4. Формируем финальный MD
+    output = "### [ZONE_BANK_RAW] ###\n"
+    output += join_lines(bank_zone_words)
+    output += "\n\n### [ZONE_ENTITIES_RAW] ###\n"
+    output += join_lines(entities_zone_words)
+    
+    return output
+
+def clean_and_build_markdown(ocr_json_or_words):
+    """Обновленный оркестратор (теперь понимает оба формата)"""
+    if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and 'text' in ocr_json_or_words[0]:
+        # Это уже плоский список слов (из PDF)
+        # Для PDF считаем стандартную ширину/высоту (A4 points) если нет данных
+        return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842))
+    
+    # Иначе парсим как Яндекс JSON
+    tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)
     if not tokens: return "NO_TEXT_FOUND"
     
-    # 1. Находим Якорь и обрезаем рекламу сверху
-    y_start = find_bank_zone_y(tokens)
-    clean_tokens = [t for t in tokens if t['y_start'] >= y_start - 60]
-    
-    # 2. Выравниваем по строкам (Y-Snapping)
-    snapped_lines = y_snap_tokens(clean_tokens)
-    
-    # 3. Метод Исключения (Fuzzy Matching против ММК)
-    supplier_lines = []
-    for line in snapped_lines:
-        if CLIENT_INN in line:
-            continue # Точно строка клиента
-            
-        # Удаляем строки, слишком похожие на адрес ММК
-        similarity = fuzz.partial_ratio(line.lower(), CLIENT_ADDRESS.lower())
-        if similarity < 85:
-            supplier_lines.append(line)
-            
-    # 4. Формируем финальный Markdown-блок
-    markdown_output = "### [ENTITIES_ZONE_CLEANED]\n"
-    markdown_output += "\n".join(supplier_lines)
-    return markdown_output
+    # Берем размеры страницы из первого блока Яндекса (обычно там есть width/height)
+    # Если нет - используем средние значения
+    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1600, 2300))
 
 def generate_invoice_summary(data: dict) -> str:
     """

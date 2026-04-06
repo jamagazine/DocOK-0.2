@@ -478,9 +478,8 @@ async def process_invoice(
                         if is_force_ocr:
                             print(f"🔍 [HYBRID] Принудительный OCR запрошен для: {original_name}.")
                             
-                        from parser_utils import ocr_to_grid_markdown, deskew_image
+                        from parser_utils import ocr_to_grid_markdown, deskew_image, clean_and_build_markdown
                         all_ocr_text = ""
-                        full_header_buffer = ""
                         raw_ocr_data = [] 
                         
                         num_pages = len(pdf.pages)
@@ -495,14 +494,13 @@ async def process_invoice(
                             raw_ocr_data.append(raw_json)
                             
                             h, t = ocr_to_grid_markdown(words_res)
-                            if h: full_header_buffer += f"\n{h}"
                             if t: all_ocr_text += f"\n\n{t}"
                             if low_res: has_low_confidence = True
                             
                             await asyncio.sleep(1.5)
                         
                         extracted_text = all_ocr_text.strip()
-                        full_header_text = full_header_buffer.strip()
+                        full_header_text = clean_and_build_markdown(raw_ocr_data)
                         p_method = "ocr_table"
                 
                 # Save Raw OCR Log for Debugging
@@ -558,6 +556,8 @@ async def process_invoice(
             total_tokens = 0
 
             # Final structural assembly
+            if isinstance(main_doc, dict):
+                main_doc["method"] = p_method
             final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)
             if footer_data: final_struct["footer"] = footer_data
 
