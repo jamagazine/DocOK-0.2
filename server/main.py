@@ -445,26 +445,30 @@ async def process_invoice(
                 with pdfplumber.open(temp_path) as pdf:
                     first_page = pdf.pages[0]
                     
-                    # --- ПУТЬ 1: ЦИФРОВОЙ PDF (БЫСТРЫЙ И ЧИСТЫЙ) ---
+                    # --- ПУТЬ 1: ЦИФРОВОЙ PDF (ЧЕРЕЗ ЗОНАЛЬНЫЙ АДАПТЕР) ---
                     if len(first_page.chars) > 50 and not is_force_ocr:
-                        print(f"⚡ [CLEAN TEXT] Обработка цифрового PDF без таблиц: {original_name}")
+                        print(f"⚡ [DIGITAL ZONAL] Обработка цифрового PDF через единый пайплайн: {original_name}")
+                        from parser_utils import extract_digital_words_as_ocr
                         
-                        all_text_buffer = ""
-                        for pg in pdf.pages:
-                            # Извлекаем текст с сохранением физического расположения (layout=True)
-                            # но БЕЗ добавления табличных разделителей |
-                            page_text = pg.extract_text(layout=True) or ""
-                            all_text_buffer += page_text + "\n\n"
-                        
-                        # Очищаем от лишних двойных пробелов, сохраняя структуру строк
-                        clean_text = "\n".join([line.strip() for line in all_text_buffer.split('\n') if line.strip()])
-                        
-                        extracted_text = clean_text
-                        full_header_text = clean_text[:3000] # Берем верхнюю часть для реквизитов
-                        p_method = "pdf_text"
-                        raw_ocr_data = {"raw_text_mode": True, "content": clean_text} # Флаг для ИИ
+                        # Возвращает List[List[dict]] (слова по страницам)
+                        pages_data = extract_digital_words_as_ocr(temp_path)
                         num_pages = len(pdf.pages)
                         has_low_confidence = False
+                        
+                        all_ocr_text = ""
+                        for page_tokens in pages_data:
+                            # Передаем слова страницы напрямую в генератор сетки (с жестким порогом 5 для цифры)
+                            h, t = ocr_to_grid_markdown(page_tokens, y_threshold=5)
+                            if t: all_ocr_text += f"\n\n{t}"
+                            
+                        extracted_text = all_ocr_text.strip()
+                        
+                        # Для реквизитов берем только ПЕРВУЮ страницу, чтобы избежать наслоения координат Y
+                        # (каждая новая страница в PDF начинается с Y=0)
+                        full_header_text = clean_and_build_markdown(pages_data[0] if pages_data else [])
+                        p_method = "pdf_text"
+                        # raw_ocr_data для ИИ (весь документ) остается полным
+                        raw_ocr_data = [token for page in pages_data for token in page]
 
                     # --- ПУТЬ 2: СКАН / ПРИНУДИТЕЛЬНЫЙ OCR ---
                     else:

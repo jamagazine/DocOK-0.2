@@ -687,29 +687,24 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
 
 def pdf_to_grid_markdown(file_path: str) -> str:
     """
-    Converts a digital PDF invoice to Markdown text using layout-based extraction.
-    Previously this used a grid/table extractor, but that fragmented linear text like INN numbers.
-    Now uses a clean text approach preserving layout.
+    Converts a digital PDF invoice to Markdown using the Unified Zonal Pipeline.
     """
-    import pdfplumber
-
     try:
-        all_text_buffer = ""
-        with pdfplumber.open(file_path) as pdf:
-            for pg in pdf.pages:
-                # Извлекаем текст с сохранением физического расположения (layout=True)
-                page_text = pg.extract_text(layout=True) or ""
-                all_text_buffer += page_text + "\n\n"
+        pages_data = extract_digital_words_as_ocr(file_path)
         
-        if not all_text_buffer.strip():
-            return ""
+        # 1. Заголовок (Зональный) - берем только первую страницу, чтобы избежать наслоения координат
+        header_md = clean_and_build_markdown(pages_data[0] if pages_data else [])
+        
+        # 2. Табличная часть (Grid) - по каждой странице отдельно (тут всё корректно)
+        all_ocr_text = ""
+        for page_tokens in pages_data:
+            h, t = ocr_to_grid_markdown(page_tokens, y_threshold=5)
+            if t: all_ocr_text += f"\n\n{t}"
             
-        # Очищаем от лишних двойных пробелов, сохраняя структуру строк
-        clean_text = "\n".join([line.strip() for line in all_text_buffer.split('\n') if line.strip()])
-        return clean_text
+        return f"{header_md}\n\n{all_ocr_text.strip()}"
             
     except Exception as e:
-        return f"Error reading PDF: {e}"
+        return f"Error building PDF markdown: {e}"
 
 
 def excel_to_grid_markdown(file_path: str) -> str:
@@ -909,7 +904,7 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
     return {"inn": supplier_inn, "name": supplier_name}
 
 
-def ocr_to_grid_markdown(words: list) -> tuple:
+def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
     """
     STAGE 3.2 — Spatial Baskets & Component Tokens (Basket Parsing).
     """
@@ -933,7 +928,7 @@ def ocr_to_grid_markdown(words: list) -> tuple:
     if words:
         cur_row = [words[0]]
         for i in range(1, len(words)):
-            if abs(words[i]['y'] - cur_row[0]['y']) < 15: # 15px Threshold
+            if abs(words[i]['y'] - cur_row[0]['y']) < y_threshold: # Adaptive Threshold
                 cur_row.append(words[i])
             else:
                 rows_grouped.append(cur_row)
@@ -1172,7 +1167,7 @@ def normalize_to_standard_grid(words, width, height):
         })
     return standard_words
 
-def build_zonal_markdown(words):
+def build_zonal_markdown(words, y_threshold=15):
     """Унифицированный сборщик зон с построчным поиском якоря."""
     if not words: return "NO_TEXT_FOUND"
     
@@ -1185,7 +1180,7 @@ def build_zonal_markdown(words):
     last_y = words[0]['y']
     
     for w in words[1:]:
-        if abs(w['y'] - last_y) < 15: # Порог 1.5% высоты страницы
+        if abs(w['y'] - last_y) < y_threshold: # Порог склейки строк
             current_line_words.append(w)
         else:
             lines_with_y.append({
@@ -1200,23 +1195,57 @@ def build_zonal_markdown(words):
     })
 
     # 3. Ищем Якорь (Счет №) по склеенным строкам
-    y_anchor = 400 # Дефолт - середина шапки
+    y_anchor = 0
     for line in lines_with_y:
         txt = line['text'].lower()
         # Ищем в одной строке и "счет", и признак номера/оплаты
-        if "счет" in txt and ("№" in txt or "на" in txt or "оплату" in txt):
+        if "счет" in txt and ("№" in txt or "на" in txt or "оплату" in txt or "invoice" in txt):
             y_anchor = line['y']
             break
             
-    if y_anchor == 400: # Резервный поиск по ИНН
+    if y_anchor == 0: # Резервный поиск по ИНН
         for line in lines_with_y:
-            if "инн" in line['text'].lower():
+            if "инн" in line['text'].lower() or "кпп" in line['text'].lower():
                 y_anchor = line['y']
                 break
+    if y_anchor == 0: y_anchor = 400
 
-    # 4. Разделение на зоны
-    bank_words = [w for w in words if w['y'] < y_anchor - 5]
-    entity_words = [w for w in words if y_anchor - 5 <= w['y'] < y_anchor + 300]
+    # 4. Ищем верхнюю границу (Top Cutoff) - Облако тегов реквизитов
+    top_cutoff_y = 0
+    tags = {"ИНН", "КПП", "БИК", "Сч. №", "Банк", "получателя"}
+    for i, w in enumerate(words):
+        if any(t in w['text'] for t in tags):
+            # Проверяем "облако"
+            cloud = 1
+            for j in range(i + 1, min(i + 15, len(words))):
+                if words[j]['y'] - w['y'] > 40: break
+                if any(t in words[j]['text'] for t in tags):
+                    cloud += 1
+            if cloud >= 2:
+                top_cutoff_y = w['y']
+                break
+
+    # 5. Ищем нижнюю границу (Bottom Cutoff) - Шапка таблицы
+    bottom_cutoff_y = float('inf')
+    for line in lines_with_y:
+        # Пропускаем всё что выше якоря
+        if line['y'] < y_anchor: continue
+        txt = line['text'].lower()
+        # Если находим признаки заголовка таблицы
+        if any(k in txt for k in ["наименование", "кол-во", "цена", "товар"]):
+            bottom_cutoff_y = line['y']
+            break
+            
+    # Если таблицу так и не нашли, берем дефолтный отступ от якоря (как раньше)
+    if bottom_cutoff_y == float('inf'):
+        bottom_cutoff_y = y_anchor + 450
+
+    # 6. Разделение на зоны
+    # Bank Zone: От top_cutoff до Якоря
+    bank_words = [w for w in words if top_cutoff_y <= w['y'] < y_anchor - 5]
+    
+    # Entities Zone: От Якоря до Шапки таблицы
+    entity_words = [w for w in words if y_anchor - 5 <= w['y'] < bottom_cutoff_y - 5]
 
     def join_words(w_list):
         if not w_list: return ""
@@ -1224,13 +1253,13 @@ def build_zonal_markdown(words):
         curr_line = [w_list[0]]
         l_y = w_list[0]['y']
         for w in w_list[1:]:
-            if abs(w['y'] - l_y) < 15: 
+            if abs(w['y'] - l_y) < y_threshold: 
                 curr_line.append(w)
             else:
-                res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]))
+                res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]).strip())
                 curr_line = [w]; l_y = w['y']
-        res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]))
-        return "\n".join(res_lines)
+        res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]).strip())
+        return "\n".join([l for l in res_lines if l])
 
     output = "### [ZONE_BANK_RAW] ###\n"
     output += join_words(bank_words) if bank_words else ""
@@ -1243,15 +1272,20 @@ def clean_and_build_markdown(ocr_json_or_words):
     """Единый адаптер (маршрутизатор) для сканов и PDF."""
     # Если это список словарей с ключом 'text' (из PDF pdfplumber)
     if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
-        # Стандартный лист А4 = 595x842 пунктов
-        return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842))
+        # Координаты уже должны быть нормализованы (0-1000) либо в пунктах
+        # Проверяем, если Y уже в масштабе 0-1000 (усредненный скан 2330px vs пункты 842pt)
+        if any(w.get('y', 0) > 850 for w in ocr_json_or_words):
+             return build_zonal_markdown(ocr_json_or_words, y_threshold=5)
+        else:
+             # Если координаты в пунктах, нормализуем и применяем жесткий порог
+             return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842), y_threshold=5)
     
     # Иначе парсим как ответ Yandex Vision
     tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)
     if not tokens: return "NO_TEXT_FOUND"
     
-    # Среднее разрешение скана
-    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330))
+    # Среднее разрешение скана (используем мягкий порог 15 для сканов)
+    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330), y_threshold=15)
 
 def generate_invoice_summary(data: dict) -> str:
     """
@@ -1285,6 +1319,58 @@ def generate_invoice_summary(data: dict) -> str:
     ]
     
     return "\n".join(lines)
+
+
+def extract_digital_words_as_ocr(pdf_path: str) -> list:
+    """
+    Extracts text bounding boxes from a digital PDF using pdfplumber.
+    Returns: A list of lists (one per page), where each page is a list of word dicts:
+             {'text': str, 'x': float, 'y': float, 'w': float, 'h': float}
+    Coordinates are normalized to 0-1000 standard grid internally.
+    Deduplicates double-extracted tokens (common in some PDFs).
+    """
+    import pdfplumber
+
+    pages_data = []
+    
+    with pdfplumber.open(pdf_path) as pdf:
+        for pg in pdf.pages:
+            words = pg.extract_words(x_tolerance=2, y_tolerance=3, keep_blank_chars=False, use_text_flow=True)
+            
+            p_width = pg.width or 595
+            p_height = pg.height or 842
+            
+            page_words = []
+            seen_tokens = set() # To prevent duplicates like (123, 123)
+            
+            for w in words:
+                text = w["text"].strip()
+                if not text: continue
+                
+                x0, top, x1, bottom = w["x0"], w["top"], w["x1"], w["bottom"]
+                
+                # Normalize to 0-1000
+                nx = (x0 / p_width) * 1000
+                ny = (top / p_height) * 1000
+                nw = ((x1 - x0) / p_width) * 1000
+                nh = ((bottom - top) / p_height) * 1000
+                
+                # Fingerprint to ignore duplicates (1 unit margin)
+                fpr = (text, round(nx / 2) * 2, round(ny / 2) * 2) 
+                if fpr in seen_tokens:
+                    continue
+                seen_tokens.add(fpr)
+                
+                page_words.append({
+                    "text": text,
+                    "x": nx,
+                    "y": ny,
+                    "w": nw,
+                    "h": nh
+                })
+            pages_data.append(page_words)
+            
+    return pages_data
 
 
 
