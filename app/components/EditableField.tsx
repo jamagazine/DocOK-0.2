@@ -17,6 +17,7 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const getStatusColor = () => {
+    if (confidence <= 0.1) return "bg-red-500"; // Фейл математической валидации
     if (isVerified) return "bg-green-500";
     if (confidence >= 0.95) return "bg-green-500";
     if (confidence === 0.5) return "bg-orange-400"; // Оранжевый для дублей
@@ -38,8 +39,8 @@ export function EditableField({ label, value, confidence, isVerified, onVerify, 
       <div className="flex items-center gap-2 mb-1">
         <div 
           className={`w-2 h-2 rounded-full ${getStatusColor()} 
-            ${isGreen ? 'opacity-30 group-hover:opacity-100 transition-opacity' : 'opacity-100'}`} 
-          title={note || `Уверенность: ${Math.round(confidence * 100)}%`} 
+            ${(isGreen && !note) ? 'opacity-30 group-hover:opacity-100 transition-opacity' : 'opacity-100'}`} 
+          title={note ? `${note} (${Math.round(confidence * 100)}%)` : `Уверенность: ${Math.round(confidence * 100)}%`} 
         />
         <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{label}</span>
       </div>
