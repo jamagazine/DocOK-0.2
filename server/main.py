@@ -729,7 +729,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "cost": existing.get("cost", 0) if isinstance(existing, dict) else 0,
         "tokens": existing.get("tokens", 0) if isinstance(existing, dict) else 0,
         "model": existing.get("model", "") if isinstance(existing, dict) else "",
-        "method": existing.get("method", "") if isinstance(existing, dict) else "",
+        "method": "pdf_text" if final_status == "READY_MD_LOCAL" and original_filename.lower().endswith(".pdf") else (existing.get("method", "") if isinstance(existing, dict) else ""),
         "estimated_cost": estimated_cost,
         "estimated_tokens": estimated_tokens,
         "raw_markdown": ext_text,
