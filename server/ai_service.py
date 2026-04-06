@@ -534,18 +534,20 @@ def safe_parse_llm_json(response_text: str) -> dict:
             "legal_address": None, "postal_address": None
         }
 
-async def process_header_with_llm(ocr_json, api_key: str, folder_id: str, raw_text: str = None) -> dict:
+async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dict:
     """
-    1. Очищает OCR через геометрию (Python) или принимает готовый текст.
-    2. Вставляет Markdown в промпт.
+    Принимает либо сырой OCR JSON (от Яндекса), либо наш словарь с raw_text_mode (для цифровых PDF).
+    1. Извлекает Markdown/Текст.
+    2. Вставляет данные в промпт.
     3. Вызывает LLM и возвращает плоский JSON.
     """
     from parser_utils import clean_and_build_markdown
     
-    # 1. Получаем чистый Markdown: либо из переданного текста, либо из сырого OCR
-    if raw_text:
-        markdown_payload = raw_text
+    # 1. ПРОВЕРКА: Если это наш новый упрощенный режим чистого текста
+    if isinstance(ocr_json, dict) and ocr_json.get("raw_text_mode"):
+        markdown_payload = ocr_json.get("content", "")
     else:
+        # Для сканов и прочего оставляем сборку через очистку таблиц
         markdown_payload = clean_and_build_markdown(ocr_json)
     
     if not markdown_payload or markdown_payload == "NO_TEXT_FOUND":

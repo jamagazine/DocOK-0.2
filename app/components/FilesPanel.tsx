@@ -263,6 +263,21 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               </button>
             )}
 
+            {/* Sparkles (Force OCR) for Digital PDFs parsed as text */}
+            {data.method === "pdf_text" && !isProcessing && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  reprocessAi(fileName, true);
+                }}
+                className="p-1.5 rounded-md text-indigo-400 bg-indigo-50 hover:text-indigo-600 hover:bg-indigo-100 transition-colors"
+                title="Прогнать через OCR-сканер (если данные искажены)"
+                disabled={isLoading}
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
+            )}
+
             {/* Restore / Retry */}
             {file ? (
               <button

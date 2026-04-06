@@ -98,7 +98,7 @@ export const InvoicesInfoList: React.FC = () => {
                       {itemCount} поз.
                     </div>
                     {/* Кнопка принудительного OCR для цифровых PDF */}
-                    {file.supplierData?.method === "pdf_text" && (
+                    {file.method === "pdf_text" && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

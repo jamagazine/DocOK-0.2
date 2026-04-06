@@ -429,6 +429,7 @@ async def process_invoice(
         has_low_confidence = False
         num_pages = 0
         p_method = "ocr_table"
+        p_width, p_height = 0, 0
         all_items = []
         main_doc = None
         total_tokens = 0
@@ -438,39 +439,39 @@ async def process_invoice(
             # 1. OCR / Parsing Phase
             if filename.endswith(".pdf"):
                 import pdfplumber
-                from parser_utils import clean_and_build_markdown, deskew_image, ocr_to_grid_markdown
+                from parser_utils import deskew_image # Оставляем для сканов
+                from parser_utils import clean_and_build_markdown, ocr_to_grid_markdown
                 
                 with pdfplumber.open(temp_path) as pdf:
                     first_page = pdf.pages[0]
-                    # Цифровой PDF (быстрый путь)
+                    
+                    # --- ПУТЬ 1: ЦИФРОВОЙ PDF (БЫСТРЫЙ И ЧИСТЫЙ) ---
                     if len(first_page.chars) > 50 and not is_force_ocr:
-                        print(f"⚡ [HYBRID] Цифровой PDF: {original_name}")
-                        unified_words = []
+                        print(f"⚡ [CLEAN TEXT] Обработка цифрового PDF без таблиц: {original_name}")
+                        
+                        all_text_buffer = ""
                         for pg in pdf.pages:
-                            # Собираем слова для зонального сборщика
-                            for w in pg.extract_words():
-                                unified_words.append({
-                                    "text": w["text"],
-                                    "x": float(w["x0"]),
-                                    "y": float(w["top"])
-                                })
+                            # Извлекаем текст с сохранением физического расположения (layout=True)
+                            # но БЕЗ добавления табличных разделителей |
+                            page_text = pg.extract_text(layout=True) or ""
+                            all_text_buffer += page_text + "\n\n"
                         
-                        # Собираем Markdown реквизитов!
-                        markdown_payload = clean_and_build_markdown(unified_words)
+                        # Очищаем от лишних двойных пробелов, сохраняя структуру строк
+                        clean_text = "\n".join([line.strip() for line in all_text_buffer.split('\n') if line.strip()])
                         
-                        extracted_text = markdown_payload
-                        full_header_text = markdown_payload
-                        raw_ocr_data = unified_words # Передаем массив слов дальше
+                        extracted_text = clean_text
+                        full_header_text = clean_text[:3000] # Берем верхнюю часть для реквизитов
                         p_method = "pdf_text"
+                        raw_ocr_data = {"raw_text_mode": True, "content": clean_text} # Флаг для ИИ
                         num_pages = len(pdf.pages)
                         has_low_confidence = False
-                        
+
+                    # --- ПУТЬ 2: СКАН / ПРИНУДИТЕЛЬНЫЙ OCR ---
                     else:
-                        # --- КЛАССИЧЕСКИЙ ПУТЬ ЧЕРЕЗ СКАНЕР (OCR) ---
+                        print(f"🔍 [OCR] Обработка как скан: {original_name}")
                         if is_force_ocr:
                             print(f"🔍 [HYBRID] Принудительный OCR запрошен для: {original_name}.")
                             
-                        # Чистим логику OCR чтобы работала в том же цикле
                         all_ocr_text = ""
                         raw_ocr_data = [] 
                         
@@ -515,7 +516,8 @@ async def process_invoice(
                 if low_res: has_low_confidence = True
 
             # Save sterile MD files locally for reference (Full Debug View)
-            full_md_debug = (full_header_text + "\n\n" + extracted_text).strip()
+            debug_header = f"DEBUG_INFO: Size={p_width}x{p_height}, Method={p_method}\n"
+            full_md_debug = (debug_header + full_header_text + "\n\n" + extracted_text).strip()
             
             grid_p = get_file_path(projectId, disk_name, "_invoice.md")
             with open(grid_p, "w", encoding="utf-8") as f: f.write(full_md_debug)
@@ -531,13 +533,7 @@ async def process_invoice(
             yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
             
             # Pass full OCR data or local text to the semantic extractor
-            main_doc = await process_header_with_llm(
-                ocr_json=raw_ocr_data, 
-                api_key=api_key, 
-                folder_id=folder_id,
-                # Если метод локальный, отдаем сырой текст с запасом (первые 2500 символов)
-                raw_text=full_header_text if p_method == "pdf_text" else None 
-            )
+            main_doc = await process_header_with_llm(raw_ocr_data, api_key, folder_id)
 
             # --- ИНЪЕКЦИЯ МЕТОДА ДЛЯ ФРОНТЕНДА ---
             if isinstance(main_doc, dict):
@@ -567,13 +563,15 @@ async def process_invoice(
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
             manifest = _load_manifest(projectId)
             if disk_name in manifest:
+                # Гарантируем наличие метода для фронтенда (даже если данные пусты)
+                supp_safe = main_doc if isinstance(main_doc, dict) else {}
                 manifest[disk_name].update({
                     "cost": cost, 
                     "status": "READY_MD_LOCAL" if p_method == "pdf_text" else "READY_MD_OCR",
                     "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
                     "supplierData": {
-                        **main_doc,
+                        **supp_safe,
                         "method": p_method # Дублируем внутрь для фронтенда
                     }
                 })
@@ -797,7 +795,7 @@ async def storage_list(projectId: str):
                 "estimated_cost": entry.get("estimated_cost", 0),
                 "estimated_tokens": entry.get("estimated_tokens", 0),
                 "model": entry.get("model", ""),
-                "method": entry.get("method", ""),
+                "method": "pdf_text" if entry.get("status") == "READY_MD_LOCAL" and not entry.get("method") else entry.get("method", ""),
                 "summary_md": entry.get("summary_md", ""),
                 "summary_fields": entry.get("summary_fields", None),
                 "pages_count": entry.get("pages_count", 0),
