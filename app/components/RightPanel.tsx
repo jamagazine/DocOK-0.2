@@ -643,9 +643,6 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
                             </div>
                           ) : currentStage === 'invoice' ? (
                             <div className="flex flex-col gap-2 w-full">
-                               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1 mb-1">
-                                  В проекте: {getRealItemCount()} документов
-                               </div>
                                <InvoicesInfoList />
                             </div>
                           ) : null}

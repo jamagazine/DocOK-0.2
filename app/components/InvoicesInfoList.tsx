@@ -29,44 +29,46 @@ export const InvoicesInfoList: React.FC = () => {
     );
   }
 
-  const getOverallStatusColor = (docData: any, file: FileItem) => {
-    if (!docData) return "bg-red-500";
+  const getGroupStatusColor = (fields: (any | undefined)[]) => {
+    const validFields = fields.filter(Boolean); // убираем undefined
     
-    // Собираем все поля в массив для проверки
-    const fields = [
-      'organization_name', 'inn', 'kpp', 
-      'legal_address', 'postal_address', 'phone',
-      'bank_name', 'bank_bik', 'bank_account', 'corr_account'
-    ];
-
-    const hasEmpty = fields.some(key => {
-      // ИНН, Название и Юр.адрес — критические
-      const isCritical = ['organization_name', 'inn', 'legal_address'].includes(key);
-      return isCritical && !docData[key]?.value;
-    });
-
-    if (hasEmpty) return "bg-red-500"; 
-
-    const hasLowConfidenceOrUnverified = fields.some(key => {
-      const field = docData[key];
-      if (!field?.value) return false;
-      return (field.confidence ?? 1.0) < 0.95 || !!file.verifiedFields?.[key] === false;
-    });
-
-    if (hasLowConfidenceOrUnverified) return "bg-yellow-500"; 
-
-    return "bg-green-500"; 
+    if (validFields.length === 0) return "bg-gray-300"; // Нет данных вообще (серая точка ожидания)
+    
+    const hasEmpty = validFields.some(f => !f.value || f.value === "---");
+    if (hasEmpty) return "bg-red-500"; // Есть пустые обязательные поля
+    
+    const hasUnverified = validFields.some(f => (f.confidence ?? 1.0) < 0.95 && f.isVerified === false);
+    if (hasUnverified) return "bg-yellow-500"; // Есть неподтвержденные сомнительные поля
+    
+    return "bg-green-500"; // Все поля отличные или подтверждены
   };
 
   return (
     <div className="flex flex-col gap-2 w-full">
+      <div className="text-[10px] items-center font-bold text-slate-400 uppercase tracking-widest pl-1 mb-1">
+        Поставщиков: {invoiceFiles.filter(f => {
+          const d = (f.supplierData as any)?.document || f.supplierData || {};
+          return !!d.inn?.value;
+        }).length}
+      </div>
       <Accordion type="multiple" className="w-full space-y-2">
         {invoiceFiles.map((file) => {
           const supplierData = file.supplierData as any;
           const data = supplierData?.document || supplierData || {};
           const orgName = data.organization_name?.value || file.name;
           const isProcessing = file.status === 'processing' || file.status === 'uploading' || file.status?.includes('Анализ');
-          const overallColor = getOverallStatusColor(data, file);
+
+          const toField = (key: string) => data[key] ? { ...data[key], isVerified: !!file.verifiedFields?.[key] } : undefined;
+          const legalFields = data ? ['organization_name', 'inn', 'kpp', 'legal_address', 'postal_address', 'phone'].map(toField) : [];
+          const paymentFields = data ? ['bank_name', 'bank_bik', 'bank_account', 'corr_account'].map(toField) : [];
+
+          const legalStatus = getGroupStatusColor(legalFields);
+          const paymentStatus = getGroupStatusColor(paymentFields);
+
+          const overallStatus = [legalStatus, paymentStatus].includes("bg-red-500") ? "bg-red-500" 
+                              : [legalStatus, paymentStatus].includes("bg-yellow-500") ? "bg-yellow-500" 
+                              : [legalStatus, paymentStatus].includes("bg-gray-300") ? "bg-gray-300"
+                              : "bg-green-500";
 
           const fileItems = invoiceRows.filter(r => r.fileId === file.id);
           const itemCount = fileItems.length;
@@ -80,10 +82,10 @@ export const InvoicesInfoList: React.FC = () => {
               <AccordionTrigger className="hover:no-underline px-3 py-3 hover:bg-slate-50 transition-colors">
                 <div className="flex items-center gap-2.5 w-full pr-2">
                   <div className="mr-1 flex-shrink-0">
-                    {isProcessing ? (
+                    {(!data || isProcessing) ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
                     ) : (
-                      <div className={`w-3 h-3 rounded-full ${overallColor} shadow-sm`} />
+                      <div className={`w-3 h-3 rounded-full ${overallStatus} shadow-sm`} />
                     )}
                   </div>
                   <div className="flex flex-col items-start min-w-0 flex-1">
@@ -102,8 +104,11 @@ export const InvoicesInfoList: React.FC = () => {
                   
                   {/* Группа 1: Юридические реквизиты */}
                   <AccordionItem value="legal_group" className="border border-slate-100 rounded-lg bg-slate-50/50 overflow-hidden">
-                    <AccordionTrigger className="px-3 py-2 text-[10px] uppercase font-black text-slate-400 tracking-wider hover:no-underline hover:bg-slate-100/50">
-                      Юридические реквизиты
+                    <AccordionTrigger className="text-xs py-2 px-3 hover:no-underline hover:bg-slate-100/50">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${legalStatus}`} />
+                        <span className="font-semibold uppercase tracking-wider text-muted-foreground">Юридические реквизиты</span>
+                      </div>
                     </AccordionTrigger>
                     <AccordionContent className="px-3 pb-3 pt-1">
                       <div className="flex flex-col">
@@ -133,8 +138,11 @@ export const InvoicesInfoList: React.FC = () => {
 
                   {/* Группа 2: Платежные реквизиты */}
                   <AccordionItem value="payment" className="border border-slate-100 rounded-lg bg-slate-50/50 overflow-hidden">
-                    <AccordionTrigger className="px-3 py-2 text-[10px] uppercase font-black text-slate-400 tracking-wider hover:no-underline hover:bg-slate-100/50">
-                      Платежные реквизиты
+                    <AccordionTrigger className="text-xs py-2 px-3 hover:no-underline hover:bg-slate-100/50">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${paymentStatus}`} />
+                        <span className="font-semibold uppercase tracking-wider text-muted-foreground">Платежные реквизиты</span>
+                      </div>
                     </AccordionTrigger>
                     <AccordionContent className="px-3 pb-3 pt-1">
                       <div className="flex flex-col">
