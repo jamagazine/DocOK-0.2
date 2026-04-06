@@ -534,18 +534,21 @@ def safe_parse_llm_json(response_text: str) -> dict:
             "legal_address": None, "postal_address": None
         }
 
-async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dict:
+async def process_header_with_llm(ocr_json, api_key: str, folder_id: str, raw_text: str = None) -> dict:
     """
-    1. Очищает OCR через геометрию (Python).
+    1. Очищает OCR через геометрию (Python) или принимает готовый текст.
     2. Вставляет Markdown в промпт.
     3. Вызывает LLM и возвращает плоский JSON.
     """
     from parser_utils import clean_and_build_markdown
     
-    # 1. Получаем чистый Markdown из нашего микросервиса
-    markdown_payload = clean_and_build_markdown(ocr_json)
+    # 1. Получаем чистый Markdown: либо из переданного текста, либо из сырого OCR
+    if raw_text:
+        markdown_payload = raw_text
+    else:
+        markdown_payload = clean_and_build_markdown(ocr_json)
     
-    if markdown_payload == "NO_TEXT_FOUND":
+    if not markdown_payload or markdown_payload == "NO_TEXT_FOUND":
         return safe_parse_llm_json("")
 
     # 2. Читаем промпт

@@ -527,8 +527,14 @@ async def process_invoice(
             # SYMBOLIC SEMANTIC EXTRACTION (Sprint 2)
             yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
             
-            # Pass full OCR data to the semantic extractor
-            main_doc = await process_header_with_llm(raw_ocr_data, api_key, folder_id)
+            # Pass full OCR data or local text to the semantic extractor
+            main_doc = await process_header_with_llm(
+                ocr_json=raw_ocr_data, 
+                api_key=api_key, 
+                folder_id=folder_id,
+                # Если метод локальный, отдаем сырой текст с запасом (первые 2500 символов)
+                raw_text=full_header_text if p_method == "pdf_text" else None 
+            )
 
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
@@ -557,7 +563,8 @@ async def process_invoice(
                     "cost": cost, 
                     "status": "READY_MD_OCR" if p_method == "ocr_table" else "READY_MD_LOCAL", 
                     "summary_md": summary_md,
-                    "supplierData": final_struct.get("document", {})
+                    "supplierData": final_struct.get("document", {}),
+                    "method": p_method
                 })
                 _save_manifest(manifest, projectId)
             append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
