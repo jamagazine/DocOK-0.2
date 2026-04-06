@@ -602,57 +602,53 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
 
                       return (
                         <div className="flex flex-col gap-3">
-                          <div className="bg-white px-4 py-4 rounded-xl border border-slate-200 shadow-sm relative overflow-visible flex flex-col gap-4">
-                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500 rounded-l-xl" />
-                            
-                            {/* Cipher / Header */}
-                            {currentStage === 'spec' ? (
-                              <>
-                                <div className="flex flex-col">
-                                  <div className="text-xl font-black text-slate-900 tracking-tight leading-none">
-                                    {cipher}
+                          {currentStage === 'spec' ? (
+                            <div className="bg-white px-4 py-4 rounded-xl border-b border-slate-200 shadow-sm relative overflow-visible flex flex-col gap-4">
+                              <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500 rounded-l-xl" />
+                              
+                              <div className="flex flex-col">
+                                <div className="text-xl font-black text-slate-900 tracking-tight leading-none">
+                                  {cipher}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-2 text-slate-400">
+                                  <Info className="w-4 h-4" />
+                                  <span className="text-[10px] font-bold uppercase tracking-tight">Назначение объекта</span>
+                                </div>
+                                <div className="text-[12px] text-slate-700 font-medium leading-relaxed">
+                                  {destination}
+                                </div>
+                              </div>
+
+                              {notes !== "---" && (
+                                <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50 flex flex-col gap-1.5">
+                                  <div className="text-[11px] text-slate-600 italic leading-snug">
+                                    {notes}
                                   </div>
                                 </div>
+                              )}
 
-                                {/* Destination */}
-                                <div className="flex flex-col gap-2">
-                                  <div className="flex items-center gap-2 text-slate-400">
-                                    <Info className="w-4 h-4" />
-                                    <span className="text-[10px] font-bold uppercase tracking-tight">Назначение объекта</span>
-                                  </div>
-                                  <div className="text-[12px] text-slate-700 font-medium leading-relaxed">
-                                    {destination}
-                                  </div>
-                                </div>
-
-                                {/* Notes */}
-                                {notes !== "---" && (
-                                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50 flex flex-col gap-1.5">
-                                    <div className="text-[11px] text-slate-600 italic leading-snug">
-                                      {notes}
-                                    </div>
-                                  </div>
-                                )}
-                              </>
-                            ) : null}
-
-                            {/* Supplier Details (Sprint 3 HITL - Accordion list) */}
-                            {currentStage === 'invoice' && (
-                              <InvoicesInfoList />
-                            )}
-
-                            {/* Stats Bar */}
-                            <div className="flex flex-col gap-1.5 pt-1">
-                               <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Позиции</span>
-                                  <span className="text-sm font-black text-indigo-600 tracking-tight">{getRealItemCount()}</span>
-                               </div>
-                               <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Поставщики</span>
-                                  <span className="text-sm font-black text-emerald-600 tracking-tight">{getSupplierCount()}</span>
-                               </div>
+                              <div className="flex flex-col gap-1.5 pt-1">
+                                 <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Позиции</span>
+                                    <span className="text-sm font-black text-indigo-600 tracking-tight">{getRealItemCount()}</span>
+                                 </div>
+                                 <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Поставщики</span>
+                                    <span className="text-sm font-black text-emerald-600 tracking-tight">{getSupplierCount()}</span>
+                                 </div>
+                              </div>
                             </div>
-                          </div>
+                          ) : currentStage === 'invoice' ? (
+                            <div className="flex flex-col gap-2 w-full">
+                               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1 mb-1">
+                                  В проекте: {getRealItemCount()} документов
+                               </div>
+                               <InvoicesInfoList />
+                            </div>
+                          ) : null}
                         </div>
                       );
                     }

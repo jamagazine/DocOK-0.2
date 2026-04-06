@@ -760,6 +760,41 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Store previous project ID to avoid clearing rows on every list update
   const prevProjectIdRef = useRef<string | null>(null);
 
+  const fetchStorageFiles = useCallback(async () => {
+    if (!activeProjectId) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
+      if (res.ok) {
+        const files = await res.json();
+        const statuses: Record<string, UploadStatus> = {};
+        files.forEach((f: any) => {
+          statuses[f.name] = {
+            status: f.status,
+            time: f.time || 'Загружено',
+            size: f.size || 0,
+            cost: f.cost,
+            tokens: f.tokens,
+            estimated_cost: f.estimated_cost,
+            estimated_tokens: f.estimated_tokens,
+            model: f.model,
+            method: f.method,
+            summary_md: f.summary_md,
+            summary_fields: f.summary_fields,
+            pages_count: f.pages_count,
+            is_scan: f.is_scan,
+            pdf_type: f.pdf_type,
+            type: f.type,
+            verifiedFields: f.verifiedFields || {},
+            supplierData: (f.supplierData as SupplierData) || {}
+          };
+        });
+        setUploadStatuses(statuses);
+      }
+    } catch (e) {
+      console.error('Failed to fetch storage files:', e);
+    }
+  }, [activeProjectId]);
+
   // Project-specific persistence
   useEffect(() => {
     if (!activeProjectId) {
@@ -782,40 +817,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setUploadStatuses({});
       setFilesMap({});
     }
-
-    const fetchStorageFiles = async () => {
-      try {
-        const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
-        if (res.ok) {
-          const files = await res.json();
-          const statuses: Record<string, UploadStatus> = {};
-          files.forEach((f: any) => {
-            statuses[f.name] = {
-              status: f.status,
-              time: f.time || 'Загружено',
-              size: f.size || 0,
-              cost: f.cost,
-              tokens: f.tokens,
-              estimated_cost: f.estimated_cost,
-              estimated_tokens: f.estimated_tokens,
-              model: f.model,
-              method: f.method,
-              summary_md: f.summary_md,
-              summary_fields: f.summary_fields,
-              pages_count: f.pages_count,
-              is_scan: f.is_scan,
-              pdf_type: f.pdf_type,
-              type: f.type,
-              verifiedFields: f.verifiedFields || {},
-              supplierData: (f.supplierData as SupplierData) || {}
-            };
-          });
-          setUploadStatuses(statuses);
-        }
-      } catch (e) {
-        console.error('Failed to fetch storage files:', e);
-      }
-    };
 
     fetchStorageFiles();
 
@@ -1326,6 +1327,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
                 'x-folder-id': yandexConfig.catalogId
               }
             });
+            await fetchStorageFiles();
           } catch (e) { console.error(e); }
         }
       }
