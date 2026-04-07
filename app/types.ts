@@ -13,6 +13,7 @@ export type RightPanelTab = 'tools' | 'info' | 'calc';
 export type FileStatus = 'ok' | 'loading' | 'error' | 'reset' | 'READY_MD' | 'Готово (ИИ)' | 'Готово (Хранилище)' | 'Старт...' | 'Локальный парсинг...' | 'Конвертация и Анализ ИИ...' | string;
 
 export interface UploadStatus {
+  id?: string; // Server-side secured name
   status: FileStatus;
   time: string;
   size?: number;

@@ -687,29 +687,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
       if (res.ok) {
         const files = await res.json();
-        const statuses: Record<string, UploadStatus> = {};
-        files.forEach((f: any) => {
-          statuses[f.name] = {
-            status: f.status,
-            time: f.time || 'Загружено',
-            size: f.size || 0,
-            cost: f.cost,
-            tokens: f.tokens,
-            estimated_cost: f.estimated_cost,
-            estimated_tokens: f.estimated_tokens,
-            model: f.model,
-            method: f.method,
-            summary_md: f.summary_md,
-            summary_fields: f.summary_fields,
-            pages_count: f.pages_count,
-            is_scan: f.is_scan,
-            pdf_type: f.pdf_type,
-            type: f.type,
-            verifiedFields: f.verifiedFields || {},
-            supplierData: (f.supplierData as SupplierData) || {}
-          };
+        setUploadStatuses(prev => {
+          const next = { ...prev };
+          files.forEach((f: any) => {
+            next[f.name] = {
+              ...(prev[f.name] || {}), // Сохраняем локальное состояние (например, если идет обработка)
+              status: f.status,
+              time: f.time || (prev[f.name]?.time) || 'Загружено',
+              size: f.size || (prev[f.name]?.size) || 0,
+              cost: f.cost,
+              tokens: f.tokens,
+              estimated_cost: f.estimated_cost,
+              estimated_tokens: f.estimated_tokens,
+              model: f.model,
+              method: f.method || (prev[f.name]?.method),
+              summary_md: f.summary_md,
+              summary_fields: f.summary_fields,
+              pages_count: f.pages_count,
+              is_scan: f.is_scan,
+              pdf_type: f.pdf_type,
+              type: f.type,
+              verifiedFields: f.verifiedFields || {},
+              supplierData: (f.supplierData as SupplierData) || (prev[f.name]?.supplierData) || {},
+              id: f.id || (prev[f.name]?.id)
+            };
+          });
+          return next;
         });
-        setUploadStatuses(statuses);
       }
     } catch (e) {
       console.error('Failed to fetch storage files:', e);
@@ -1211,9 +1215,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }));
           updateFileStatusOnServer(file.name, finalStatus);
 
-          if (resData.is_scan) {
-            return { file, serverFilename, stage: stage as Stage, isLarge: (resData.pages_count || 1) > 3 };
-          }
+          return { file, serverFilename, stage: stage as Stage, isLarge: (resData.pages_count || 1) > 3 };
         }
       } catch (e) {
         console.error('Failed to upload file to storage:', e);
@@ -1225,79 +1227,93 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     if (ocrQueue.length > 0) {
       for (const item of ocrQueue) {
-        const formData = new FormData();
-        formData.append('doc_type', item.stage);
-        if (activeProjectId) formData.append('projectId', activeProjectId);
-        formData.append('file_id', item.serverFilename);
-        if (forceOcr) formData.append('force_ocr', "true");
-
-          try {
-            setUploadStatuses((prev: any) => ({ ...prev, [item.file.name]: { ...prev[item.file.name], status: 'Анализ OCR...', time: currentTime } }));
-            const response = await fetch('http://localhost:8000/api/process-invoice', {
-              method: 'POST',
-              body: formData,
-              headers: {
-                'x-api-key': yandexConfig.apiKey,
-                'x-folder-id': yandexConfig.catalogId
-              }
-            });
-
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-
-            if (reader) {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n').filter(line => line.trim() && line.startsWith('data: '));
-
-                for (const line of lines) {
-                  try {
-                    const dataStr = line.substring(6);
-                    const data = JSON.parse(dataStr);
-                    
-                    setUploadStatuses((prev: any) => {
-                      const fileName = item.file.name;
-                      const prevData = prev[fileName] || {};
-                      const incomingDoc = data.data?.document || data.supplierData || {};
-
-                       return {
-                        ...prev,
-                        [fileName]: { 
-                           ...prevData, 
-                           status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
-                           method: data.data?.method || data.method || prevData.method,
-                           supplierData: {
-                              ...(prevData.supplierData || {}),
-                              ...incomingDoc,
-                              method: data.data?.method || incomingDoc.method || prevData.supplierData?.method
-                           }
-                        }
-                      };
-                    });
-
-                    if (data.status === 'final') {
-                       await fetchStorageFiles(); 
-                    }
-                  } catch (e) {
-                    console.error("Ошибка парсинга чанка:", e);
-                  }
-                }
-              }
-            }
-        } catch (e) { console.error(e); }
+          await processServerFile(item.file.name, item.serverFilename, item.stage, forceOcr);
       }
     }
     syncProjectFilesCount();
   }, [yandexConfig, activeProjectId, syncProjectFilesCount, updateFileStatusOnServer, fetchStorageFiles]);
 
+  const processServerFile = useCallback(async (fileName: string, serverFilename: string, stage: Stage, forceOcr: boolean = false) => {
+    const formData = new FormData();
+    formData.append('doc_type', stage);
+    if (activeProjectId) formData.append('projectId', activeProjectId);
+    formData.append('file_id', serverFilename);
+    if (forceOcr) formData.append('force_ocr', "true");
+
+    const now = new Date();
+    const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
+
+    try {
+      setUploadStatuses((prev: any) => ({ ...prev, [fileName]: { ...prev[fileName], status: 'Анализ OCR...', time: currentTime } }));
+      const response = await fetch('http://localhost:8000/api/process-invoice', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'x-api-key': yandexConfig.apiKey,
+          'x-folder-id': yandexConfig.catalogId
+        }
+      });
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n').filter(line => line.trim() && line.startsWith('data: '));
+
+          for (const line of lines) {
+            try {
+              const dataStr = line.substring(6);
+              const data = JSON.parse(dataStr);
+              
+              setUploadStatuses((prev: any) => {
+                const prevData = prev[fileName] || {};
+                const incomingDoc = data.data?.document || data.supplierData || {};
+                const newMethod = data.data?.method || data.method || prevData.method;
+
+                 return {
+                  ...prev,
+                  [fileName]: { 
+                     ...prevData, 
+                     status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
+                     method: newMethod,
+                     supplierData: {
+                        ...(prevData.supplierData || {}),
+                        ...incomingDoc,
+                        method: newMethod
+                     }
+                  }
+                };
+              });
+
+              if (data.status === 'final') {
+                 await fetchStorageFiles(); 
+              }
+            } catch (e) {
+              console.error("Ошибка парсинга чанка:", e);
+            }
+          }
+        }
+      }
+    } catch (e) { console.error(e); }
+  }, [yandexConfig, activeProjectId, fetchStorageFiles]);
+
   const reprocessAi = useCallback(async (fileName: string, forceOcr: boolean = false) => {
     const file = filesMap[fileName];
-    if (!file) return;
-    await handleFile([file], currentStage, true, forceOcr);
-  }, [filesMap, currentStage, handleFile]);
+    const status = uploadStatuses[fileName];
+    const serverFileId = status?.id || fileName; // Используем серверный ID если есть
+
+    if (file) {
+      await handleFile([file], currentStage, true, forceOcr);
+    } else {
+      // Иначе дергаем файл по его имени с сервера
+      await processServerFile(fileName, serverFileId, currentStage, forceOcr);
+    }
+  }, [filesMap, uploadStatuses, currentStage, handleFile, processServerFile]);
 
 
 

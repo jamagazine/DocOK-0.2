@@ -392,9 +392,23 @@ async def process_invoice(
         raise HTTPException(status_code=400, detail="Yandex API keys not configured.")
 
     if file_id:
-        disk_name = file_id
+        # 1. Попытка найти по ключу (дисковое имя) в манифесте
         manifest = _load_manifest(projectId)
-        original_name = manifest.get(disk_name, {}).get("originalName", disk_name)
+        if file_id in manifest:
+            disk_name = file_id
+            original_name = manifest[file_id].get("originalName", file_id)
+        else:
+            # 2. Обратный поиск: если file_id - это оригинальное имя
+            found = False
+            for k, v in manifest.items():
+                if isinstance(v, dict) and (v.get("originalName") == file_id or v.get("original_name") == file_id):
+                    disk_name = k
+                    original_name = file_id
+                    found = True
+                    break
+            if not found:
+                disk_name = file_id
+                original_name = file_id
     elif file:
         original_name = file.filename
         secured_name = secure_filename(transliterate(original_name))
@@ -729,7 +743,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
 
     manifest = _load_manifest(projectId)
     existing = manifest.get(secured_name, {})
-    p_method = "pdf_text" if final_status == "READY_MD_OCR" and original_filename.lower().endswith(".pdf") else (existing.get("method", "") if isinstance(existing, dict) else "")
+    p_method = "pdf_text" if final_status in ["READY_MD_OCR", "READY_MD_LOCAL"] and original_filename.lower().endswith(".pdf") else (existing.get("method", "") if isinstance(existing, dict) else "")
     manifest[secured_name] = {
         "originalName": original_filename,
         "status": final_status,

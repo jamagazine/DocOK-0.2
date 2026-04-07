@@ -1240,9 +1240,8 @@ def build_zonal_markdown(words, y_threshold=15):
     if bottom_cutoff_y == float('inf'):
         bottom_cutoff_y = y_anchor + 450
 
-    # 6. Разделение на зоны
-    # Bank Zone: От top_cutoff до Якоря
-    bank_words = [w for w in words if top_cutoff_y <= w['y'] < y_anchor - 5]
+    # Bank Zone: От top_cutoff до Якоря (добавляем буфер -10 чтобы не отрезать слова на той же строке)
+    bank_words = [w for w in words if (top_cutoff_y - 10) <= w['y'] < y_anchor - 5]
     
     # Entities Zone: От Якоря до Шапки таблицы
     entity_words = [w for w in words if y_anchor - 5 <= w['y'] < bottom_cutoff_y - 5]
@@ -1250,15 +1249,31 @@ def build_zonal_markdown(words, y_threshold=15):
     def join_words(w_list):
         if not w_list: return ""
         res_lines = []
+        # Сортируем весь список по Y
+        w_list.sort(key=lambda x: (x['y'], x['x']))
         curr_line = [w_list[0]]
         l_y = w_list[0]['y']
+        
+        def build_line(tokens):
+            if not tokens: return ""
+            tokens.sort(key=lambda x: x['x'])
+            line_str = tokens[0]['text']
+            for i in range(1, len(tokens)):
+                gap = tokens[i]['x'] - (tokens[i-1]['x'] + len(tokens[i-1]['text']) * 5) # Приблизительный X-gap
+                # Если разрыв по X больше 50 единиц (широкая колонка), ставим 4 пробела
+                if (tokens[i]['x'] - tokens[i-1]['x']) > 50:
+                    line_str += "    " + tokens[i]['text']
+                else:
+                    line_str += " " + tokens[i]['text']
+            return line_str.strip()
+
         for w in w_list[1:]:
             if abs(w['y'] - l_y) < y_threshold: 
                 curr_line.append(w)
             else:
-                res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]).strip())
+                res_lines.append(build_line(curr_line))
                 curr_line = [w]; l_y = w['y']
-        res_lines.append(" ".join([t['text'] for t in sorted(curr_line, key=lambda x: x['x'])]).strip())
+        res_lines.append(build_line(curr_line))
         return "\n".join([l for l in res_lines if l])
 
     output = "### [ZONE_BANK_RAW] ###\n"
@@ -1273,19 +1288,19 @@ def clean_and_build_markdown(ocr_json_or_words):
     # Если это список словарей с ключом 'text' (из PDF pdfplumber)
     if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
         # Координаты уже должны быть нормализованы (0-1000) либо в пунктах
-        # Проверяем, если Y уже в масштабе 0-1000 (усредненный скан 2330px vs пункты 842pt)
+        # Порог 2.5 единицы для идеальных цифровых PDF (чтобы не склеивать название с расчетным счетом)
         if any(w.get('y', 0) > 850 for w in ocr_json_or_words):
-             return build_zonal_markdown(ocr_json_or_words, y_threshold=5)
+             return build_zonal_markdown(ocr_json_or_words, y_threshold=2.5)
         else:
              # Если координаты в пунктах, нормализуем и применяем жесткий порог
-             return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842), y_threshold=5)
+             return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842), y_threshold=2.5)
     
     # Иначе парсим как ответ Yandex Vision
     tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)
     if not tokens: return "NO_TEXT_FOUND"
     
-    # Среднее разрешение скана (используем мягкий порог 15 для сканов)
-    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330), y_threshold=15)
+    # Среднее разрешение скана (используем порог 8 (вместо 15) для сканов, чтобы лучше разделять строки реквизитов)
+    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330), y_threshold=8)
 
 def generate_invoice_summary(data: dict) -> str:
     """
