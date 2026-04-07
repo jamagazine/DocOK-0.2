@@ -1198,8 +1198,8 @@ def build_zonal_markdown(words, y_threshold=15):
     y_anchor = 0
     for line in lines_with_y:
         txt = line['text'].lower()
-        # Ищем в одной строке и "счет", и признак номера/оплаты
-        if "счет" in txt and ("№" in txt or "на" in txt or "оплату" in txt or "invoice" in txt):
+        # Ищем в одной строке и "счет", и признак номера/оплаты (смягченное условие)
+        if ("счет" in txt or "счёт" in txt) and any(k in txt for k in ["№", "на", "оплат", "invoice", "оферт"]):
             y_anchor = line['y']
             break
             
@@ -1287,13 +1287,9 @@ def clean_and_build_markdown(ocr_json_or_words):
     """Единый адаптер (маршрутизатор) для сканов и PDF."""
     # Если это список словарей с ключом 'text' (из PDF pdfplumber)
     if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
-        # Координаты уже должны быть нормализованы (0-1000) либо в пунктах
-        # Порог 2.5 единицы для идеальных цифровых PDF (чтобы не склеивать название с расчетным счетом)
-        if any(w.get('y', 0) > 850 for w in ocr_json_or_words):
-             return build_zonal_markdown(ocr_json_or_words, y_threshold=2.5)
-        else:
-             # Если координаты в пунктах, нормализуем и применяем жесткий порог
-             return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842), y_threshold=2.5)
+        # Координаты уже должны быть нормализованы (0-1000) или в пунктах
+        # Используем порог 5.0 для стабильности (2.5 был слишком мал для рваных слов)
+        return build_zonal_markdown(ocr_json_or_words, y_threshold=5.0)
     
     # Иначе парсим как ответ Yandex Vision
     tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)

@@ -467,6 +467,8 @@ async def process_invoice(
                         # Возвращает List[List[dict]] (слова по страницам)
                         pages_data = extract_digital_words_as_ocr(temp_path)
                         num_pages = len(pdf.pages)
+                        p_width = float(first_page.width or 595)
+                        p_height = float(first_page.height or 842)
                         has_low_confidence = False
                         
                         all_ocr_text = ""
