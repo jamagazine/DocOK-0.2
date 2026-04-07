@@ -1084,82 +1084,14 @@ def extract_flat_tokens_from_yandex(ocr_json):
         print(f"Error parsing tokens: {e}")
     return tokens
 
-def y_snap_tokens(tokens, threshold=5):
-    """Склеивает слова в горизонтальные строки (Y-Snapping)"""
-    if not tokens: return []
-    # Сначала сортируем по Y
-    tokens.sort(key=lambda x: x['y_start'])
-    
-    lines = []
-    current_line = []
-    
-    for t in tokens:
-        if not current_line:
-            current_line.append(t)
-            continue
-        
-        # Сравниваем с первым элементом ТЕКУЩЕЙ строки (исправлен баг)
-        if abs(t['y_start'] - current_line[0]['y_start']) <= threshold:
-            current_line.append(t)
-        else:
-            lines.append(current_line)
-            current_line = [t]
-            
-    if current_line:
-        lines.append(current_line)
-        
-    # Сортируем слова внутри каждой строки по X и склеиваем в текст
-    snapped_text_lines = []
-    for line in lines:
-        line.sort(key=lambda x: x['x_start'])
-        
-        line_text = ""
-        last_x_end = None
-        
-        for w in line:
-            x_start = w['x_start']
-            text = w['text']
-            # В tokens.append() пока нет x_end, используем аппроксимацию: x_start + длина слова * 10
-            x_end = w.get('x_end', x_start + len(text) * 10)
-            
-            if last_x_end is not None:
-                gap = x_start - last_x_end
-                if gap > 15:
-                    line_text += "    "
-                else:
-                    line_text += " "
-            
-            line_text += text
-            last_x_end = x_end
-            
-        snapped_text_lines.append(line_text)
-        
-    return snapped_text_lines
-
-def find_bank_zone_y(tokens):
-    """Ищет самую верхнюю Y координату БИКа или 20-значного счета для обрезки мусора"""
-    bik_pattern = re.compile(r'\b04\d{7}\b')
-    account_pattern = re.compile(r'\b40[78]\d{17}\b')
-    
-    min_y = float('inf')
-    for t in tokens:
-        if bik_pattern.search(t['text']) or account_pattern.search(t['text']):
-            if t['y_start'] < min_y:
-                min_y = t['y_start']
-    return min_y if min_y != float('inf') else 0
-
 def normalize_to_standard_grid(words, width, height):
     """Приводит любые координаты (points или pixels) к единой сетке 0-1000."""
     standard_words = []
     for w in words:
-        # Защита от деления на ноль и пустых координат
         w_width = width if width else 1000
         w_height = height if height else 1000
-        
-        # Для Яндекса координаты x/y могут быть в словаре, для PDF - напрямую
         x = w.get('x', w.get('x_start', 0))
         y = w.get('y', w.get('y_start', 0))
-        
         standard_words.append({
             "text": w["text"],
             "x": (x / w_width) * 1000,
@@ -1167,136 +1099,115 @@ def normalize_to_standard_grid(words, width, height):
         })
     return standard_words
 
-def build_zonal_markdown(words, y_threshold=15):
-    """Унифицированный сборщик зон с построчным поиском якоря."""
+def build_zonal_markdown(words, is_digital=False):
+    """Сборщик зон. Разделяет логику для сканов (с якорем) и цифровых PDF (без якоря)."""
     if not words: return "NO_TEXT_FOUND"
-    
-    # 1. Сортируем слова по Y, затем по X
-    words.sort(key=lambda x: (x['y'], x['x']))
-    
-    # 2. Группируем в строки для поиска якоря
-    lines_with_y = []
-    current_line_words = [words[0]]
-    last_y = words[0]['y']
-    
-    for w in words[1:]:
-        if abs(w['y'] - last_y) < y_threshold: # Порог склейки строк
-            current_line_words.append(w)
-        else:
-            lines_with_y.append({
-                "text": " ".join([t['text'] for t in sorted(current_line_words, key=lambda x: x['x'])]),
-                "y": last_y
-            })
-            current_line_words = [w]
-            last_y = w['y']
-    lines_with_y.append({
-        "text": " ".join([t['text'] for t in sorted(current_line_words, key=lambda x: x['x'])]),
-        "y": last_y
-    })
 
-    # 3. Ищем Якорь (Счет №) по склеенным строкам
-    y_anchor = 0
-    for line in lines_with_y:
-        txt = line['text'].lower()
-        # Ищем в одной строке и "счет", и признак номера/оплаты (смягченное условие)
-        if ("счет" in txt or "счёт" in txt) and any(k in txt for k in ["№", "на", "оплат", "invoice", "оферт"]):
-            y_anchor = line['y']
-            break
+    # 1. Сортируем слова сверху вниз, слева направо
+    words.sort(key=lambda x: (x['y'], x['x']))
+
+    # 2. Склеиваем слова в строки с учетом горизонтальных пробелов
+    lines_data = []
+    if words:
+        current_line_words = [words[0]]
+        last_y = words[0]['y']
+        # Чувствительность по Y: для цифры строже, для скана мягче
+        y_thresh = 5 if is_digital else 15
+
+        for w in words[1:]:
+            if abs(w['y'] - last_y) < y_thresh:
+                current_line_words.append(w)
+            else:
+                # Строка собрана, склеиваем слова
+                current_line_words.sort(key=lambda x: x['x'])
+                line_text_parts = []
+                for i, cw in enumerate(current_line_words):
+                    # Если между словами большая дыра (> 50 единиц) - ставим 4 пробела (разделитель колонок)
+                    if i > 0 and (cw['x'] - current_line_words[i-1]['x']) > 50:
+                        line_text_parts.append("    " + cw['text'])
+                    else:
+                        line_text_parts.append(cw['text'])
+                
+                line_text = " ".join(line_text_parts).replace("     ", "    ").strip()
+                lines_data.append({"text": line_text, "y": last_y})
+
+                current_line_words = [w]
+                last_y = w['y']
+
+        # Добиваем последнюю строку
+        current_line_words.sort(key=lambda x: x['x'])
+        line_text_parts = []
+        for i, cw in enumerate(current_line_words):
+            if i > 0 and (cw['x'] - current_line_words[i-1]['x']) > 50:
+                line_text_parts.append("    " + cw['text'])
+            else:
+                line_text_parts.append(cw['text'])
+        line_text = " ".join(line_text_parts).replace("     ", "    ").strip()
+        lines_data.append({"text": line_text, "y": last_y})
+
+    # =======================================================
+    # 3. ФОРМИРОВАНИЕ ЗОН (РАЗВИЛКА ЛОГИКИ)
+    # =======================================================
+
+    if is_digital:
+        # --- ПУТЬ ДЛЯ ЦИФРОВЫХ PDF ---
+        # Умный ограничитель шапки: берем верхнюю часть, но останавливаемся перед таблицей
+        header_lines = []
+        for l in lines_data:
+            if l['y'] >= 650:
+                break
             
-    if y_anchor == 0: # Резервный поиск по ИНН
-        for line in lines_with_y:
-            if "инн" in line['text'].lower() or "кпп" in line['text'].lower():
+            txt_lower = l['text'].lower()
+            
+            # Ищем признаки заголовка таблицы (пересечение сущностей и метрик)
+            # Мы ищем И номер/название И одновременно количество/цену/сумму
+            has_identity = any(m in txt_lower for m in ["№", "наименование", "товар", "услуги", "артикул"])
+            has_metrics = any(m in txt_lower for m in ["кол-во", "количество", "цена", "сумма", "ед.изм", "ед. изм"])
+            
+            if has_identity and has_metrics:
+                # Мы дошли до шапки таблицы — прекращаем сбор реквизитов
+                break
+                
+            header_lines.append(l['text'])
+
+        output = "### [ZONE_ENTITIES_RAW] ###\n"
+        output += "\n".join(header_lines)
+        return output
+
+    else:
+        # --- ПУТЬ ДЛЯ СКАНОВ (ОСТАВЛЯЕМ СТАРУЮ ЛОГИКУ БЕЗ ИЗМЕНЕНИЙ) ---
+        # Ищем якорь "Счет №"
+        y_anchor = 400
+        for line in lines_data:
+            txt = line['text'].lower()
+            if "счет" in txt and ("№" in txt or "на" in txt or "оплату" in txt or "n " in txt):
                 y_anchor = line['y']
                 break
-    if y_anchor == 0: y_anchor = 400
 
-    # 4. Ищем верхнюю границу (Top Cutoff) - Облако тегов реквизитов
-    top_cutoff_y = 0
-    tags = {"ИНН", "КПП", "БИК", "Сч. №", "Банк", "получателя"}
-    for i, w in enumerate(words):
-        if any(t in w['text'] for t in tags):
-            # Проверяем "облако"
-            cloud = 1
-            for j in range(i + 1, min(i + 15, len(words))):
-                if words[j]['y'] - w['y'] > 40: break
-                if any(t in words[j]['text'] for t in tags):
-                    cloud += 1
-            if cloud >= 2:
-                top_cutoff_y = w['y']
-                break
+        bank_zone = [l['text'] for l in lines_data if l['y'] < y_anchor - 5]
+        entities_zone = [l['text'] for l in lines_data if y_anchor - 5 <= l['y'] < y_anchor + 350]
 
-    # 5. Ищем нижнюю границу (Bottom Cutoff) - Шапка таблицы
-    bottom_cutoff_y = float('inf')
-    for line in lines_with_y:
-        # Пропускаем всё что выше якоря
-        if line['y'] < y_anchor: continue
-        txt = line['text'].lower()
-        # Если находим признаки заголовка таблицы
-        if any(k in txt for k in ["наименование", "кол-во", "цена", "товар"]):
-            bottom_cutoff_y = line['y']
-            break
-            
-    # Если таблицу так и не нашли, берем дефолтный отступ от якоря (как раньше)
-    if bottom_cutoff_y == float('inf'):
-        bottom_cutoff_y = y_anchor + 450
+        output = "### [ZONE_BANK_RAW] ###\n"
+        output += "\n".join(bank_zone)
+        output += "\n\n### [ZONE_ENTITIES_RAW] ###\n"
+        output += "\n".join(entities_zone)
 
-    # Bank Zone: От top_cutoff до Якоря (добавляем буфер -10 чтобы не отрезать слова на той же строке)
-    bank_words = [w for w in words if (top_cutoff_y - 10) <= w['y'] < y_anchor - 5]
-    
-    # Entities Zone: От Якоря до Шапки таблицы
-    entity_words = [w for w in words if y_anchor - 5 <= w['y'] < bottom_cutoff_y - 5]
-
-    def join_words(w_list):
-        if not w_list: return ""
-        res_lines = []
-        # Сортируем весь список по Y
-        w_list.sort(key=lambda x: (x['y'], x['x']))
-        curr_line = [w_list[0]]
-        l_y = w_list[0]['y']
-        
-        def build_line(tokens):
-            if not tokens: return ""
-            tokens.sort(key=lambda x: x['x'])
-            line_str = tokens[0]['text']
-            for i in range(1, len(tokens)):
-                gap = tokens[i]['x'] - (tokens[i-1]['x'] + len(tokens[i-1]['text']) * 5) # Приблизительный X-gap
-                # Если разрыв по X больше 50 единиц (широкая колонка), ставим 4 пробела
-                if (tokens[i]['x'] - tokens[i-1]['x']) > 50:
-                    line_str += "    " + tokens[i]['text']
-                else:
-                    line_str += " " + tokens[i]['text']
-            return line_str.strip()
-
-        for w in w_list[1:]:
-            if abs(w['y'] - l_y) < y_threshold: 
-                curr_line.append(w)
-            else:
-                res_lines.append(build_line(curr_line))
-                curr_line = [w]; l_y = w['y']
-        res_lines.append(build_line(curr_line))
-        return "\n".join([l for l in res_lines if l])
-
-    output = "### [ZONE_BANK_RAW] ###\n"
-    output += join_words(bank_words) if bank_words else ""
-    output += "\n\n### [ZONE_ENTITIES_RAW] ###\n"
-    output += join_words(entity_words) if entity_words else ""
-    
-    return output
+        return output
 
 def clean_and_build_markdown(ocr_json_or_words):
     """Единый адаптер (маршрутизатор) для сканов и PDF."""
-    # Если это список словарей с ключом 'text' (из PDF pdfplumber)
-    if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
-        # Координаты уже должны быть нормализованы (0-1000) или в пунктах
-        # Используем порог 5.0 для стабильности (2.5 был слишком мал для рваных слов)
-        return build_zonal_markdown(ocr_json_or_words, y_threshold=5.0)
     
-    # Иначе парсим как ответ Yandex Vision
+    # Если это список словарей с ключом 'text' (из PDF pdfplumber) -> ЭТО ЦИФРОВОЙ PDF
+    if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
+        # Передаем is_digital=True и нормализуем под стандартный размер A4 в пунктах
+        return build_zonal_markdown(normalize_to_standard_grid(ocr_json_or_words, 595, 842), is_digital=True)
+
+    # Иначе парсим как ответ Yandex Vision -> ЭТО СКАН
     tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)
     if not tokens: return "NO_TEXT_FOUND"
     
-    # Среднее разрешение скана (используем порог 8 (вместо 15) для сканов, чтобы лучше разделять строки реквизитов)
-    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330), y_threshold=8)
+    # Передаем is_digital=False
+    return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330), is_digital=False)
 
 def generate_invoice_summary(data: dict) -> str:
     """
@@ -1360,14 +1271,14 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
                 
                 x0, top, x1, bottom = w["x0"], w["top"], w["x1"], w["bottom"]
                 
-                # Normalize to 0-1000
-                nx = (x0 / p_width) * 1000
-                ny = (top / p_height) * 1000
-                nw = ((x1 - x0) / p_width) * 1000
-                nh = ((bottom - top) / p_height) * 1000
+                # Возвращаем ПРЯМЫЕ координаты (points), нормализация будет в clean_and_build_markdown
+                nx = x0
+                ny = top
+                nw = (x1 - x0)
+                nh = (bottom - top)
                 
-                # Fingerprint to ignore duplicates (1 unit margin)
-                fpr = (text, round(nx / 2) * 2, round(ny / 2) * 2) 
+                # Fingerprint to ignore duplicates (используем округление до целых пунктов)
+                fpr = (text, round(nx), round(ny)) 
                 if fpr in seen_tokens:
                     continue
                 seen_tokens.add(fpr)
