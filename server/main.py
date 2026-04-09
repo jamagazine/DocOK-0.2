@@ -572,7 +572,7 @@ async def process_invoice(
 
             # Новая логика: Парсинг позиций (Items)
             yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
-            all_items = await process_items(extracted_text)
+            all_items = await process_items(extracted_text, p_method, api_key, folder_id)
 
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
