@@ -68,6 +68,73 @@ class UsageStats:
         }
 
 
+async def estimate_cost_before_processing(
+    text: str,
+    api_key: str = "",
+    folder_id: str = "",
+    num_positions: int = 0,
+    file_type: str = "excel_ai",
+    pages: int = 0
+) -> dict:
+    """
+    Умный прогноз стоимости до нажатия кнопки 'Обработать'.
+    Включает +25% буфер для защиты от непредвиденных расходов.
+    """
+    # 1. Сценарий: Сканы (требуют Yandex Vision OCR)
+    if file_type in ["need_ocr", "ocr_table", "image"]:
+        pages = max(1, pages)
+        ocr_cost = pages * pricing.PRICING_CONFIG["ocr"]["table"]
+        llm_input = pages * 4000
+        estimated_output = pages * 800
+        
+        pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.42, "output_per_1k": 0.42})
+        llm_cost = (llm_input * pro_rates["input_per_1k"] + estimated_output * pro_rates["output_per_1k"]) / 1000.0
+        
+        total_cost = (ocr_cost + llm_cost) * 1.25 # Буфер 25%
+        return {
+            "estimated_cost": round(total_cost, 2),
+            "estimated_tokens": llm_input + estimated_output,
+            "breakdown": f"OCR ({pages} стр.) + LLM Pro"
+        }
+
+    # 2. Сценарий: Текстовые файлы (Excel, CSV, текстовые PDF)
+    try:
+        # Попытка использовать точный токенизатор Яндекса
+        if api_key and folder_id:
+            input_tokens = await get_token_count(text, "pro", api_key, folder_id)
+        else:
+            input_tokens = len(text) // 3
+    except Exception:
+        # Надежный Fallback, если токенизатор недоступен
+        input_tokens = len(text) // 3
+
+    # Оценка Output на основе количества строк
+    if num_positions == 0:
+        estimated_output = int(input_tokens * 0.35)
+    else:
+        header_output = 450
+        items_output = num_positions * 50 # В среднем 50 токенов на 1 позицию спецификации
+        estimated_output = header_output + items_output
+
+    # Симуляция разделения (Шапка ~70% текста, Товары ~30% текста)
+    header_input = int(input_tokens * 0.70)
+    items_input = input_tokens - header_input
+
+    lite_rates = pricing.PRICING_CONFIG.get("yandexgpt-lite", {"input_per_1k": 0.15, "output_per_1k": 0.15})
+    pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.42, "output_per_1k": 0.42})
+
+    lite_cost = (header_input * lite_rates["input_per_1k"] + 450 * lite_rates["output_per_1k"]) / 1000.0
+    pro_cost = (items_input * pro_rates["input_per_1k"] + max(0, estimated_output - 450) * pro_rates["output_per_1k"]) / 1000.0
+
+    total_estimated = (lite_cost + pro_cost) * 1.25 # Буфер 25%
+
+    return {
+        "estimated_cost": round(total_estimated, 2),
+        "estimated_tokens": input_tokens + estimated_output,
+        "breakdown": f"Шапка (Lite) + Товары (Pro) + Запас 25%"
+    }
+
+
 def find_account_by_context(text: str, prefix: str) -> str:
     """Ищет 20-значное число с заданным префиксом (407 или 301)."""
     import re

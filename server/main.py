@@ -698,6 +698,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     api_key, folder_id = get_yandex_keys()
     ext_text = ""
     is_spreadsheet = original_filename.lower().endswith((".xlsx", ".xls", ".csv"))
+    is_pdf = original_filename.lower().endswith(".pdf")
+    is_image = original_filename.lower().endswith((".png", ".jpg", ".jpeg"))
     summary_md = ""
     summary_fields = None
     
@@ -723,8 +725,6 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                 md_text = df.to_markdown(index=False, tablefmt="pipe", disable_numparse=True)
 
             ext_text = md_text
-            estimated_tokens = int((len(ext_text) / 4) * 2.0)
-            estimated_cost = 0
 
             # --- AUTO-EXTRACT SUMMARY (Pre-AI) - ONLY FOR SPECS ---
             if stage == "spec":
@@ -769,40 +769,62 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                         with open(grid_p, "w", encoding="utf-8") as f:
                             f.write(md_text)
                         
-                        tokens = await get_token_count(ext_text, "pro", api_key, folder_id)
-                        estimated_tokens = tokens
-                        estimated_cost = 0
-                        
                 if not ext_text:
                     import pdfplumber
                     with pdfplumber.open(dest_path) as pdf:
                         pages = len(pdf.pages)
-                        if pages > 0:
-                            # 1.22 (OCR Table) + ~0.28 (LLM margin) = 1.5 RUB per page
-                            estimated_cost = round(pages * 1.5, 2)
-                            # Average 5000 tokens per page for structured docs
-                            estimated_tokens = pages * 5000
-            elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
-                estimated_tokens = 5000
-                estimated_cost = 1.5
+            elif is_image:
+                pages = 1
         except Exception as e:
-            print(f"Error estimating cost: {e}")
+            print(f"Error checking pages: {e}")
+            
+    # Calculate metadata for frontend routing and estimation
+    pages_count = pages if 'pages' in locals() else 1
+    current_pdf_type = None
+    if is_pdf:
+        from parser_utils import detect_pdf_type
+        current_pdf_type = detect_pdf_type(dest_path)
+        if 'pages' not in locals():
+            import pdfplumber
+            try:
+                with pdfplumber.open(dest_path) as pdf:
+                    pages_count = len(pdf.pages)
+            except: pass
             
     # Determine initial file status
     final_status = "ok"
     if is_spreadsheet:
         final_status = "READY_MD_LOCAL"
-    elif original_filename.lower().endswith(".pdf"):
-        # We already called detect_pdf_type above
-        from parser_utils import detect_pdf_type
-        pdf_type = detect_pdf_type(dest_path)
-        if pdf_type == "TEXT_PDF" and stage == "invoice":
+        file_method = "excel_ai"
+        num_pos = len(df) if locals().get('df') is not None else 0
+    elif is_pdf:
+        if current_pdf_type == "TEXT_PDF" and stage == "invoice":
             final_status = "READY_MD_LOCAL"
+            file_method = "pdf_text"
         else:
             final_status = "NEED_OCR"
-    elif original_filename.lower().endswith((".png", ".jpg", ".jpeg")):
+            file_method = "need_ocr"
+        num_pos = 0
+    elif is_image:
         final_status = "NEED_OCR"
+        file_method = "image"
+        num_pos = 0
 
+    from ai_service import estimate_cost_before_processing
+    try:
+        estimate = await estimate_cost_before_processing(
+            text=ext_text,
+            api_key=api_key,
+            folder_id=folder_id,
+            num_positions=num_pos,
+            file_type=file_method,
+            pages=pages_count
+        )
+        estimated_cost = estimate.get("estimated_cost", 0)
+        estimated_tokens = estimate.get("estimated_tokens", 0)
+    except Exception as e:
+        print(f"Error smart estimating cost: {e}")
+        
     manifest = _load_manifest(projectId)
     existing = manifest.get(secured_name, {})
     p_method = "pdf_text" if final_status in ["READY_MD_OCR", "READY_MD_LOCAL"] and original_filename.lower().endswith(".pdf") else (existing.get("method", "") if isinstance(existing, dict) else "")
@@ -825,22 +847,6 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     append_history({
         "fileName": original_filename, "method": "", "model": "", "cost": 0, "tokens": 0, "status": "UPLOAD"
     }, projectId)
-    
-    # Calculate metadata for frontend routing
-    pages_count = 1
-    is_pdf = original_filename.lower().endswith(".pdf")
-    is_image = original_filename.lower().endswith((".png", ".jpg", ".jpeg"))
-    
-    current_pdf_type = None
-    if is_pdf:
-        from parser_utils import detect_pdf_type
-        current_pdf_type = detect_pdf_type(dest_path)
-        import pdfplumber
-        try:
-            with pdfplumber.open(dest_path) as pdf:
-                pages_count = len(pdf.pages)
-        except: pass
-    
     is_scan_val = (is_image or (is_pdf and current_pdf_type == "SCAN_PDF"))
 
     return {
