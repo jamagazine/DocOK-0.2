@@ -527,7 +527,12 @@ async def process_invoice(
                 _, ext = os.path.splitext(filename)
                 full_header_text = excel_to_markdown_header(temp_path, ext)
                 main_doc = None
-                p_method = "excel_ai"
+                
+                # --- ТЗ: Если это файл спецификации и Excel, используем правила вместо ИИ ---
+                if doc_type == "spec":
+                    p_method = "excel_rules"
+                else:
+                    p_method = "excel_ai"
             else: # Images
                 from parser_utils import ocr_to_grid_markdown
                 p_method = "ocr_table"
@@ -553,7 +558,18 @@ async def process_invoice(
             if not metadata_source: metadata_source = "Empty Document"
 
             if p_method == "excel_rules":
-                yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Правила: Реквизиты извлечены из таблицы...'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Правила: Используем данные из штампа...'}, ensure_ascii=False)}\n\n"
+                # Загружаем данные из манифеста, которые подготовил storage_upload
+                manifest = _load_manifest(projectId)
+                entry = manifest.get(disk_name, {})
+                fields = entry.get("summary_fields", {})
+                main_doc = {
+                    "cipher": fields.get("cipher", ""),
+                    "destination": fields.get("destination", ""),
+                    "total_positions": fields.get("total_positions", 0),
+                    "suppliers": fields.get("suppliers", ""),
+                    "notes": fields.get("notes", "")
+                }
             else:
                 yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
                 # Pass full OCR data or local text to the semantic extractor
@@ -572,7 +588,12 @@ async def process_invoice(
 
             # Новая логика: Парсинг позиций (Items)
             yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
-            all_items = await process_items(extracted_text, p_method, api_key, folder_id)
+            if p_method == "excel_rules":
+                # Для Excel-спеков мы уже имеем данные в MD, просто конвертируем их если нужно, 
+                # или используем process_items в режиме rules
+                all_items = await process_items(extracted_text, p_method, api_key, folder_id)
+            else:
+                all_items = await process_items(extracted_text, p_method, api_key, folder_id)
 
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):

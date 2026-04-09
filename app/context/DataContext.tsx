@@ -193,6 +193,7 @@ export function emptyInvoiceRow(): InvoiceRow {
     price_final: 0,
     total: 0,
     vat_rate: '20%',
+    tag: '',
     is_valid: true,
     isUncertain: false,
   };
@@ -1098,13 +1099,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
           // Standard item parsing
           r.article = c_art !== -1 ? cols[c_art] || '' : '';
           r.name = c_name !== -1 ? cols[c_name] || '' : '';
-          r.quantity = c_qty !== -1 ? cols[c_qty] || '0' : '0';
+          r.quantity = c_qty !== -1 ? parseFloat((cols[c_qty] || '0').replace(/\s/g, '').replace(/,/g, '.')) || 0 : 0;
           r.unit = c_unit !== -1 ? cols[c_unit] || '' : '';
-          r.price = c_price !== -1 ? cols[c_price] || '0' : '0';
-          r.total = c_total !== -1 ? cols[c_total] || '0' : '0';
+          r.price_unit = c_price !== -1 ? parseFloat((cols[c_price] || '0').replace(/\s/g, '').replace(/,/g, '.')) || 0 : 0;
+          r.price_final = r.price_unit;
+          r.total = c_total !== -1 ? parseFloat((cols[c_total] || '0').replace(/\s/g, '').replace(/,/g, '.')) || 0 : 0;
           
           // If name is empty but there's a sum/price, try to take from other columns
-          if (!r.name && (r.total || r.price)) {
+          if (!r.name && (r.total || r.price_unit)) {
               r.name = cols.find(c => c.length > 3) || '';
           }
         }
@@ -1223,7 +1225,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return null;
     }));
 
-    const ocrQueue = results.filter(r => r !== null) as {file: File, serverFilename: string, stage: Stage, isLarge: boolean}[];
+    // --- TЗ: Отключаем ИИ для Excel-спецификаций по умолчанию ---
+    const ocrQueue = (results.filter(r => r !== null) as {file: File; serverFilename: string; stage: Stage; isLarge: boolean}[])
+      .filter(item => {
+        const isSpreadsheet = item.file.name.toLowerCase().match(/\.(xlsx|xls|csv)$/);
+        // Если это спека и это Excel — НЕ пускаем в очередь ИИ-обработки
+        if (item.stage === 'spec' && isSpreadsheet) {
+          console.log(`[DataContext] Skipping AI for ${item.file.name} (Spec/Excel)`);
+          return false;
+        }
+        return true;
+      });
 
     if (ocrQueue.length > 0) {
       for (const item of ocrQueue) {
@@ -2179,8 +2191,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         // Recalculate totals
         const qty = parseFloat(String(field === 'quantity' ? value : updatedRow.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        const price = parseFloat(String(field === 'price' ? value : updatedRow.price).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        const discountStr = String(field === 'discount' ? value : updatedRow.discount || '');
+        const price = parseFloat(String(field === 'price_unit' ? value : updatedRow.price_unit).replace(/\s/g, '').replace(/,/g, '.')) || 0;
+        const discountStr = String(field === 'discount' ? value : updatedRow.discount || '0');
         const isPercent = discountStr.includes('%');
         let dVal = parseFloat(discountStr) || 0;
 
@@ -2189,9 +2201,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           pad = isPercent ? price * (1 - dVal / 100) : Math.max(0, price - dVal);
         }
 
-        updatedRow.priceAfterDiscount = pad.toFixed(2);
-        updatedRow.totalBeforeDiscount = (qty * price).toFixed(2);
-        updatedRow.total = (qty * pad).toFixed(2);
+        updatedRow.price_final = Number(pad.toFixed(2));
+        updatedRow.total = Number((qty * pad).toFixed(2));
 
         return updatedRow;
       }));

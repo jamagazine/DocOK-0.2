@@ -541,6 +541,7 @@ function InvoiceTable() {
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
+    { key: 'tag', label: 'Тег', width: '80px', align: 'center' },
     { key: 'name', label: 'Наименование' },
     { key: 'article', label: 'Артикул', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },

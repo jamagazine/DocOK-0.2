@@ -28,9 +28,9 @@ export const exportSupplierToExcel = (supplierName: string, data: SupplierData, 
     item.name,
     item.quantity,
     item.unit,
-    item.price,      // Используем актуальное поле из DataContext/InvoiceRow
+    item.price_unit,      // Используем актуальное поле из DataContext/InvoiceRow
     item.total,      // Используем актуальное поле из DataContext/InvoiceRow
-    item.vatRate     // Используем актуальное поле из DataContext/InvoiceRow
+    item.vat_rate     // Используем актуальное поле из DataContext/InvoiceRow
   ]);
 
   // 3. Создаем рабочую книгу

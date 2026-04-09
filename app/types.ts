@@ -114,6 +114,7 @@ export interface InvoiceItem {
   price_final: number;
   total: number;
   vat_rate: string;
+  tag: string;
   is_valid: boolean; // Для индикации математических ошибок
 }
 

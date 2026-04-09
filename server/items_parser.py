@@ -2,62 +2,100 @@ import json
 import asyncio
 import re
 
-def slice_markdown_table(md_text: str) -> str:
+import logging
+
+logger = logging.getLogger(__name__)
+
+def clean_and_group_markdown_table(md_text: str) -> str:
     """
-    Slices the full markdown table to extract only the items section.
-    Finds the header row with 'Кол-во', 'Цена', 'Сумма' etc.
-    Extracts everything below it until footer markers ('Итого', 'Всего') or 5 empty lines.
+    Очищает Markdown-таблицу от мусора и группирует многострочные позиции 
+    путем склейки ячеек по 'якорю' (номеру позиции или тегу).
     """
-    if not md_text:
-        return ""
-        
     lines = md_text.split('\n')
-    start_idx = -1
-    end_idx = len(lines)
+    table_lines = []
+    in_table = False
     
-    # 1. Find Header
+    # 1. Извлечение тела таблицы и отсечение подвала
     for i, line in enumerate(lines):
-        line_lower = line.lower()
-        if any(marker in line_lower for marker in ["кол-во", "количество", "цена", "сумма", "наименование"]):
-            # Found header, usually followed by markdown separator ---
-            start_idx = i
-            # Check if next line is a separator to include it or skip it
-            if i + 1 < len(lines) and "---" in lines[i+1]:
-                start_idx = i + 1  # start data right after separator
-            break
+        lower_line = line.lower()
+        if 'наименование' in lower_line and ('кол-во' in lower_line or 'количество' in lower_line or 'цена' in lower_line):
+            in_table = True
+            table_lines.append(line)
+            continue
             
-    if start_idx == -1:
-        # If no strict header found, we start from top
-        start_idx = 0
-        
-    # 2. Find Footer or Empty line boundary
-    empty_count = 0
-    for i in range(start_idx + 1, len(lines)):
-        line = lines[i].strip()
-        line_lower = line.lower()
-        
-        if any(marker in line_lower for marker in ["итого", "всего", "в т.ч. ндс", "в т.ч.", "сумма прописью"]):
-            end_idx = i
-            break
-            
-        # Treat lines with only pipes and spaces as empty
-        clean_content = line.replace("|", "").strip()
-        if not clean_content:
-            empty_count += 1
-            if empty_count >= 5:
-                end_idx = i - 5
+        if in_table:
+            # Жесткие стоп-слова для отсечения мусора
+            if any(stop in lower_line for stop in ['итого', 'всего к оплате', 'всего наименований', 'внимание!', 'условия поставки', 'оплата данного счета']):
                 break
-        else:
-            empty_count = 0
             
-    sliced_lines = lines[start_idx+1:end_idx]
-    
-    # Prepend dynamic Markdown header so LLM understands columns
-    if start_idx > 0 and "---" in lines[start_idx]:
-        header = lines[start_idx-1:start_idx+1]
-        sliced_lines = header + sliced_lines
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if set(stripped.replace('|', '').replace('-', '').replace(' ', '')) == set() and len(table_lines) > 1:
+                continue 
+                
+            table_lines.append(line)
+
+    if len(table_lines) < 2:
+        return ""
+
+    # 2. Очистка и склейка ячеек (The Squeezer)
+    header = table_lines[0]
+    valid_rows = []
+    current_row_cells = []
+
+    for line in table_lines[1:]:
+        if '---' in line:
+            continue
+            
+        cells = [c.strip() for c in line.split('|')]
+        if len(cells) < 3:
+            continue
+            
+        # Очищаем фиктивные пустые ячейки по краям MD-таблицы
+        if cells and cells[0] == '': cells.pop(0)
+        if cells and cells[-1] == '': cells.pop()
         
-    return "\n".join(sliced_lines).strip()
+        # Ищем 'якорь' в первых двух колонках (№ или Тег вроде В1, П1, 47.0)
+        is_anchor = False
+        val_col_0 = (cells[0] if len(cells) > 0 else "").replace('.', '')
+        val_col_1 = (cells[1] if len(cells) > 1 else "").replace('.', '')
+        
+        if re.fullmatch(r'\d+', val_col_0) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', cells[0] if len(cells)>0 else ""):
+            is_anchor = True
+        elif val_col_1 and (re.fullmatch(r'\d+', val_col_1) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', cells[1] if len(cells)>1 else "")):
+            is_anchor = True
+
+        has_useful_data = bool(re.search(r'[a-zA-Zа-яА-Я0-9]', line))
+
+        if is_anchor:
+            if current_row_cells:
+                valid_rows.append(current_row_cells)
+            current_row_cells = cells
+        else:
+            # Склеиваем "хвост" с предыдущей позицией
+            if current_row_cells and has_useful_data:
+                for idx, cell in enumerate(cells):
+                    if cell:
+                        if idx < len(current_row_cells):
+                            current_row_cells[idx] = f"{current_row_cells[idx]} {cell}".strip()
+                        else:
+                            current_row_cells.append(cell)
+            elif not current_row_cells and has_useful_data:
+                current_row_cells = cells
+
+    if current_row_cells:
+        valid_rows.append(current_row_cells)
+
+    # 3. Сборка чистого Markdown
+    col_count = len(header.split('|'))
+    separator = "|" + "|".join(["---"] * (col_count - 2)) + "|"
+    
+    result_lines = [header, separator]
+    for row in valid_rows:
+        result_lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(result_lines)
 
 def validate_math(items: list) -> list:
     """
@@ -95,8 +133,8 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     markdown_payload = extracted_text
     
     if p_method == "excel_ai":
-        # Apply Excel/CSV Markdown Slicer
-        markdown_payload = slice_markdown_table(extracted_text)
+        # Apply Excel/CSV Markdown Squeezer
+        markdown_payload = clean_and_group_markdown_table(extracted_text)
         
     prompt_template = load_prompt("invoice_items")
     if not prompt_template:
