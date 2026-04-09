@@ -1,4 +1,4 @@
-import { Loader2, Download, Sparkles } from "lucide-react";
+import { Loader2, Download, Sparkles, ChevronDown } from "lucide-react";
 import { useData } from '../context/DataContext';
 import {
   Accordion,
@@ -11,6 +11,7 @@ import { Badge } from "./ui/badge";
 import { FileItem } from '../types';
 import { EditableField } from './EditableField';
 import { exportSupplierToExcel } from '../utils/exportUtils';
+import { formatOrgName, formatItemCount } from '../utils/formatters';
 
 export const InvoicesInfoList: React.FC = () => {
   const { uploadStatuses, verifyField, updateSupplierField, invoiceRows, reprocessAi } = useData();
@@ -48,10 +49,7 @@ export const InvoicesInfoList: React.FC = () => {
   return (
     <div className="flex flex-col gap-2 w-full">
       <div className="text-[10px] items-center font-bold text-slate-400 uppercase tracking-widest pl-1 mb-1">
-        Поставщиков: {invoiceFiles.filter(f => {
-          const d = (f.supplierData as any)?.document || f.supplierData || {};
-          return !!d.inn?.value;
-        }).length}
+        Поставщиков: {invoiceFiles.length}
       </div>
         <Accordion type="multiple" className="w-full space-y-2 px-1">
           {invoiceFiles.map((file) => {
@@ -74,6 +72,25 @@ export const InvoicesInfoList: React.FC = () => {
 
             const fileItems = invoiceRows.filter(r => r.fileId === file.id);
             const itemCount = fileItems.length;
+            
+            const { form, name } = formatOrgName(orgName);
+            const itemCountStr = formatItemCount(itemCount);
+            const docType = data.document_type?.value;
+            const isKp = docType === 'Коммерческое предложение';
+
+            // Умный цвет статуса
+            let statusColor = 'bg-gray-300';
+            const supplierValues = Object.values(data);
+            const hasLowConfidence = supplierValues.some(v => v && typeof v === 'object' && 'confidence' in v && (v as any).confidence < 0.8);
+            const isCriticalMissing = !orgName || orgName === '---' || (!isKp && (!data.inn?.value || data.inn?.value === '---'));
+
+            if (isCriticalMissing) {
+                statusColor = 'bg-red-500 shadow-red-500/50';
+            } else if (hasLowConfidence) {
+                statusColor = 'bg-yellow-500 shadow-yellow-500/50';
+            } else {
+                statusColor = 'bg-green-500 shadow-green-500/50';
+            }
 
             return (
               <AccordionItem 
@@ -81,30 +98,51 @@ export const InvoicesInfoList: React.FC = () => {
                 key={file.id} 
                 className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm"
               >
-                <AccordionTrigger className="hover:no-underline px-3 py-3 hover:bg-slate-50 transition-colors">
-                  <div className="flex items-center gap-2.5 w-full pr-2">
-                    <div className="mr-1 flex-shrink-0">
-                      {(!data || isProcessing) ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
-                      ) : (
-                        <div className={`w-3 h-3 rounded-full ${overallStatus} shadow-sm`} />
-                      )}
-                    </div>
-                    <div className="flex flex-col items-start min-w-0 flex-1 gap-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13px] font-bold text-slate-800 whitespace-normal text-left">
-                          {orgName}
-                        </span>
-                        {data.document_type?.value && data.document_type.value !== "---" && (
-                          <Badge variant="outline" className="text-[10px] h-5 py-0 px-1.5 border-indigo-200 text-indigo-600 bg-indigo-50">
-                            {data.document_type.value}
-                          </Badge>
-                        )}
+                <AccordionTrigger className="group hover:no-underline px-4 py-3 hover:bg-slate-50 transition-colors [&>svg]:hidden">
+                  <div className="grid grid-cols-[48px_1fr_24px] gap-2.5 w-full text-left items-start">
+                      
+                      {/* КОЛОНКА 1: Счетчики и Тип документа (Минимализм без плашек) */}
+                      <div className="flex flex-col items-start pt-0.5">
+                          <span 
+                              className="text-[11px] font-bold text-slate-400 leading-tight mb-1" 
+                              title={`${itemCount} позиций`}
+                          >
+                              {itemCountStr}
+                          </span>
+                          <span className={`text-[9px] font-bold uppercase tracking-wider leading-tight ${isKp ? 'text-orange-500' : 'text-blue-500'}`}>
+                              {isKp ? 'КП' : 'СЧЕТ'}
+                          </span>
                       </div>
-                    </div>
-                    <div className="flex-shrink-0 text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                      {itemCount} поз.
-                    </div>
+
+                      {/* КОЛОНКА 2: Название организации + Контекстный индикатор */}
+                      <div className="flex flex-col min-w-0" title={orgName}>
+                          {isProcessing ? (
+                            <div className="flex items-center gap-2 pt-1">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                                <span className="text-[13px] font-bold text-slate-400">Обработка...</span>
+                            </div>
+                          ) : (
+                            <>
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
+                                    {form && (
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none">
+                                            {form}
+                                        </span>
+                                    )}
+                                </div>
+                                <span className="text-[13px] font-bold text-slate-800 leading-snug line-clamp-3">
+                                    {name}
+                                </span>
+                            </>
+                          )}
+                      </div>
+
+                      {/* КОЛОНКА 3: Только стрелка */}
+                      <div className="flex flex-col items-end pt-1">
+                          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                      </div>
+
                   </div>
                 </AccordionTrigger>
                 
