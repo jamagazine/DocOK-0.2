@@ -1,4 +1,4 @@
-import { Loader2, Download, Sparkles, ChevronDown } from "lucide-react";
+import { Loader2, Download, ChevronDown } from "lucide-react";
 import { useData } from '../context/DataContext';
 import {
   Accordion,
@@ -7,14 +7,13 @@ import {
   AccordionTrigger,
 } from './ui/accordion';
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { FileItem } from '../types';
 import { EditableField } from './EditableField';
 import { exportSupplierToExcel } from '../utils/exportUtils';
 import { formatOrgName, formatItemCount } from '../utils/formatters';
 
 export const InvoicesInfoList: React.FC = () => {
-  const { uploadStatuses, verifyField, updateSupplierField, invoiceRows, reprocessAi } = useData();
+  const { uploadStatuses, verifyField, updateSupplierField, invoiceRows } = useData();
 
   const invoiceFiles = Object.entries(uploadStatuses)
     .filter(([_, status]) => status.type === 'invoice')
@@ -37,10 +36,7 @@ export const InvoicesInfoList: React.FC = () => {
     
     if (validFields.length === 0) return "bg-gray-300"; // Нет данных вообще (серая точка ожидания)
     
-    const hasEmpty = validFields.some(f => !f.value || f.value === "---");
-    if (hasEmpty) return "bg-red-500"; // Есть пустые обязательные поля
-    
-    const hasUnverified = validFields.some(f => (f.confidence ?? 1.0) < 0.95 && f.isVerified === false);
+    const hasUnverified = validFields.some(f => (f.confidence ?? 1.0) < 0.9 && f.isVerified === false);
     if (hasUnverified) return "bg-yellow-500"; // Есть неподтвержденные сомнительные поля
     
     return "bg-green-500"; // Все поля отличные или подтверждены
@@ -65,11 +61,6 @@ export const InvoicesInfoList: React.FC = () => {
             const legalStatus = getGroupStatusColor(legalFields);
             const paymentStatus = getGroupStatusColor(paymentFields);
 
-            const overallStatus = [legalStatus, paymentStatus].includes("bg-red-500") ? "bg-red-500" 
-                                : [legalStatus, paymentStatus].includes("bg-yellow-500") ? "bg-yellow-500" 
-                                : [legalStatus, paymentStatus].includes("bg-gray-300") ? "bg-gray-300"
-                                : "bg-green-500";
-
             const fileItems = invoiceRows.filter(r => r.fileId === file.id);
             const itemCount = fileItems.length;
             
@@ -80,8 +71,12 @@ export const InvoicesInfoList: React.FC = () => {
 
             // Умный цвет статуса
             let statusColor = 'bg-gray-300';
-            const supplierValues = Object.values(data);
-            const hasLowConfidence = supplierValues.some(v => v && typeof v === 'object' && 'confidence' in v && (v as any).confidence < 0.8);
+            const hasLowConfidence = Object.entries(data).some(([key, field]) => {
+                if (!field || typeof field !== 'object' || !('confidence' in (field as any))) return false;
+                const fieldData = field as any;
+                const isVerified = !!file.verifiedFields?.[key];
+                return (fieldData.confidence ?? 1.0) < 0.95 && !isVerified;
+            });
             const isCriticalMissing = !orgName || orgName === '---' || (!isKp && (!data.inn?.value || data.inn?.value === '---'));
 
             if (isCriticalMissing) {
@@ -99,10 +94,10 @@ export const InvoicesInfoList: React.FC = () => {
                 className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm"
               >
                 <AccordionTrigger className="group hover:no-underline px-4 py-3 hover:bg-slate-50 transition-colors [&>svg]:hidden">
-                  <div className="grid grid-cols-[48px_1fr_24px] gap-2.5 w-full text-left items-start">
+                  <div className="grid grid-cols-[48px_1fr_24px] gap-2.5 w-full text-left items-center">
                       
                       {/* КОЛОНКА 1: Счетчики и Тип документа (Минимализм без плашек) */}
-                      <div className="flex flex-col items-start pt-0.5">
+                      <div className="flex flex-col items-start gap-1">
                           <span 
                               className="text-[11px] font-bold text-slate-400 leading-tight mb-1" 
                               title={`${itemCount} позиций`}
@@ -131,7 +126,7 @@ export const InvoicesInfoList: React.FC = () => {
                                         </span>
                                     )}
                                 </div>
-                                <span className="text-[13px] font-bold text-slate-800 leading-snug line-clamp-3">
+                                <span className="text-[13px] font-bold text-slate-800 leading-snug line-clamp-2 break-all sm:break-normal overflow-hidden text-ellipsis">
                                     {name}
                                 </span>
                             </>
@@ -139,7 +134,7 @@ export const InvoicesInfoList: React.FC = () => {
                       </div>
 
                       {/* КОЛОНКА 3: Только стрелка */}
-                      <div className="flex flex-col items-end pt-1">
+                      <div className="flex flex-col items-end">
                           <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 group-data-[state=open]:rotate-180" />
                       </div>
 

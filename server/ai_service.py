@@ -532,8 +532,11 @@ def safe_parse_llm_json(response_text: str) -> dict:
         print(f"LLM JSON Decode Error: {e}")
         print(f"Raw LLM response: {response_text}")
         return {
-            "organization_name": None, "inn": None, "kpp": None,
-            "legal_address": None, "postal_address": None
+            key: {"value": "---", "confidence": 0.0, "isVerified": False}
+            for key in [
+                "organization_name", "inn", "kpp", "legal_address", "postal_address",
+                "bank_name", "bank_bik", "bank_account", "corr_account", "phone", "contact_person", "document_type"
+            ]
         }
 
 async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dict:

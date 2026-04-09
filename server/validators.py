@@ -34,6 +34,7 @@ def validate_bank_account(account: str, bic: str, is_corr: bool = False) -> bool
 
 def validate_inn(value: str, document_type: str = "Счет на оплату") -> dict:
     """Проверка ИНН по контрольным числам с прощением для КП."""
+    if value is None: value = "---"
     is_empty = value in ["---", None, "", "null"]
     is_kp = "коммерческое" in str(document_type).lower()
 
@@ -66,6 +67,7 @@ def validate_inn(value: str, document_type: str = "Счет на оплату") 
 
 def validate_kpp(value: str, inn: str = "", document_type: str = "Счет на оплату") -> dict:
     """Проверка формата КПП (9 цифр) с прощением для КП."""
+    if value is None: value = "---"
     is_empty = value in ["---", None, "", "null"]
     is_kp = "коммерческое" in str(document_type).lower()
 
@@ -89,6 +91,7 @@ def validate_bank_requisites(value: str, field_name: str, document_type: str = "
     """
     Универсальная проверка для БИК и Счетов, которая прощает пустоту для КП.
     """
+    if value is None: value = "---"
     is_empty = value in ["---", None, "", "null"]
     is_kp = "коммерческое" in str(document_type).lower()
 

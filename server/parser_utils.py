@@ -654,14 +654,6 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
     final_cipher = cipher or "В штампе не найден"
     final_dest = " — ".join(destination_parts) if destination_parts else "В штампе не найден"
     debug_grid = "\n".join(debug_lines)
-    
-    # Final debug report for user
-    extraction_debug = f"\n\n=== NOTES EXTRACTION DEBUG ===\n"
-    extraction_debug += f"Target Sheet: {target_sheet.name if 'target_sheet' in locals() and target_sheet else 'None'}\n"
-    extraction_debug += f"Anchor Row: {anchor_idx if 'anchor_idx' in locals() else 'None'}\n"
-    extraction_debug += f"Raw fragments found: {notes_parts}\n"
-    extraction_debug += f"Final string: {notes_str}\n"
-    debug_grid += extraction_debug
 
     summary_md = f"### Общая сводка\n\n" \
                  f"**Номер спецификации:** {final_cipher}\n\n" \
@@ -1289,6 +1281,9 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
                     "w": nw,
                     "h": nh
                 })
+            pages_data.append(page_words)
+            
+    return pages_data
 def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     """
     Универсальный препроцессор. Читает Excel/CSV строго как текст, 
@@ -1351,8 +1346,9 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     if table_start_idx < len(df) - 10:
         combined_markdown = f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{markdown_footer}"
     else:
-        # Если файл совсем маленький (меньше 60-70 строк), просто отдаем как есть
-        combined_markdown = df.to_markdown(index=False)
+        # Если файл совсем маленький (меньше 60-70 строк) или таблица не найдена, 
+        # просто отдаем первые 70 строк (защита от взрыва токенов для больших файлов без таблиц)
+        combined_markdown = df.head(70).to_markdown(index=False)
 
     return combined_markdown
 

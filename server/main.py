@@ -461,7 +461,7 @@ async def process_invoice(
                     
                     # --- ПУТЬ 1: ЦИФРОВОЙ PDF (ЧЕРЕЗ ЗОНАЛЬНЫЙ АДАПТЕР) ---
                     if len(first_page.chars) > 50 and not is_force_ocr:
-                        print(f"⚡ [DIGITAL ZONAL] Обработка цифрового PDF через единый пайплайн: {original_name}")
+
                         from parser_utils import extract_digital_words_as_ocr
                         
                         # Возвращает List[List[dict]] (слова по страницам)
@@ -489,9 +489,8 @@ async def process_invoice(
 
                     # --- ПУТЬ 2: СКАН / ПРИНУДИТЕЛЬНЫЙ OCR ---
                     else:
-                        print(f"🔍 [OCR] Обработка как скан: {original_name}")
                         if is_force_ocr:
-                            print(f"🔍 [HYBRID] Принудительный OCR запрошен для: {original_name}.")
+                            pass
                             
                         all_ocr_text = ""
                         raw_ocr_data = [] 
