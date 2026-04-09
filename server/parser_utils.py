@@ -1290,9 +1290,144 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
                     "w": nw,
                     "h": nh
                 })
-            pages_data.append(page_words)
-            
-    return pages_data
+def extract_requisites_from_spreadsheet(file_path: str) -> dict:
+    """
+    Rule-based extraction for Excel/CSV files.
+    Extracts requisites (INN, BIK, accounts, Supplier/Customer) using RegEx and keywords.
+    Bypasses LLM/OCR processing.
+    """
+    import pandas as pd
+    import re
+    import os
+
+    # Default structure with "---" (wrapped for frontend compatibility)
+    def wrap(val, conf=1.0):
+        if not val or str(val).strip().lower() in ["nan", "none", "", "---"]:
+            return {"value": "---", "confidence": 1.0, "isVerified": False}
+        return {"value": str(val).strip(), "confidence": conf, "isVerified": False}
+
+    doc = {
+        "organization_name": wrap(None),
+        "inn": wrap(None),
+        "kpp": wrap(None),
+        "legal_address": wrap(None),
+        "postal_address": wrap(None),
+        "bank_name": wrap(None),
+        "bank_bik": wrap(None),
+        "bank_account": wrap(None),
+        "corr_account": wrap(None),
+        "phone": wrap(None),
+        "invoice_number": "---",
+        "invoice_date": "---",
+        "total_amount": "---",
+        "currency": "RUB"
+    }
+
+    all_text = ""
+    try:
+        # Load all sheets without headers to ensure we scan every single row
+        if file_path.lower().endswith(".csv"):
+            # For CSV, raw text is often more reliable for rule-based parsing
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    all_text = f.read()
+                sheets = {}
+            except:
+                sheets = {"csv": pd.read_csv(file_path, dtype=str, header=None, on_bad_lines='skip')}
+        elif file_path.lower().endswith(".xls"):
+            sheets = pd.read_excel(file_path, sheet_name=None, engine='xlrd', dtype=str, header=None)
+        else:
+            sheets = pd.read_excel(file_path, sheet_name=None, engine='openpyxl', dtype=str, header=None)
+    except Exception as e:
+        print(f"Excel Rule Parser (Pandas) Error: {e}. Falling back to raw text read.")
+        # Fallback: Read as raw text if it's a CSV or text-like file
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                all_text = f.read()
+            sheets = {} # Skip dataframe processing
+        except Exception as e2:
+            print(f"Raw read fallback failed: {e2}")
+            return doc
+
+    if not all_text:
+        for name, df in sheets.items():
+            df = df.fillna("")
+            for idx, row in df.iterrows():
+                line_str = " ".join([str(v) for v in row.values if str(v).strip()]).strip()
+                if not line_str: continue
+                all_text += line_str + "\n"
+
+    # 1. CONTEXTUAL SEARCH (Line by line)
+    for line_str in all_text.split("\n"):
+        line_str = line_str.strip()
+        if not line_str: continue
+        low_line = line_str.lower()
+        if any(k in low_line for k in ["поставщик", "продавец", "исполнитель"]):
+            m_ctx = re.search(r'(?:поставщик|продавец|исполнитель)\s*[:\.]?\s*(.*)', line_str, re.IGNORECASE)
+            if m_ctx:
+                content = m_ctx.group(1).strip()
+                if content:
+                    # Name: quotes or first comma
+                    q_match = re.search(r'["«\'](.*?)["»\']', content)
+                    if q_match:
+                        doc["organization_name"] = wrap(q_match.group(1))
+                    else:
+                        doc["organization_name"] = wrap(content.split(',')[0].strip())
+                    
+                    # Address: zip and city
+                    zip_m = re.search(r'\d{6}', content)
+                    city_m = re.search(r'(?:г\.|город|пос\.|с\.|д\.)\s*([А-Яа-я\-]+)', content, re.IGNORECASE)
+                    addr_parts = []
+                    if zip_m: addr_parts.append(zip_m.group(0))
+                    if city_m: addr_parts.append(city_m.group(0))
+                    if addr_parts:
+                        addr_full = ", ".join(addr_parts)
+                        doc["legal_address"] = wrap(addr_full)
+                        doc["postal_address"] = wrap(addr_full)
+                    break
+
+    # GLOBAL REGEX SEARCHES
+    # INN: 10 or 12 digits near "ИНН"
+    inn_match = re.search(r'ИНН\s*[:\.]?\s*(\d{10,12})', all_text, re.IGNORECASE)
+    if inn_match: doc["inn"] = wrap(inn_match.group(1))
+
+    # KPP: 9 digits near "КПП"
+    kpp_match = re.search(r'КПП\s*[:\.]?\s*(\d{9})', all_text, re.IGNORECASE)
+    if kpp_match: doc["kpp"] = wrap(kpp_match.group(1))
+
+    # BIK: 9 digits near "БИК"
+    bik_match = re.search(r'БИК\s*[:\.]?\s*(\d{9})', all_text, re.IGNORECASE)
+    if bik_match: doc["bank_bik"] = wrap(bik_match.group(1))
+
+    # Bank Account (407...)
+    acc_match = re.search(r'\b(407\d{17})\b', all_text)
+    if acc_match: doc["bank_account"] = wrap(acc_match.group(1))
+
+    # Corr Account (301...)
+    corr_match = re.search(r'\b(301\d{17})\b', all_text)
+    if corr_match: doc["corr_account"] = wrap(corr_match.group(1))
+
+    # Invoice Number & Date
+    # Pattern: Счет № 123 от 10.04.2024
+    num_m = re.search(r'(?:Счет|Счёт|№|Invoice|Документ).*?(?:№|N|#)\s*(\d+)', all_text, re.IGNORECASE)
+    if num_m: doc["invoice_number"] = num_m.group(1)
+    
+    date_m = re.search(r'(?:от)\s*(\d{2}[\./]\d{2}[\./]\d{2,4})', all_text, re.IGNORECASE)
+    if date_m: doc["invoice_date"] = date_m.group(1)
+
+    # Total Amount
+    # Handle spaces in numbers like "15 000.50"
+    total_match = re.search(r'(?:Итого|Всего|Сумма|К оплате)\s*(?:к оплате)?\s*[:\.]?\s*([\d\s\.,]+)(?:руб|₽|RUB)?', all_text, re.IGNORECASE)
+    if total_match:
+        val = total_match.group(1).strip().replace(" ", "").replace(",", ".")
+        # Some documents have 15.000,50 format (European)
+        if val.count('.') > 1: # Guessing 15.000.50 -> 15000.50
+             val = val.replace(".", "")
+             # If there's a comma at the end now... (re-check original)
+        m_num = re.search(r'\d+(?:\.\d+)?', val)
+        if m_num: doc["total_amount"] = m_num.group(0)
+
+    return doc
 
 
 

@@ -34,7 +34,7 @@ from parser_utils import (
     normalize_for_match, calculate_uncertainty, 
     transliterate, secure_filename, sanitize_dataframe, 
     convert_df_to_items, extract_text_from_pdf, extract_specification_summary,
-    excel_to_grid_markdown, clean_and_build_markdown
+    excel_to_grid_markdown, clean_and_build_markdown, extract_requisites_from_spreadsheet
 )
 from ai_service import (
     ocr_yandex, gpt_yandex, get_token_count, 
@@ -522,10 +522,12 @@ async def process_invoice(
                 with open(raw_log_p, "w", encoding="utf-8") as f:
                     json.dump(raw_ocr_data, f, ensure_ascii=False, indent=2)
             elif filename.endswith((".xlsx", ".xls", ".csv")):
-                from parser_utils import excel_to_grid_markdown
+                from parser_utils import excel_to_grid_markdown, extract_requisites_from_spreadsheet
                 extracted_text = excel_to_grid_markdown(temp_path)
                 full_header_text = ""
-                p_method = "excel_ai"
+                # RULE-BASED EXTRACTION for Excel/CSV
+                main_doc = extract_requisites_from_spreadsheet(temp_path)
+                p_method = "excel_rules"
             else: # Images
                 from parser_utils import ocr_to_grid_markdown
                 p_method = "ocr_table"
@@ -550,12 +552,13 @@ async def process_invoice(
             metadata_source = (full_header_text + "\n" + (extracted_text[:1000] if extracted_text else "")).strip()
             if not metadata_source: metadata_source = "Empty Document"
 
-            # SYMBOLIC SEMANTIC EXTRACTION (Sprint 2)
-            yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
-            
-            # Pass full OCR data or local text to the semantic extractor
-            ai_data_to_pass = header_ai_data if p_method == "pdf_text" else raw_ocr_data
-            main_doc = await process_header_with_llm(ai_data_to_pass, api_key, folder_id)
+            if p_method == "excel_rules":
+                yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Правила: Реквизиты извлечены из таблицы...'}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'status': 'chunk', 'index': 1, 'total': 1, 'msg': 'Разбор реквизитов (Semantic Parsing)...'}, ensure_ascii=False)}\n\n"
+                # Pass full OCR data or local text to the semantic extractor
+                ai_data_to_pass = header_ai_data if p_method == "pdf_text" else raw_ocr_data
+                main_doc = await process_header_with_llm(ai_data_to_pass, api_key, folder_id)
 
             # --- ИНЪЕКЦИЯ МЕТОДА ДЛЯ ФРОНТЕНДА ---
             if isinstance(main_doc, dict):
