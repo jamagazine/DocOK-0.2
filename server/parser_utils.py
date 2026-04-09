@@ -700,103 +700,34 @@ def pdf_to_grid_markdown(file_path: str) -> str:
 
 def excel_to_grid_markdown(file_path: str) -> str:
     """
-    Converts an Excel invoice to Markdown using the Full Grid Method.
-    Exports the entire sheet from row 0 up to max_row, with a fixed column count.
-    Preserves merged cells and empty rows for a 1:1 visual representation.
+    Converts an Excel invoice to Markdown using Pandas.
+    Cleans up empty rows/cols and removes 'Unnamed' headers to avoid token explosion.
     """
-    filename = file_path.lower()
-    rows_data = []
-    max_w = 0
+    import pandas as pd
+    try:
+        if file_path.lower().endswith('.csv'):
+            df = pd.read_csv(file_path, dtype=str, sep=None, engine='python', on_bad_lines='skip')
+        else:
+            df = pd.read_excel(file_path, dtype=str)
+    except Exception as e:
+        return f"Error reading spreadsheet: {e}"
 
-    # 1. Load Workbook
-    if filename.endswith(".xls"):
-        import xlrd
-        try:
-            wb = xlrd.open_workbook(file_path, formatting_info=True)
-            sheet = None
-            for sn in wb.sheet_names():
-                if any(k in sn.lower() for k in ["счет", "invoice", "инвойс", "актуальн"]):
-                    sheet = wb.sheet_by_name(sn)
-                    break
-            if not sheet: sheet = wb.sheet_by_index(0)
-            
-            merged = sheet.merged_cells
-            max_w = sheet.ncols
+    # Drop fully empty cols and rows
+    df = df.dropna(axis=1, how='all')
+    df = df.dropna(axis=0, how='all')
+    df = df.fillna('')
+    
+    # Rename 'Unnamed' columns to empty string to avoid MD pollution
+    df.columns = ["" if "Unnamed" in str(c) else c for c in df.columns]
 
-            def is_merged_child(r, c):
-                for rlo, rhi, clo, chi in merged:
-                    if rlo <= r < rhi and clo <= c < chi:
-                        if r == rlo and c == clo: return False
-                        return True
-                return False
+    def clean_val(x):
+        if not isinstance(x, str): return str(x)
+        return x.replace('""', '"').replace('.0', '').replace('\n', ' ').replace('|', '\\|').strip()
 
-            for r in range(sheet.nrows):
-                row = []
-                for c in range(sheet.ncols):
-                    if is_merged_child(r, c):
-                        row.append("")
-                    else:
-                        val = sheet.cell_value(r, c)
-                        row.append(str(val).strip() if val is not None else "")
-                rows_data.append(row)
-        except Exception as e:
-            return f"Error reading .xls: {e}"
-            
-    else: # .xlsx
-        import openpyxl
-        try:
-            wb = openpyxl.load_workbook(file_path, data_only=True)
-            sheet = None
-            for sn in wb.sheetnames:
-                if any(k in sn.lower() for k in ["счет", "invoice", "инвойс", "актуальн"]):
-                    sheet = wb[sn]
-                    break
-            if not sheet: sheet = wb.active
-            
-            max_w = sheet.max_column
-            
-            merged_map = {}
-            for m_range in sheet.merged_cells.ranges:
-                for r in range(m_range.min_row, m_range.max_row + 1):
-                    for c in range(m_range.min_col, m_range.max_col + 1):
-                        if r == m_range.min_row and c == m_range.min_col:
-                            merged_map[(r, c)] = False
-                        else:
-                            merged_map[(r, c)] = True
-
-            for r in range(1, sheet.max_row + 1):
-                row = []
-                for c in range(1, sheet.max_column + 1):
-                    if merged_map.get((r, c), False):
-                        row.append("")
-                    else:
-                        val = sheet.cell(row=r, column=c).value
-                        if val is None: val = ""
-                        row.append(str(val).strip())
-                rows_data.append(row)
-        except Exception as e:
-            return f"Error reading .xlsx: {e}"
-
-    if not rows_data:
-        return ""
-
-
-    last_real_row = 0
-    for idx, r in enumerate(rows_data):
-        if any(str(c).strip() for c in r):
-            last_real_row = idx + 1
-    rows_data = rows_data[:last_real_row]
-    if not rows_data: return ""
-
-    md_lines = []
-    header_row = [f"Col {i+1}" for i in range(max_w)]
-    md_lines.append("| " + " | ".join(header_row) + " |")
-    md_lines.append("| " + " | ".join(["---"] * max_w) + " |")
-    for r in rows_data:
-        full_row = r + [""] * (max_w - len(r))
-        row_str = [str(c).replace("|", "\\|").replace("\n", " ") for c in full_row]
-        md_lines.append("| " + " | ".join(row_str) + " |")
-    return "\n".join(md_lines)
+    for col in df.columns:
+        df[col] = df[col].apply(clean_val)
+        
+    return df.to_markdown(index=False)
 
 
 def detect_pdf_type(file_path: str) -> str:
@@ -1328,13 +1259,32 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
             table_start_idx = idx
             break
             
+    # Поиск конца таблицы для корректного отсечения подвала
+    table_end_idx = table_start_idx
+    stop_footer_words = {'итого', 'всего к оплате', 'всего наименований', 'сумма ндс', 'в т.ч. ндс', 'итого с ндс'}
+    
+    if table_start_idx < len(df):
+        for idx in range(table_start_idx + 1, len(df)):
+            row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+            if any(stop in row_text for stop in stop_footer_words):
+                table_end_idx = idx
+                break
+        if table_end_idx == table_start_idx:
+            table_end_idx = len(df) - 1
+            
     # 4. Отрезаем всё, что ниже шапки (экономия токенов)
     header_df = df.iloc[:table_start_idx]
     header_df = header_df.head(60) # Защита от бесконечных шапок
+
+    # Убираем колонки Unnamed из шапки (по ТЗ: переименовать в пустые строки)
+    header_df.columns = ["" if "Unnamed" in str(c) else c for c in header_df.columns]
     
-    # 5. Захватываем "подвал" документа (последние 10 строк) для поиска контактов
-    footer_df = df.tail(10)
-    
+    # 5. Захватываем "подвал" документа ТОЛЬКО если есть данные после конца таблицы
+    footer_df = df.iloc[table_end_idx:]
+    if not footer_df.empty:
+        footer_df = footer_df.dropna(axis=1, how='all').dropna(axis=0, how='all')
+        footer_df.columns = ["" if "Unnamed" in str(c) else c for c in footer_df.columns]
+        
     # 6. Конвертируем в Markdown
     markdown_header = header_df.to_markdown(index=False) if not header_df.empty else ""
     markdown_footer = footer_df.to_markdown(index=False) if not footer_df.empty else ""
@@ -1342,13 +1292,11 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     if not markdown_header:
         return ""
         
-    # Склеиваем сэндвич, если подвал не пересекается с шапкой (таблица была больше 0 строк)
-    if table_start_idx < len(df) - 10:
+    # Склеиваем сэндвич
+    if not footer_df.empty and table_end_idx < len(df):
         combined_markdown = f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{markdown_footer}"
     else:
-        # Если файл совсем маленький (меньше 60-70 строк) или таблица не найдена, 
-        # просто отдаем первые 70 строк (защита от взрыва токенов для больших файлов без таблиц)
-        combined_markdown = df.head(70).to_markdown(index=False)
+        combined_markdown = markdown_header
 
     return combined_markdown
 

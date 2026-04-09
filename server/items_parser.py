@@ -172,6 +172,14 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     if p_method == "excel_ai":
         # Apply Excel/CSV Markdown Squeezer
         markdown_payload = clean_and_group_markdown_table(extracted_text)
+    elif p_method in ["ocr_table", "pdf_text"]:
+        # OCR PDF filter: keep only lines containing digits (price/quantity candidates)
+        lines = extracted_text.split('\n')
+        filtered = []
+        for line in lines:
+            if re.search(r'\d', line) or '---' in line or not line.strip():
+                filtered.append(line)
+        markdown_payload = '\n'.join(filtered)
         
     prompt_template = load_prompt("invoice_items")
     if not prompt_template:

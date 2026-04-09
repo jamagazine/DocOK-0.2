@@ -545,7 +545,14 @@ async def process_invoice(
 
             # Save sterile MD files locally for reference (Full Debug View)
             debug_header = f"DEBUG_INFO: Size={p_width}x{p_height}, Method={p_method}\n"
-            full_md_debug = (debug_header + full_header_text + "\n\n" + extracted_text).strip()
+            
+            # Для Excel файлов full_header_text уже содержит в себе маркер скрытой таблицы.
+            # Мы можем просто вставить таблицу товаров на место маркера для красивого дебаг-файла.
+            if p_method in ["excel_ai", "excel_rules"] and "... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ..." in full_header_text:
+                full_md_debug = full_header_text.replace("... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...", extracted_text)
+                full_md_debug = (debug_header + full_md_debug).strip()
+            else:
+                full_md_debug = (debug_header + full_header_text + "\n\n" + extracted_text).strip()
             
             grid_p = get_file_path(projectId, disk_name, "_invoice.md")
             with open(grid_p, "w", encoding="utf-8") as f: f.write(full_md_debug)
