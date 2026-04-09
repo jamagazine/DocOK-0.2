@@ -435,7 +435,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
 
     # 3. Use unified large chunk for invoices (avoid fragmentation)
     CHUNK_SIZE = 9999 
-    from pricing import UsageStats
+    from parser_utils import clean_and_build_markdown
     total_stats = UsageStats()
     all_items = []
     all_fixes = []
@@ -632,7 +632,6 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         markdown_payload = clean_and_build_markdown(ocr_json)
     
     if not markdown_payload or markdown_payload == "NO_TEXT_FOUND":
-        from pricing import UsageStats
         return safe_parse_llm_json(""), UsageStats()
 
     # 2. Читаем промпт
@@ -663,7 +662,6 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         return safe_parse_llm_json(""), stats
     except Exception as e:
         logger.error(f"Error calling LLM for prompt: {e}")
-        from pricing import UsageStats
         return safe_parse_llm_json(""), UsageStats()
     
     # 4. Безопасно парсим

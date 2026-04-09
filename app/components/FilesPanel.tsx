@@ -228,32 +228,33 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                           </span>
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent side="top" className="p-3 text-sm max-w-[300px] shadow-lg border-slate-200">
-                        <div className="font-semibold mb-2 pb-1 border-b text-slate-800">Детализация стоимости:</div>
-                        {data.usage?.cost_breakdown ? (
-                          Object.entries(data.usage.cost_breakdown).map(([key, info]: [string, any]) => {
-                            // Маппинг технических ключей в человеческие
-                            const getHumanLabel = (k: string) => {
-                              if (k.includes('Header')) return 'Анализ реквизитов (Lite)';
-                              if (k.includes('Items_Chunk')) return `Парсинг спецификации ${k.split('_').pop()} (Pro)`;
-                              if (k.includes('OCR')) return 'Распознавание скана';
-                              return k.replace('_', ' ');
-                            };
-
-                            return (
-                              <div key={key} className="mb-2 last:mb-0">
-                                <div className="flex justify-between gap-6 font-medium text-slate-700">
-                                  <span>{getHumanLabel(key)}:</span>
-                                  <span>{info.cost?.toFixed(2)} ₽</span>
+                      <TooltipContent side="top" sideOffset={6} className="py-2 px-3 text-xs bg-white border border-slate-100 rounded-md shadow-sm">
+                        {data.usage?.cost_breakdown ? (() => {
+                          // Агрегируем: все Header → "Реквизиты", все Items_Chunk_* → "Позиции"
+                          let headerCost = 0;
+                          let itemsCost = 0;
+                          Object.entries(data.usage.cost_breakdown).forEach(([key, info]: [string, any]) => {
+                            if (key.includes('Header')) headerCost += info.cost || 0;
+                            else if (key.includes('Items') || key.includes('Chunk')) itemsCost += info.cost || 0;
+                          });
+                          const rows: { label: string; cost: number }[] = [];
+                          if (headerCost > 0) rows.push({ label: 'Реквизиты', cost: headerCost });
+                          if (itemsCost > 0) rows.push({ label: 'Позиции', cost: itemsCost });
+                          if (rows.length === 0) return <span className="text-slate-400">Нет данных</span>;
+                          return (
+                            <div className="flex flex-col gap-1 min-w-[120px]">
+                              {rows.map(row => (
+                                <div key={row.label} className="flex justify-between items-center gap-3">
+                                  <span className="text-slate-500 font-normal">{row.label}</span>
+                                  <span className="text-slate-900 font-bold tabular-nums">
+                                    {row.cost.toFixed(2)} <span className="text-[10px] font-normal text-slate-400">₽</span>
+                                  </span>
                                 </div>
-                                <div className="flex justify-between gap-4 text-[10.5px] text-slate-400 pl-1 mt-0.5">
-                                  <span>Вход: {info.input || 0} ток. | Выход: {info.output || 0} ток.</span>
-                                </div>
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="text-muted-foreground">Детализация недоступна</div>
+                              ))}
+                            </div>
+                          );
+                        })() : (
+                          <span className="text-slate-400">Нет данных</span>
                         )}
                       </TooltipContent>
                     </Tooltip>

@@ -633,12 +633,9 @@ async def process_invoice(
             summary_md = generate_invoice_summary(final_struct)
             
             final_struct.update({
-                "cost": accumulator.cost, 
+                "cost": accumulator.total_cost, 
                 "method": p_method, 
-                "usage": {
-                    "tokens": accumulator.input_tokens + accumulator.output_tokens,
-                    "cost_breakdown": accumulator.details
-                }, 
+                "usage": accumulator.to_dict(), 
                 "summary_md": summary_md
             })
             
@@ -649,12 +646,9 @@ async def process_invoice(
                 # Гарантируем наличие метода для фронтенда (даже если данные пусты)
                 supp_safe = main_doc if isinstance(main_doc, dict) else {}
                 manifest[disk_name].update({
-                    "cost": accumulator.cost, 
-                    "tokens": accumulator.input_tokens + accumulator.output_tokens,
-                    "usage": {
-                        "tokens": accumulator.input_tokens + accumulator.output_tokens,
-                        "cost_breakdown": accumulator.details
-                    },
+                    "cost": accumulator.total_cost, 
+                    "tokens": accumulator.total_input + accumulator.total_output,
+                    "usage": accumulator.to_dict(),
                     "status": "READY_MD_OCR", # Унифицировано для Фронтенда
                     "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
@@ -664,7 +658,7 @@ async def process_invoice(
                     }
                 })
                 _save_manifest(manifest, projectId)
-            append_history({"fileName": original_name, "cost": accumulator.cost, "tokens": accumulator.input_tokens + accumulator.output_tokens, "status": "DONE"}, projectId)
+            append_history({"fileName": original_name, "cost": accumulator.total_cost, "tokens": accumulator.total_input + accumulator.total_output, "status": "DONE"}, projectId)
             
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
 
