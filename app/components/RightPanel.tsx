@@ -332,10 +332,9 @@ export function RightPanel({ expanded, onToggle, currentStage, onNextStage, hasN
     >
       <input type="file" multiple className="hidden" ref={fileInputRef} accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg" onChange={handleFileChange} />
 
-      {/* Header - Attic */}
       <div className={cn(
-        "absolute top-0 left-0 right-0 z-30 bg-white p-4 border-b border-slate-200 h-[72px] overflow-hidden",
-        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4"
+        "absolute top-0 left-0 right-0 z-30 bg-white p-4 border-b border-slate-200 h-[72px]",
+        expanded ? "grid grid-cols-4 items-center justify-items-center gap-0" : "flex flex-col items-center gap-4 py-4 h-auto"
       )}>
         {!expanded && (
           <button
