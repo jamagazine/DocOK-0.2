@@ -52,6 +52,23 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     for i in range(header_idx + 2, len(grid)):
         row_str = " ".join(grid[i]).lower()
         if any(stop in row_str for stop in stop_words):
+            # Smart Stop-Valve: проверяем следующие 3 строки на наличие якоря
+            is_subtotal = False
+            # Ищем якорь в № или Артикуле
+            for l_idx in range(i + 1, min(i + 4, len(grid))):
+                lookahead_row = grid[l_idx]
+                if not lookahead_row: continue
+                val_0 = lookahead_row[0].strip() if len(lookahead_row) > 0 else ""
+                val_1 = lookahead_row[1].strip() if len(lookahead_row) > 1 else ""
+                
+                if (val_0 and len(val_0) < 15 and val_0.lower() != 'итого') or \
+                   (val_1 and len(val_1) < 15 and val_1.lower() != 'итого'):
+                    is_subtotal = True
+                    break
+            
+            if is_subtotal:
+                continue # Считаем промежуточным итогом, идем дальше
+                
             footer_idx = i
             break
             

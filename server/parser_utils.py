@@ -17,6 +17,10 @@ def clean_val(x):
     s = str(x).strip()
     if s.lower() in ['nan', 'none', 'null']:
         return ""
+    # Очистка .0 для числовых строк
+    # Применяем только к строкам, которые состоят целиком из цифр (с возможным .0 на конце)
+    s = re.sub(r'^(\d+)\.0$', r'\1', s)
+    
     # Удаляем лишние кавычки из начала и конца, если они есть
     if s.startswith('"') and s.endswith('"'):
         s = s[1:-1]
@@ -1296,62 +1300,90 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
 
 def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
     """
-    Разделяет Excel-документ на три MD-блока: 
-    1. header_md: от начала до заголовка товарной таблицы.
-    2. items_md: строго от заголовка до строки «Итого/Всего» (включая её).
-    3. footer_md: контакты/подписи после строки «Итого», пропуская сами строки сумм.
+    Разделяет Excel-документ на три MD-блока (header_md, items_md, footer_md).
+    Использует Метод Лидера для поиска наиболее подходящего листа.
     """
     try:
         if file_path.lower().endswith('.csv'):
-            df = pd.read_csv(file_path, dtype=str, sep=None, engine='python', on_bad_lines='skip')
+            sheets_dict = {'Sheet1': pd.read_csv(file_path, dtype=str, sep=None, engine='python', on_bad_lines='skip')}
         else:
-            df = pd.read_excel(file_path, header=None, dtype=str)
+            sheets_dict = pd.read_excel(file_path, sheet_name=None, header=None, dtype=str)
     except Exception as e:
         print(f"Error reading spreadsheet: {e}")
         return "", "", ""
 
-    # Bulk cleaning
-    df = df.map(clean_val)
-    
-    # 1. Поиск начала таблицы (строка с заголовками товаров)
-    table_start_idx = len(df)
     target_words = {'кол-во', 'цена', 'количество', 'сумма', 'товар', 'наименование', 'артикул'}
-    for idx, row in df.iterrows():
-        row_text = ' '.join(map(str, row.values)).lower()
-        matches = sum(1 for word in target_words if word in row_text)
-        if matches >= 2:
-            table_start_idx = idx
-            break
-
-    # 2. Поиск конца таблицы (первая строка «Итого» или «Всего» после начала таблицы)
-    table_end_idx = len(df)
     stop_words = {'итого', 'всего к оплате', 'всего наименований', 'сумма ндс', 'в т.ч. ндс', 'итого с ндс', 'всего'}
-    for idx in range(table_start_idx + 1, len(df)):
-        row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
-        if any(stop in row_text for stop in stop_words):
-            table_end_idx = idx
-            break
-
-    # 3. Поиск настоящего подвала (пропуская строки сумм)
-    # Ищем первую строку через 1-2 строки после итогового блока, 
-    # которая не содержит словесный мусор сумм, или просто пропускаем строки с суммами.
-    real_footer_idx = len(df)
     summary_noise_words = {'итого', 'всего', 'ндс', 'сумм', 'рубл', 'копе'}
-    
-    if table_end_idx < len(df):
-        for idx in range(table_end_idx, len(df)):
-            row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
-            if not row_text.strip():
-                continue
-            # Если строка содержит слова-паразиты сумм, мы её пропускаем
-            if any(noise in row_text for noise in summary_noise_words):
-                continue
-            
-            # Нашли первую информативную строку подвала (вероятно, контакты, подписи)
-            real_footer_idx = idx
-            break
 
-    # Срезка блоков
+    candidates = []
+    
+    # Ограничения до 10 листов
+    for sheet_name in list(sheets_dict.keys())[:10]:
+        df = sheets_dict[sheet_name]
+        df = df.map(clean_val)
+        
+        table_start_idx = len(df)
+        # 1. Поиск начала таблицы
+        for idx, row in df.iterrows():
+            row_text = ' '.join(map(str, row.values)).lower()
+            matches = sum(1 for word in target_words if word in row_text)
+            if matches >= 2:
+                table_start_idx = idx
+                break
+
+        # 2. Поиск конца таблицы
+        table_end_idx = len(df)
+        for idx in range(table_start_idx + 1, len(df)):
+            row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+            if any(stop in row_text for stop in stop_words):
+                table_end_idx = idx
+                break
+
+        # Подсчет очков листа
+        rows_count = table_end_idx - table_start_idx
+        if rows_count <= 0:
+            continue
+
+        score = rows_count
+        
+        # Проверяем бонусное слово в шапке
+        header_text_concat = " ".join(" ".join(map(str, row.values)) for idx, row in df.iloc[:table_start_idx].iterrows()).lower()
+        if "спецификация" in header_text_concat:
+            score += 50
+            
+        # 3. Поиск подвала
+        real_footer_idx = len(df)
+        if table_end_idx < len(df):
+            for idx in range(table_end_idx, len(df)):
+                row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+                if not row_text.strip():
+                    continue
+                if any(noise in row_text for noise in summary_noise_words):
+                    continue
+                real_footer_idx = idx
+                break
+                
+        candidates.append({
+            'score': score,
+            'df': df,
+            'start': table_start_idx,
+            'end': table_end_idx,
+            'footer': real_footer_idx,
+            'sheet': sheet_name
+        })
+        
+    if not candidates:
+        return "", "", ""
+        
+    # Выбираем лидера
+    leader = max(candidates, key=lambda x: x['score'])
+    df = leader['df']
+    table_start_idx = leader['start']
+    table_end_idx = leader['end']
+    real_footer_idx = leader['footer']
+
+    # Срезка блоков лидера
     header_df = df.iloc[:table_start_idx].dropna(axis=1, how='all').dropna(axis=0, how='all')
     items_df = df.iloc[table_start_idx:table_end_idx + 1].dropna(axis=1, how='all').dropna(axis=0, how='all')
     footer_df = df.iloc[real_footer_idx:].dropna(axis=1, how='all').dropna(axis=0, how='all')

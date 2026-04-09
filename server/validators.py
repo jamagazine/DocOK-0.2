@@ -3,6 +3,8 @@ import re
 def validate_bik(bik: str) -> bool:
     """Проверка формата БИК (9 цифр, начинается на 04)."""
     bik = re.sub(r'\D', '', str(bik))
+    if 0 < len(bik) < 9:
+        bik = bik.zfill(9)
     return len(bik) == 9 and bik.startswith('04')
 
 def validate_bank_account(account: str, bic: str, is_corr: bool = False) -> bool:
@@ -107,6 +109,11 @@ def validate_bank_requisites(value: str, field_name: str, document_type: str = "
     val_str = str(value)
     
     if field_name == "bank_bik":
+        # БИК: Применяй zfill(9) всегда если он короче 9 цифр
+        cleaned_bik = re.sub(r'\D', '', val_str)
+        if 0 < len(cleaned_bik) < 9:
+            val_str = cleaned_bik.zfill(9)
+            
         if not validate_bik(val_str):
             return {"value": val_str, "confidence": 0.01, "isVerified": False, "note": "Неверный формат БИК (должно быть 9 цифр, начало 04)"}
     elif field_name in ["bank_account", "corr_account"]:
