@@ -140,7 +140,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 )}
                 {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
                   <span className="ml-2 text-[10px] text-slate-400 font-medium">
-                    ~{data?.estimated_cost || 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (прогноз)
+                    до {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (макс. прогноз)
                   </span>
                 ) : null}
               </span>
@@ -180,90 +180,86 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 </>
               )}
 
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
+              <div className="flex flex-wrap items-center gap-1.5 mt-1">
                 <span className={cn(
-                  "px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase",
-                  method === 'AI' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                  "px-1.5 h-4 flex items-center rounded-sm text-[9px] font-bold uppercase tracking-wider",
+                  method === 'AI' ? "bg-purple-50 text-purple-600 border border-purple-100" : "bg-blue-50 text-blue-600 border border-blue-100"
                 )}>
                   {method}
                 </span>
-                <span className="text-xs text-slate-400">•</span>
+                <span className="text-slate-300 text-[10px]">|</span>
                 {isReset ? (
-                  <span className="text-xs text-slate-400 font-medium italic">Данные сброшены</span>
+                  <span className="text-[11px] text-slate-400 font-medium italic leading-none">Данные сброшены</span>
                 ) : (
-                  <span className="text-xs text-slate-500">{data.time}</span>
+                  <span className="text-[11px] text-slate-500 font-medium leading-none">{data.time}</span>
                 )}
                 
-                {method === 'AI' && data.tokens && (
-                  <>
-                    <span className="text-xs text-slate-400">•</span>
-                    <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
-                      {data.tokens} токенов
-                    </span>
-                  </>
-                )}
+
                 
                 {data.model && (
                   <>
-                    <span className="text-xs text-slate-400">•</span>
+                    <span className="text-slate-300 text-[10px]">•</span>
                     <span className={cn(
-                      "text-[10px] px-1.5 py-0.5 rounded font-mono",
-                      data.model === 'CACHED' ? "bg-amber-100 text-amber-700 font-bold" : "bg-slate-100 text-slate-600"
+                      "text-[10px] px-1.5 h-4 flex items-center rounded-sm font-medium",
+                      data.model === 'CACHED' ? "bg-amber-50 text-amber-600 border border-amber-100" : "bg-slate-50 text-slate-500 border border-slate-100"
                     )}>
-                      {data.model === 'CACHED' ? 'из памяти' : data.model === 'lite' ? 'lite • ИИ текст' : data.model === 'pro' ? 'pro • ИИ зрение' : `${data.model} • ${data.method}`}
+                      {data.model === 'CACHED' ? 'из памяти' : data.model === 'lite' ? 'lite' : data.model === 'pro' ? 'pro' : data.model}
                     </span>
                   </>
                 )}
                 
                 {method === 'AI' && data.cost !== undefined && data.cost > 0 ? (
-                  <TooltipProvider delayDuration={200}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5 cursor-help ml-2">
-                          <Badge variant="secondary" className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-200 shadow-sm transition-colors py-0 px-2 h-5 text-[10px]">
-                            {data.cost.toFixed(2)} ₽
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground font-medium">
-                            • {data.tokens} токенов
-                          </span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" sideOffset={6} className="py-2 px-3 text-xs bg-white border border-slate-100 rounded-md shadow-sm">
-                        {data.usage?.cost_breakdown ? (() => {
-                          // Агрегируем: все Header → "Реквизиты", все Items_Chunk_* → "Позиции"
-                          let headerCost = 0;
-                          let itemsCost = 0;
-                          Object.entries(data.usage.cost_breakdown).forEach(([key, info]: [string, any]) => {
-                            if (key.includes('Header')) headerCost += info.cost || 0;
-                            else if (key.includes('Items') || key.includes('Chunk')) itemsCost += info.cost || 0;
-                          });
-                          const rows: { label: string; cost: number }[] = [];
-                          if (headerCost > 0) rows.push({ label: 'Реквизиты', cost: headerCost });
-                          if (itemsCost > 0) rows.push({ label: 'Позиции', cost: itemsCost });
-                          if (rows.length === 0) return <span className="text-slate-400">Нет данных</span>;
-                          return (
-                            <div className="flex flex-col gap-1 min-w-[120px]">
-                              {rows.map(row => (
-                                <div key={row.label} className="flex justify-between items-center gap-3">
-                                  <span className="text-slate-500 font-normal">{row.label}</span>
-                                  <span className="text-slate-900 font-bold tabular-nums">
-                                    {row.cost.toFixed(2)} <span className="text-[10px] font-normal text-slate-400">₽</span>
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })() : (
-                          <span className="text-slate-400">Нет данных</span>
-                        )}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <>
+                    <span className="text-slate-300 text-[10px]">•</span>
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center gap-1.5 cursor-help">
+                            <Badge variant="secondary" className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-200 shadow-sm py-0 px-2 h-4.5 text-[10px] font-bold leading-none">
+                              {data.cost.toFixed(2)} ₽
+                            </Badge>
+                            <span className="text-[10px] text-slate-400 font-medium leading-none">
+                              {data.tokens} токенов
+                            </span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6} className="py-2 px-3 text-xs bg-white border border-slate-100 rounded-md shadow-sm">
+                          {data.usage?.cost_breakdown ? (() => {
+                            // Агрегируем: все Header → "Реквизиты", все Items_Chunk_* → "Позиции"
+                            let headerCost = 0;
+                            let itemsCost = 0;
+                            Object.entries(data.usage.cost_breakdown).forEach(([key, info]: [string, any]) => {
+                              if (key.includes('Header')) headerCost += info.cost || 0;
+                              else if (key.includes('Items') || key.includes('Chunk')) itemsCost += info.cost || 0;
+                            });
+                            const rows: { label: string; cost: number }[] = [];
+                            if (headerCost > 0) rows.push({ label: 'Реквизиты', cost: headerCost });
+                            if (itemsCost > 0) rows.push({ label: 'Позиции', cost: itemsCost });
+                            if (rows.length === 0) return <span className="text-slate-400">Нет данных</span>;
+                            return (
+                              <div className="flex flex-col gap-1 min-w-[120px]">
+                                {rows.map(row => (
+                                  <div key={row.label} className="flex justify-between items-center gap-3">
+                                    <span className="text-slate-500 font-normal">{row.label}</span>
+                                    <span className="text-slate-900 font-bold tabular-nums">
+                                      {row.cost.toFixed(2)} <span className="text-[10px] font-normal text-slate-400">₽</span>
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })() : (
+                            <span className="text-slate-400">Нет данных</span>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </>
                 ) : method === 'AI' ? (
                   <div className="flex items-center gap-1.5 opacity-60 ml-2">
-                    <span className="text-[10px]">~{data.estimated_cost || 0} ₽</span>
+                    <span className="text-[10px]">до {data.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽</span>
                     <span className="text-[10px] text-muted-foreground">
-                      • ~{data.estimated_tokens || 0} токенов (прогноз)
+                      • ~{data.estimated_tokens || 0} токенов (макс. прогноз)
                     </span>
                   </div>
                 ) : null}

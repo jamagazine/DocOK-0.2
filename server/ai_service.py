@@ -78,7 +78,7 @@ async def estimate_cost_before_processing(
 ) -> dict:
     """
     Умный прогноз стоимости до нажатия кнопки 'Обработать'.
-    Включает +25% буфер для защиты от непредвиденных расходов.
+    Включает +30% буфер для защиты от непредвиденных расходов.
     """
     # 1. Сценарий: Сканы (требуют Yandex Vision OCR)
     if file_type in ["need_ocr", "ocr_table", "image"]:
@@ -90,7 +90,7 @@ async def estimate_cost_before_processing(
         pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.42, "output_per_1k": 0.42})
         llm_cost = (llm_input * pro_rates["input_per_1k"] + estimated_output * pro_rates["output_per_1k"]) / 1000.0
         
-        total_cost = (ocr_cost + llm_cost) * 1.25 # Буфер 25%
+        total_cost = (ocr_cost + llm_cost) * 1.30 # Буфер 30%
         return {
             "estimated_cost": round(total_cost, 2),
             "estimated_tokens": llm_input + estimated_output,
@@ -108,12 +108,15 @@ async def estimate_cost_before_processing(
         # Надежный Fallback, если токенизатор недоступен
         input_tokens = len(text) // 3
 
+    # Вес промптов Header + Items (усредненно)
+    input_tokens += 1200 
+
     # Оценка Output на основе количества строк
     if num_positions == 0:
-        estimated_output = int(input_tokens * 0.35)
+        estimated_output = int(input_tokens * 0.45)
     else:
         header_output = 450
-        items_output = num_positions * 50 # В среднем 50 токенов на 1 позицию спецификации
+        items_output = num_positions * 60 # В среднем 60 токенов на 1 позицию спецификации
         estimated_output = header_output + items_output
 
     # Симуляция разделения (Шапка ~70% текста, Товары ~30% текста)
@@ -126,12 +129,12 @@ async def estimate_cost_before_processing(
     lite_cost = (header_input * lite_rates["input_per_1k"] + 450 * lite_rates["output_per_1k"]) / 1000.0
     pro_cost = (items_input * pro_rates["input_per_1k"] + max(0, estimated_output - 450) * pro_rates["output_per_1k"]) / 1000.0
 
-    total_estimated = (lite_cost + pro_cost) * 1.25 # Буфер 25%
+    total_estimated = (lite_cost + pro_cost) * 1.30 # Буфер 30%
 
     return {
         "estimated_cost": round(total_estimated, 2),
         "estimated_tokens": input_tokens + estimated_output,
-        "breakdown": f"Шапка (Lite) + Товары (Pro) + Запас 25%"
+        "breakdown": f"Шапка (Lite) + Товары (Pro) + Запас 30%"
     }
 
 
