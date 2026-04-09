@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
 from typing import Dict
-import server.pricing as pricing
+import pricing as pricing
 
 @dataclass
 class UsageStats:
