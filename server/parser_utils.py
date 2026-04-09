@@ -1335,22 +1335,25 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
             
     # 4. Отрезаем всё, что ниже шапки (экономия токенов)
     header_df = df.iloc[:table_start_idx]
+    header_df = header_df.head(60) # Защита от бесконечных шапок
     
-    # Защита от бесконечных файлов: берем не больше первых 60 строк
-    header_df = header_df.head(60)
-    
-    # --- МЕТОД «СЭНДВИЧА»: Шапка + Подвал ---
-    # 1. Берем последние 10 строк документа (подвал), где обычно контакты
+    # 5. Захватываем "подвал" документа (последние 10 строк) для поиска контактов
     footer_df = df.tail(10)
-
-    # 5. Конвертируем в Markdown
-    if header_df.empty and footer_df.empty:
+    
+    # 6. Конвертируем в Markdown
+    markdown_header = header_df.to_markdown(index=False) if not header_df.empty else ""
+    markdown_footer = footer_df.to_markdown(index=False) if not footer_df.empty else ""
+    
+    if not markdown_header:
         return ""
         
-    markdown_header = header_df.to_markdown(index=False)
-    markdown_footer = footer_df.to_markdown(index=False)
+    # Склеиваем сэндвич, если подвал не пересекается с шапкой (таблица была больше 0 строк)
+    if table_start_idx < len(df) - 10:
+        combined_markdown = f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{markdown_footer}"
+    else:
+        # Если файл совсем маленький (меньше 60-70 строк), просто отдаем как есть
+        combined_markdown = df.to_markdown(index=False)
 
-    combined_markdown = f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{markdown_footer}"
     return combined_markdown
 
 

@@ -645,18 +645,18 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
             wrapped_data["corr_account"]["note"] = "К/С автоматически найден по префиксу 301"
     # ------------------------------------------
 
-    from validators import validate_inn_requisite, validate_kpp_requisite, validate_bank_requisites
+    from validators import validate_inn, validate_kpp, validate_bank_requisites
     
     doc_type = wrapped_data.get("document_type", {}).get("value", "Счет на оплату")
 
     # 5. Математический арбитраж (ИНН/КПП)
     inn_val = wrapped_data.get("inn", {}).get("value")
-    wrapped_data["inn"] = validate_inn_requisite(inn_val, doc_type)
+    wrapped_data["inn"] = validate_inn(inn_val, doc_type)
     new_inn_val = wrapped_data.get("inn", {}).get("value")
 
     # Валидация КПП
     kpp_val = wrapped_data.get("kpp", {}).get("value")
-    wrapped_data["kpp"] = validate_kpp_requisite(kpp_val, new_inn_val, doc_type)
+    wrapped_data["kpp"] = validate_kpp(kpp_val, new_inn_val, doc_type)
 
     # 6. Валидация банковских реквизитов с прощением для КП
     bik_field = wrapped_data.get("bank_bik", {})
