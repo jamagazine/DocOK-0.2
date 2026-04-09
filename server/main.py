@@ -569,7 +569,7 @@ async def process_invoice(
             final_p = get_file_path(projectId, disk_name, "_invoice_final.md")
             with open(final_p, "w", encoding="utf-8") as f: f.write(full_md_debug)
 
-            from pricing import UsageStats
+            from ai_service import UsageStats
             accumulator = UsageStats()
 
             # Metadata source (Header + bit of grid)

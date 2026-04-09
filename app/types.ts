@@ -15,9 +15,10 @@ export type FileStatus = 'ok' | 'loading' | 'error' | 'reset' | 'READY_MD' | 'Г
 export interface UsageInfo {
   tokens: number;
   cost_breakdown: Record<string, {
-    tokens: number;
+    input: number;
+    output: number;
     cost: number;
-    model: string;
+    model?: string;
   }>;
 }
 

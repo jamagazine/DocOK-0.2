@@ -5,8 +5,68 @@ import asyncio
 import os
 import logging
 from thefuzz import fuzz
-
 logger = logging.getLogger(__name__)
+
+from dataclasses import dataclass, field
+from typing import Dict
+import server.pricing as pricing
+
+@dataclass
+class UsageStats:
+    total_input: int = 0
+    total_output: int = 0
+    total_cost: float = 0.0
+    cost_breakdown: Dict[str, dict] = field(default_factory=dict)
+
+    def add(self, label: str, model_key: str, input_tok: int, output_tok: int):
+        rates = pricing.PRICING_CONFIG.get(model_key, pricing.PRICING_CONFIG["yandexgpt-pro"])
+        step_cost = (input_tok * rates["input_per_1k"] + output_tok * rates["output_per_1k"]) / 1000.0
+        
+        self.total_input += input_tok
+        self.total_output += output_tok
+        self.total_cost += step_cost
+        
+        # Если чанков несколько, они будут сохраняться под отдельными ключами (Items_Chunk_1, Items_Chunk_2)
+        if label not in self.cost_breakdown:
+            self.cost_breakdown[label] = {"input": 0, "output": 0, "cost": 0.0}
+        
+        self.cost_breakdown[label]["input"] += input_tok
+        self.cost_breakdown[label]["output"] += output_tok
+        self.cost_breakdown[label]["cost"] += step_cost
+
+    def add_ocr(self, pages: int, method: str, label: str):
+        config = pricing.PRICING_CONFIG["ocr"]
+        method_cost = config.get("table") if method == "ocr_table" else config.get("page")
+        current_cost = round(pages * method_cost, 4)
+        
+        self.total_cost += current_cost
+        if label not in self.cost_breakdown:
+            self.cost_breakdown[label] = {"input": 0, "output": 0, "cost": 0.0}
+        self.cost_breakdown[label]["cost"] += current_cost
+        self.cost_breakdown[label]["pages"] = self.cost_breakdown[label].get("pages", 0) + pages
+        self.cost_breakdown[label]["method"] = method
+
+    def merge(self, other: 'UsageStats', prefix=""):
+        self.total_input += other.total_input
+        self.total_output += other.total_output
+        self.total_cost += other.total_cost
+        for k, v in other.cost_breakdown.items():
+            key = f"{prefix}{k}" if prefix else k
+            if key not in self.cost_breakdown:
+                self.cost_breakdown[key] = {"input": 0, "output": 0, "cost": 0.0}
+            self.cost_breakdown[key]["input"] += v.get("input", 0)
+            self.cost_breakdown[key]["output"] += v.get("output", 0)
+            self.cost_breakdown[key]["cost"] += v.get("cost", 0.0)
+            if "pages" in v:
+                self.cost_breakdown[key]["pages"] = self.cost_breakdown[key].get("pages", 0) + v["pages"]
+
+    def to_dict(self):
+        return {
+            "tokens": self.total_input + self.total_output,
+            "cost": round(self.total_cost, 4),
+            "cost_breakdown": self.cost_breakdown
+        }
+
 
 def find_account_by_context(text: str, prefix: str) -> str:
     """Ищет 20-значное число с заданным префиксом (407 или 301)."""
@@ -179,14 +239,9 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
     in_tok = int(usage.get('inputTextTokens', 0))
     out_tok = int(usage.get('completionTokens', 0))
     
-    from pricing import UsageStats
-    stats = UsageStats()
-    model_key = "yandexgpt-pro" if model_type == "pro" else "yandexgpt-lite"
-    stats.add(in_tok, out_tok, model_key, label)
+    logger.info(f"LLM call [{label}] — input: {in_tok}, output: {out_tok}")
     
-    logger.info(f"LLM call [{label}] — input: {in_tok}, output: {out_tok}, cost: {stats.cost}₽")
-    
-    return data['result']['alternatives'][0]['message']['text'], stats
+    return data['result']['alternatives'][0]['message']['text'], in_tok, out_tok
 
 async def get_token_count(text: str, model_type: str, api_key: str, folder_id: str) -> int:
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
@@ -394,7 +449,11 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         async with sem:
             chunk_text = header_block + "\n" + "\n".join(chunk)
             try:
-                raw_res, chunk_stats = await gpt_yandex(chunk_text, api_key, folder_id, system_prompt, model_type, label=f"Header_Chunk_{i+1}")
+                raw_res, in_tok, out_tok = await gpt_yandex(chunk_text, api_key, folder_id, system_prompt, model_type, label=f"Header_Chunk_{i+1}")
+                chunk_stats = UsageStats()
+                model_key = "yandexgpt-pro" if model_type == "pro" else "yandexgpt-lite"
+                chunk_stats.add(f"Header_Chunk_{i+1}", model_key, in_tok, out_tok)
+                
                 parsed = parse_gpt_json(raw_res)
                 if parsed:
                     return i, True, parsed, chunk_stats, None
@@ -586,7 +645,7 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     
     # 3. Вызываем LLM
     try:
-        llm_response, stats = await gpt_yandex(
+        llm_response, in_tok, out_tok = await gpt_yandex(
             text=instruction, 
             api_key=api_key, 
             folder_id=folder_id, 
@@ -594,6 +653,9 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
             model_type="lite",
             label="Header_Final"
         )
+        
+        stats = UsageStats()
+        stats.add("Header_Final", "yandexgpt-lite", in_tok, out_tok)
         
         parsed = parse_gpt_json(llm_response)
         if isinstance(parsed, dict):

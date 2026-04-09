@@ -179,8 +179,7 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     Applies slicer for Excel/CSV generated Markdown, chunks the payload, then calls LLM concurrently.
     Returns: (items_list, UsageStats)
     """
-    from ai_service import gpt_yandex, parse_gpt_json, load_prompt
-    from pricing import UsageStats
+    from ai_service import gpt_yandex, parse_gpt_json, load_prompt, UsageStats
     
     if not extracted_text:
         return [], UsageStats()
@@ -227,7 +226,7 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     async def process_chunk(chunk_payload):
         instruction = "[INSTRUCTION]" + parts[1].replace("{markdown_payload}", chunk_payload).strip()
         try:
-            llm_response, chunk_stats = await gpt_yandex(
+            llm_response, in_tok, out_tok = await gpt_yandex(
                 text=instruction, 
                 api_key=api_key, 
                 folder_id=folder_id, 
@@ -235,6 +234,9 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
                 model_type="pro",
                 label=f"Items_Chunk"
             )
+            chunk_stats = UsageStats()
+            chunk_stats.add(f"Items_Chunk", "yandexgpt-pro", in_tok, out_tok)
+            
             parsed = parse_gpt_json(llm_response)
             chunk_items = parsed.get("items", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
             return chunk_items, chunk_stats

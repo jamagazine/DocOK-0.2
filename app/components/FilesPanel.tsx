@@ -228,15 +228,30 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                           </span>
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent side="top" className="p-3 text-sm max-w-[250px]">
-                        <div className="font-semibold mb-1 pb-1 border-b">Детализация стоимости:</div>
+                      <TooltipContent side="top" className="p-3 text-sm max-w-[300px] shadow-lg border-slate-200">
+                        <div className="font-semibold mb-2 pb-1 border-b text-slate-800">Детализация стоимости:</div>
                         {data.usage?.cost_breakdown ? (
-                          Object.entries(data.usage.cost_breakdown).map(([key, info]: [string, any]) => (
-                            <div key={key} className="flex justify-between gap-4 py-0.5">
-                              <span className="text-muted-foreground">{key.replace('_', ' ')}:</span>
-                              <span>{info.cost?.toFixed(2)} ₽</span>
-                            </div>
-                          ))
+                          Object.entries(data.usage.cost_breakdown).map(([key, info]: [string, any]) => {
+                            // Маппинг технических ключей в человеческие
+                            const getHumanLabel = (k: string) => {
+                              if (k.includes('Header')) return 'Анализ реквизитов (Lite)';
+                              if (k.includes('Items_Chunk')) return `Парсинг спецификации ${k.split('_').pop()} (Pro)`;
+                              if (k.includes('OCR')) return 'Распознавание скана';
+                              return k.replace('_', ' ');
+                            };
+
+                            return (
+                              <div key={key} className="mb-2 last:mb-0">
+                                <div className="flex justify-between gap-6 font-medium text-slate-700">
+                                  <span>{getHumanLabel(key)}:</span>
+                                  <span>{info.cost?.toFixed(2)} ₽</span>
+                                </div>
+                                <div className="flex justify-between gap-4 text-[10.5px] text-slate-400 pl-1 mt-0.5">
+                                  <span>Вход: {info.input || 0} ток. | Выход: {info.output || 0} ток.</span>
+                                </div>
+                              </div>
+                            );
+                          })
                         ) : (
                           <div className="text-muted-foreground">Детализация недоступна</div>
                         )}
