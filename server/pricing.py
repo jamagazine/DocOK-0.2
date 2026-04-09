@@ -5,12 +5,12 @@ logger = logging.getLogger(__name__)
 
 PRICING_CONFIG = {
     "yandexgpt-pro": {
-        "input_per_1k": 0.60,
-        "output_per_1k": 0.60,
+        "input_per_1k": 0.40,
+        "output_per_1k": 0.40,
     },
     "yandexgpt-lite": {
-        "input_per_1k": 0.20,
-        "output_per_1k": 0.20,
+        "input_per_1k": 0.16,
+        "output_per_1k": 0.16,
     },
     "ocr": {
         "page": 0.13,

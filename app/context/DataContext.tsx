@@ -710,6 +710,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               type: f.type,
               verifiedFields: f.verifiedFields || {},
               supplierData: (f.supplierData as SupplierData) || (prev[f.name]?.supplierData) || {},
+              usage: f.usage || {},
               id: f.id || (prev[f.name]?.id)
             };
           });

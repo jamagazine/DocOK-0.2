@@ -12,6 +12,15 @@ export type RightPanelTab = 'tools' | 'info' | 'calc';
 
 export type FileStatus = 'ok' | 'loading' | 'error' | 'reset' | 'READY_MD' | 'Готово (ИИ)' | 'Готово (Хранилище)' | 'Старт...' | 'Локальный парсинг...' | 'Конвертация и Анализ ИИ...' | string;
 
+export interface UsageInfo {
+  tokens: number;
+  cost_breakdown: Record<string, {
+    tokens: number;
+    cost: number;
+    model: string;
+  }>;
+}
+
 export interface UploadStatus {
   id?: string; // Server-side secured name
   status: FileStatus;
@@ -29,6 +38,7 @@ export interface UploadStatus {
   processed_count?: number;
   total_chunks?: number;
   current_step?: 'prep' | 'ai' | 'final';
+  usage?: UsageInfo;
   summary_md?: string;
   summary_fields?: {
     cipher?: string;

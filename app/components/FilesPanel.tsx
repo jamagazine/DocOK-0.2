@@ -14,6 +14,8 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useData } from '../context/DataContext';
+import { Badge } from './ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -85,7 +87,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
     const isError = statusStr.includes('Ошибка');
     const isLoading = !isOk && !isError && statusStr !== 'reset' && !isReadyMD && !isReadyOCR && !isProcessed && !isNeedOCR;
     const isReset = statusStr === 'reset';
-    const method = (statusStr.includes('ИИ') || isProcessed) ? 'AI' : 'Local';
+    const method = (statusStr.includes('ИИ') || isProcessed || isReadyOCR || (data.cost !== undefined && data.cost > 0)) ? 'AI' : 'Local';
     const isAiProcessed = method === 'AI';
     const file = filesMap[fileName];
     const fileSize = data.size || 0;
@@ -213,20 +215,41 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   </>
                 )}
                 
-                {method === 'AI' && (data.cost !== undefined && data.cost > 0) ? (
-                  <>
-                    <span className="text-xs text-slate-400">•</span>
-                    <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold" title="Итоговая цена парсинга">
-                      {data.cost || 0} ₽
+                {method === 'AI' && data.cost !== undefined && data.cost > 0 ? (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 cursor-help ml-2">
+                          <Badge variant="secondary" className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-200 shadow-sm transition-colors py-0 px-2 h-5 text-[10px]">
+                            {data.cost.toFixed(2)} ₽
+                          </Badge>
+                          <span className="text-[10px] text-muted-foreground font-medium">
+                            • {data.tokens} токенов
+                          </span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="p-3 text-sm max-w-[250px]">
+                        <div className="font-semibold mb-1 pb-1 border-b">Детализация стоимости:</div>
+                        {data.usage?.cost_breakdown ? (
+                          Object.entries(data.usage.cost_breakdown).map(([key, info]: [string, any]) => (
+                            <div key={key} className="flex justify-between gap-4 py-0.5">
+                              <span className="text-muted-foreground">{key.replace('_', ' ')}:</span>
+                              <span>{info.cost?.toFixed(2)} ₽</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-muted-foreground">Детализация недоступна</div>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : method === 'AI' ? (
+                  <div className="flex items-center gap-1.5 opacity-60 ml-2">
+                    <span className="text-[10px]">~{data.estimated_cost || 0} ₽</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      • ~{data.estimated_tokens || 0} токенов (прогноз)
                     </span>
-                  </>
-                ) : ( (data.estimated_cost !== undefined && data.estimated_cost > 0) || (data.estimated_tokens && data.estimated_tokens > 0) ) && method !== 'AI' ? (
-                  <>
-                    <span className="text-xs text-slate-400">•</span>
-                    <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-medium" title="Прогноз цены AI-парсинга">
-                      ~{data.estimated_cost || 0} ₽ {data.estimated_tokens ? `• ~${data.estimated_tokens} токенов` : ''}
-                    </span>
-                  </>
+                  </div>
                 ) : null}
               </div>
               {isError && data.error && (

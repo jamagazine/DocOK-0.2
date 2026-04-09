@@ -650,6 +650,11 @@ async def process_invoice(
                 supp_safe = main_doc if isinstance(main_doc, dict) else {}
                 manifest[disk_name].update({
                     "cost": accumulator.cost, 
+                    "tokens": accumulator.input_tokens + accumulator.output_tokens,
+                    "usage": {
+                        "tokens": accumulator.input_tokens + accumulator.output_tokens,
+                        "cost_breakdown": accumulator.details
+                    },
                     "status": "READY_MD_OCR", # Унифицировано для Фронтенда
                     "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
@@ -888,7 +893,8 @@ async def storage_list(projectId: str):
                 "pdf_type": entry.get("pdf_type", "UNKNOWN"),
                 "type": entry.get("type", "spec"),
                 "verifiedFields": entry.get("verifiedFields", {}),
-                "supplierData": entry.get("supplierData", {})
+                "supplierData": entry.get("supplierData", {}),
+                "usage": entry.get("usage", {})
             })
     return files
 
