@@ -543,8 +543,12 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     """
     from parser_utils import clean_and_build_markdown
     
-    # Единый подход: собираем Markdown из координатных блоков
-    markdown_payload = clean_and_build_markdown(ocr_json)
+    # Если на вход уже пришел готовый Markdown-текст (например, из Excel/CSV)
+    if isinstance(ocr_json, str):
+        markdown_payload = ocr_json
+    else:
+        # Единый подход: собираем Markdown из координатных блоков
+        markdown_payload = clean_and_build_markdown(ocr_json)
     
     if not markdown_payload or markdown_payload == "NO_TEXT_FOUND":
         return safe_parse_llm_json("")
