@@ -541,13 +541,15 @@ function InvoiceTable() {
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
-    { key: 'match_data', label: 'Совпадение', width: '200px' },
     { key: 'name', label: 'Наименование' },
     { key: 'article', label: 'Артикул', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
-    { key: 'quantity', label: 'Кол-во', width: '100px', align: 'right' },
-    { key: 'unit', label: 'Ед. изм', width: '100px', align: 'center' },
-    { key: 'price', label: 'Цена', width: '100px', align: 'right' },
+    { key: 'quantity', label: 'Кол-во', width: '80px', align: 'right' },
+    { key: 'unit', label: 'Ед. изм', width: '80px', align: 'center' },
+    { key: 'price_unit', label: 'Цена за ед.', width: '100px', align: 'right' },
+    { key: 'discount', label: 'Скидка', width: '80px', align: 'right' },
+    { key: 'price_final', label: 'Цена ит.', width: '100px', align: 'right' },
+    { key: 'vat_rate', label: 'НДС', width: '80px', align: 'center' },
     { key: 'total', label: 'Итого', width: '110px', align: 'right' }
   ];
 

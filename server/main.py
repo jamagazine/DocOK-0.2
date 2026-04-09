@@ -41,6 +41,7 @@ from ai_service import (
     parse_gpt_json, process_chunks_with_gpt,
     process_header_with_llm
 )
+from items_parser import process_items
 
 app = FastAPI()
 
@@ -569,11 +570,14 @@ async def process_invoice(
                 main_doc["method"] = p_method
             # --------------------------------------
 
+            # Новая логика: Парсинг позиций (Items)
+            yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
+            all_items = await process_items(extracted_text)
+
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
                 print(f"Warning: LLM returned empty data for file [{original_name}]")
             
-            all_items = []
             footer_data = {}
             total_tokens = 0
 

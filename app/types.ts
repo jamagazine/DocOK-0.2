@@ -102,23 +102,26 @@ export interface SpecRow extends MaterialPosition {
   notes?: string;
 }
 
-export interface InvoiceRow {
+export interface InvoiceItem {
+  pos: string;
+  name: string;
+  article: string;
+  supplier: string;
+  quantity: number;
+  unit: string;
+  price_unit: number;
+  discount: string;
+  price_final: number;
+  total: number;
+  vat_rate: string;
+  is_valid: boolean; // Для индикации математических ошибок
+}
+
+export interface InvoiceRow extends InvoiceItem {
   id: string;
   fileId?: string;
   documentName?: string;
   isUncertain?: boolean;
-  article: string;
-  name: string;
-  supplier: string;
-  quantity: string | number;
-  unit: string;
-  price: string | number;
-  vatRate?: string;
-  vatAmount?: string | number;
-  total: string | number;
-  discount?: string | number;
-  priceAfterDiscount?: string | number;
-  totalBeforeDiscount?: string | number;
   level?: number;
   parentId?: string | null;
   match_data?: {
@@ -129,7 +132,8 @@ export interface InvoiceRow {
   };
   row_type?: 'WORK_TYPE' | 'LOCATION' | 'GROUP' | 'ITEM';
   is_header?: boolean;
-  vat?: number; // Legacy/Compat
+  // Legacy support if needed
+  price?: string | number;
 }
 
 export interface EstimateRow {

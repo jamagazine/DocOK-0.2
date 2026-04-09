@@ -182,18 +182,18 @@ export const SPEC_TARGET_FIELDS = [
 export function emptyInvoiceRow(): InvoiceRow {
   return {
     id: genId(),
+    pos: '',
     article: '',
     name: '',
     supplier: '',
-    quantity: '1',
+    quantity: 1,
     unit: 'шт',
-    price: '0',
-    vatRate: '20%',
-    vatAmount: '0',
-    total: '0',
-    discount: '',
-    priceAfterDiscount: '',
-    totalBeforeDiscount: '',
+    price_unit: 0,
+    discount: '0',
+    price_final: 0,
+    total: 0,
+    vat_rate: '20%',
+    is_valid: true,
     isUncertain: false,
   };
 }
@@ -464,14 +464,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [fetchProjects]);
 
   // Separate effect: reset stale activeProjectId only when the projects list is loaded and stable
-  // Only resets if the project was previously known (existed in state before this update)
   const isProjectListLoadedRef = useRef(false);
   useEffect(() => {
     if (!projects.length) return;
     // Mark as loaded after first non-empty fetch
     if (!isProjectListLoadedRef.current) {
       isProjectListLoadedRef.current = true;
-      return; // skip validation on first load to avoid false resets
+      // We do NOT return here, so that if the cached activeProjectId is no longer valid,
+      // it gets reset immediately on the first successful load, preventing a 404 ghost state.
     }
     // If activeProjectId is set but no longer in the fetched list, reset to dashboard
     if (activeProjectId && !projects.some(p => p.id === activeProjectId)) {

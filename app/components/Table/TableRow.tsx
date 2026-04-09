@@ -95,6 +95,7 @@ export const TableRow = React.memo(({
     stage === 'estimate' ? "min-h-[56px]" : "min-h-[48px]",
     isSelected && "bg-indigo-50/50",
     row.isUncertain && stage === 'invoice' && "bg-amber-50/50",
+    row.is_valid === false && stage === 'invoice' && "bg-red-50/70",
     (stage === 'invoice' || stage === 'estimate') && "hover:bg-slate-50",
     // Spec specific classes based on Level Hierachy
     // Spec specific classes based on Level Hierachy (Inversion logic: high level = dark BG)
