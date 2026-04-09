@@ -1339,12 +1339,19 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     # Защита от бесконечных файлов: берем не больше первых 60 строк
     header_df = header_df.head(60)
     
-    # 5. Конвертируем в Markdown-таблицу
-    if header_df.empty:
+    # --- МЕТОД «СЭНДВИЧА»: Шапка + Подвал ---
+    # 1. Берем последние 10 строк документа (подвал), где обычно контакты
+    footer_df = df.tail(10)
+
+    # 5. Конвертируем в Markdown
+    if header_df.empty and footer_df.empty:
         return ""
         
-    markdown_str = header_df.to_markdown(index=False)
-    return markdown_str
+    markdown_header = header_df.to_markdown(index=False)
+    markdown_footer = footer_df.to_markdown(index=False)
+
+    combined_markdown = f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{markdown_footer}"
+    return combined_markdown
 
 
 

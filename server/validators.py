@@ -67,6 +67,43 @@ def validate_bik(bik: str) -> bool:
     bik = re.sub(r'\D', '', str(bik))
     return len(bik) == 9 and bik.startswith('04')
 
+def validate_inn_requisite(value: str, document_type: str = "Счет на оплату") -> dict:
+    """Универсальная проверка ИНН с прощением для КП."""
+    is_empty = value in ["---", None, "", "null"]
+    is_kp = "коммерческое" in str(document_type).lower()
+
+    if is_empty:
+        if is_kp:
+            return {"value": "---", "confidence": 1.0, "isVerified": False, "note": "Не обязательно для КП"}
+        else:
+            return {"value": "---", "confidence": 0.01, "isVerified": False, "note": "Обязательное поле ИНН отсутствует"}
+
+    val_str = str(value)
+    if not validate_inn(val_str):
+        return {"value": val_str, "confidence": 0.01, "isVerified": False, "note": "Ошибка контрольной суммы ИНН!"}
+    
+    return {"value": val_str, "confidence": 1.0, "isVerified": False}
+
+def validate_kpp_requisite(value: str, inn: str, document_type: str = "Счет на оплату") -> dict:
+    """Универсальная проверка КПП с прощением для КП."""
+    is_empty = value in ["---", None, "", "null"]
+    is_kp = "коммерческое" in str(document_type).lower()
+
+    if is_empty:
+        if is_kp:
+            return {"value": "---", "confidence": 1.0, "isVerified": False, "note": "Не обязательно для КП"}
+        else:
+            # Для счета КПП может быть пустым только если ИНН 12 знаков (ИП)
+            if validate_kpp(value, inn):
+                 return {"value": "---", "confidence": 1.0, "isVerified": False}
+            return {"value": "---", "confidence": 0.01, "isVerified": False, "note": "Неверный формат КПП (должно быть 9 цифр)"}
+
+    val_str = str(value)
+    if not validate_kpp(val_str, inn):
+        return {"value": val_str, "confidence": 0.01, "isVerified": False, "note": "Неверный формат КПП (должно быть 9 цифр)"}
+    
+    return {"value": val_str, "confidence": 1.0, "isVerified": False}
+
 def validate_bank_requisites(value: str, field_name: str, document_type: str = "Счет на оплату", is_corr: bool = False, bik: str = None) -> dict:
     """
     Универсальная проверка для БИК и Счетов, которая прощает пустоту для КП.
