@@ -598,11 +598,11 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         parsed = parse_gpt_json(llm_response)
         if isinstance(parsed, dict):
             return parsed, stats
-        return main_doc, stats
+        return safe_parse_llm_json(""), stats
     except Exception as e:
         logger.error(f"Error calling LLM for prompt: {e}")
         from pricing import UsageStats
-        return main_doc, UsageStats()
+        return safe_parse_llm_json(""), UsageStats()
     
     # 4. Безопасно парсим
     wrapped_data = safe_parse_llm_json(llm_response)
