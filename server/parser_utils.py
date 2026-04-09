@@ -17,9 +17,9 @@ def clean_val(x):
     s = str(x).strip()
     if s.lower() in ['nan', 'none', 'null']:
         return ""
-    # Очистка .0 для числовых строк
-    # Применяем только к строкам, которые состоят целиком из цифр (с возможным .0 на конце)
-    s = re.sub(r'^(\d+)\.0$', r'\1', s)
+    # Очистка .0 для числовых строк (устойчиво к пробелам)
+    if s.endswith('.0') and s.replace('.0', '').replace(' ', '').isdigit():
+        s = s.split('.')[0].strip()
     
     # Удаляем лишние кавычки из начала и конца, если они есть
     if s.startswith('"') and s.endswith('"'):
@@ -1301,7 +1301,8 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
 def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
     """
     Разделяет Excel-документ на три MD-блока (header_md, items_md, footer_md).
-    Использует Метод Лидера для поиска наиболее подходящего листа.
+    Глобальный сканер: ищет ВСЕ таблицы на ВСЕХ листах (до 10),
+    затем выбирает «Абсолютного Лидера» — таблицу с наибольшим количеством строк.
     """
     try:
         if file_path.lower().endswith('.csv'):
@@ -1317,66 +1318,95 @@ def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
     summary_noise_words = {'итого', 'всего', 'ндс', 'сумм', 'рубл', 'копе'}
 
     candidates = []
-    
-    # Ограничения до 10 листов
+
+    # Сканируем до 10 листов
     for sheet_name in list(sheets_dict.keys())[:10]:
         df = sheets_dict[sheet_name]
         df = df.map(clean_val)
-        
-        table_start_idx = len(df)
-        # 1. Поиск начала таблицы
-        for idx, row in df.iterrows():
-            row_text = ' '.join(map(str, row.values)).lower()
-            matches = sum(1 for word in target_words if word in row_text)
-            if matches >= 2:
-                table_start_idx = idx
-                break
+        n_rows = len(df)
 
-        # 2. Поиск конца таблицы
-        table_end_idx = len(df)
-        for idx in range(table_start_idx + 1, len(df)):
-            row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
-            if any(stop in row_text for stop in stop_words):
-                table_end_idx = idx
-                break
+        # Контекст над первой таблицей (для бонуса «Спецификация»)
+        sheet_name_lower = str(sheet_name).lower()
 
-        # Подсчет очков листа
-        rows_count = table_end_idx - table_start_idx
-        if rows_count <= 0:
-            continue
-
-        score = rows_count
-        
-        # Проверяем бонусное слово в шапке
-        header_text_concat = " ".join(" ".join(map(str, row.values)) for idx, row in df.iloc[:table_start_idx].iterrows()).lower()
-        if "спецификация" in header_text_concat:
-            score += 50
-            
-        # 3. Поиск подвала
-        real_footer_idx = len(df)
-        if table_end_idx < len(df):
-            for idx in range(table_end_idx, len(df)):
+        # --- Поиск ВСЕХ таблиц на этом листе ---
+        scan_from = 0
+        while scan_from < n_rows:
+            # 1. Поиск следующего заголовка таблицы
+            table_start_idx = None
+            for idx in range(scan_from, n_rows):
                 row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
-                if not row_text.strip():
-                    continue
-                if any(noise in row_text for noise in summary_noise_words):
-                    continue
-                real_footer_idx = idx
-                break
-                
-        candidates.append({
-            'score': score,
-            'df': df,
-            'start': table_start_idx,
-            'end': table_end_idx,
-            'footer': real_footer_idx,
-            'sheet': sheet_name
-        })
-        
+                matches = sum(1 for word in target_words if word in row_text)
+                if matches >= 2:
+                    table_start_idx = idx
+                    break
+
+            if table_start_idx is None:
+                break  # На этом листе больше нет таблиц
+
+            # 2. Поиск конца таблицы (с Peak-ahead в 3 строки)
+            table_end_idx = n_rows
+            for idx in range(table_start_idx + 1, n_rows):
+                row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+                if any(stop in row_text for stop in stop_words):
+                    # Peak-ahead: проверяем следующие 3 строки на наличие якоря
+                    is_subtotal = False
+                    for l_idx in range(idx + 1, min(idx + 4, n_rows)):
+                        val_0 = str(df.iloc[l_idx, 0]).strip() if df.shape[1] > 0 else ""
+                        val_1 = str(df.iloc[l_idx, 1]).strip() if df.shape[1] > 1 else ""
+                        if (val_0 and len(val_0) < 15 and val_0.lower() != 'итого') or \
+                           (val_1 and len(val_1) < 15 and val_1.lower() != 'итого'):
+                            is_subtotal = True
+                            break
+                    if is_subtotal:
+                        continue  # Промежуточный итог — продолжаем
+                    table_end_idx = idx
+                    break
+
+            # Подсчет строк
+            rows_count = table_end_idx - table_start_idx
+            if rows_count <= 1:
+                scan_from = table_end_idx + 1
+                continue
+
+            score = rows_count
+            
+            # Бонус за слово «Спецификация» в шапке листа или имени листа
+            header_text = " ".join(
+                " ".join(map(str, df.iloc[r].values))
+                for r in range(0, table_start_idx)
+            ).lower()
+            if "спецификация" in header_text or "спецификация" in sheet_name_lower:
+                score += 50
+
+            # 3. Поиск подвала (пропускаем мусор сумм)
+            real_footer_idx = n_rows
+            if table_end_idx < n_rows:
+                for idx in range(table_end_idx, n_rows):
+                    row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+                    if not row_text.strip():
+                        continue
+                    if any(noise in row_text for noise in summary_noise_words):
+                        continue
+                    real_footer_idx = idx
+                    break
+
+            candidates.append({
+                'score': score,
+                'rows': rows_count,
+                'df': df,
+                'start': table_start_idx,
+                'end': table_end_idx,
+                'footer': real_footer_idx,
+                'sheet': sheet_name
+            })
+
+            # Продолжаем сканирование ПОСЛЕ конца этой таблицы
+            scan_from = table_end_idx + 1
+
     if not candidates:
         return "", "", ""
-        
-    # Выбираем лидера
+
+    # Выбираем Абсолютного Лидера: таблица с максимальным score
     leader = max(candidates, key=lambda x: x['score'])
     df = leader['df']
     table_start_idx = leader['start']

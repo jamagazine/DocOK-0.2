@@ -665,6 +665,12 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     bik_field = wrapped_data.get("bank_bik", {})
     bik_val = bik_field.get("value")
     
+    # Гарантированный zfill(9) для БИК перед валидацией
+    if bik_val and bik_val not in ["---", "", "null"]:
+        cleaned_bik_digits = re.sub(r'\D', '', str(bik_val))
+        if 0 < len(cleaned_bik_digits) < 9:
+            bik_val = cleaned_bik_digits.zfill(9)
+    
     # Валидация БИК
     wrapped_data["bank_bik"] = validate_bank_requisites(bik_val, "bank_bik", doc_type)
     new_bik_val = wrapped_data.get("bank_bik", {}).get("value")
