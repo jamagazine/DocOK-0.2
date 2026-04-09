@@ -8,92 +8,129 @@ logger = logging.getLogger(__name__)
 
 def clean_and_group_markdown_table(md_text: str) -> str:
     """
-    Очищает Markdown-таблицу от мусора и группирует многострочные позиции 
-    путем склейки ячеек по 'якорю' (номеру позиции или тегу).
+    Ultra-Squeezer: 
+    1. Весовой поиск заголовка.
+    2. Отсечение подвала.
+    3. Удаление полностью пустых колонок (Column Pruning).
+    4. Склейка многострочных позиций по якорю.
     """
-    lines = md_text.split('\n')
-    table_lines = []
-    in_table = False
+    lines = [line.strip() for line in md_text.split('\n') if line.strip()]
     
-    # 1. Извлечение тела таблицы и отсечение подвала
-    for i, line in enumerate(lines):
-        lower_line = line.lower()
-        if 'наименование' in lower_line and ('кол-во' in lower_line or 'количество' in lower_line or 'цена' in lower_line):
-            in_table = True
-            table_lines.append(line)
-            continue
+    # 1. Парсим Markdown в двумерный массив (grid)
+    grid = []
+    for line in lines:
+        if line.startswith('|') and line.endswith('|'):
+            cells = [c.strip() for c in line.split('|')[1:-1]]
+            grid.append(cells)
             
-        if in_table:
-            # Жесткие стоп-слова для отсечения мусора
-            if any(stop in lower_line for stop in ['итого', 'всего к оплате', 'всего наименований', 'внимание!', 'условия поставки', 'оплата данного счета']):
-                break
-            
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if set(stripped.replace('|', '').replace('-', '').replace(' ', '')) == set() and len(table_lines) > 1:
-                continue 
-                
-            table_lines.append(line)
-
-    if len(table_lines) < 2:
+    if not grid:
         return ""
 
-    # 2. Очистка и склейка ячеек (The Squeezer)
-    header = table_lines[0]
+    # 2. Весовой поиск заголовка таблицы
+    header_idx = -1
+    max_score = 0
+    for i, row in enumerate(grid[:50]):
+        row_str = " ".join(row).lower()
+        score = 0
+        if re.search(r'\b(№|n|поз)\b', row_str): score += 1
+        if re.search(r'\b(наименование|товар|услуг|работ|номенклатура)\b', row_str): score += 2
+        if re.search(r'\b(кол-во|количество)\b', row_str): score += 1
+        if re.search(r'\b(цена|стоимость)\b', row_str): score += 1
+        if re.search(r'\b(сумма|всего)\b', row_str): score += 1
+        
+        if score >= 3 and score > max_score:
+            max_score = score
+            header_idx = i
+
+    if header_idx == -1:
+        return "" # Таблица не найдена
+
+    # 3. Поиск подвала (Footer)
+    footer_idx = len(grid)
+    stop_words = ['итого', 'всего к оплате', 'всего наименований', 'внимание!', 'условия поставки', 'оплата данного счета', 'подготовлено:', 'руководитель', 'м.п.']
+    
+    for i in range(header_idx + 2, len(grid)):
+        row_str = " ".join(grid[i]).lower()
+        if any(stop in row_str for stop in stop_words):
+            footer_idx = i
+            break
+            
+    table_body = grid[header_idx:footer_idx]
+    if len(table_body) < 3: # Заголовок, разделитель, минимум 1 строка данных
+        return ""
+
+    # 4. Column Pruning (Удаление пустых колонок)
+    num_cols = len(table_body[0])
+    cols_to_keep = []
+    
+    for col_idx in range(num_cols):
+        has_data = False
+        # Проверяем строки с данными (пропуская header и '---')
+        for row in table_body[2:]:
+            if col_idx < len(row) and re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', row[col_idx]):
+                has_data = True
+                break
+        
+        header_val = table_body[0][col_idx].lower()
+        # Оставляем, если есть данные ИЛИ если это нормальный заголовок (не Unnamed)
+        if has_data or (header_val and 'unnamed' not in header_val):
+            cols_to_keep.append(col_idx)
+
+    pruned_body = []
+    for row in table_body:
+        pruned_row = [row[i] for i in cols_to_keep if i < len(row)]
+        pruned_body.append(pruned_row)
+
+    # 5. Склейка строк (The Squeezer)
     valid_rows = []
     current_row_cells = []
+    header = pruned_body[0]
 
-    for line in table_lines[1:]:
-        if '---' in line:
+    for row in pruned_body[2:]:
+        if not row or set("".join(row).replace('-', '').replace(' ', '')) == set():
             continue
             
-        cells = [c.strip() for c in line.split('|')]
-        if len(cells) < 3:
-            continue
-            
-        # Очищаем фиктивные пустые ячейки по краям MD-таблицы
-        if cells and cells[0] == '': cells.pop(0)
-        if cells and cells[-1] == '': cells.pop()
+        # Лечим дробные номера (47.0 -> 47)
+        val_col_0 = row[0].replace('.0', '').replace('.', '').strip() if len(row) > 0 else ""
+        val_col_1 = row[1].replace('.0', '').replace('.', '').strip() if len(row) > 1 else ""
         
-        # Ищем 'якорь' в первых двух колонках (№ или Тег вроде В1, П1, 47.0)
         is_anchor = False
-        val_col_0 = (cells[0] if len(cells) > 0 else "").replace('.', '')
-        val_col_1 = (cells[1] if len(cells) > 1 else "").replace('.', '')
-        
-        if re.fullmatch(r'\d+', val_col_0) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', cells[0] if len(cells)>0 else ""):
+        if re.fullmatch(r'\d+', val_col_0) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', row[0] if len(row)>0 else ""):
             is_anchor = True
-        elif val_col_1 and (re.fullmatch(r'\d+', val_col_1) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', cells[1] if len(cells)>1 else "")):
+        elif val_col_1 and (re.fullmatch(r'\d+', val_col_1) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', row[1] if len(row)>1 else "")):
             is_anchor = True
 
-        has_useful_data = bool(re.search(r'[a-zA-Zа-яА-Я0-9]', line))
+        has_useful_data = bool(re.search(r'[a-zA-Zа-яА-Я0-9]', " ".join(row)))
 
         if is_anchor:
             if current_row_cells:
                 valid_rows.append(current_row_cells)
-            current_row_cells = cells
+            current_row_cells = row
         else:
-            # Склеиваем "хвост" с предыдущей позицией
             if current_row_cells and has_useful_data:
-                for idx, cell in enumerate(cells):
+                for idx, cell in enumerate(row):
                     if cell:
                         if idx < len(current_row_cells):
                             current_row_cells[idx] = f"{current_row_cells[idx]} {cell}".strip()
                         else:
                             current_row_cells.append(cell)
             elif not current_row_cells and has_useful_data:
-                current_row_cells = cells
+                current_row_cells = row
 
     if current_row_cells:
         valid_rows.append(current_row_cells)
 
-    # 3. Сборка чистого Markdown
-    col_count = len(header.split('|'))
-    separator = "|" + "|".join(["---"] * (col_count - 2)) + "|"
+    # 6. Сборка финального Markdown
+    if not valid_rows:
+        return ""
+        
+    col_count = len(header)
+    separator = "|" + "|".join(["---"] * col_count) + "|"
     
-    result_lines = [header, separator]
+    result_lines = ["| " + " | ".join(header) + " |", separator]
     for row in valid_rows:
-        result_lines.append("| " + " | ".join(row) + " |")
+        padded_row = row + [""] * (col_count - len(row))
+        result_lines.append("| " + " | ".join(padded_row) + " |")
 
     return "\n".join(result_lines)
 
@@ -120,7 +157,7 @@ def validate_math(items: list) -> list:
         
     return items
 
-async def process_items(extracted_text: str, p_method: str = "", api_key: str = "", folder_id: str = ""):
+async def process_items(extracted_text: str, p_method: str = "", api_key: str = "", folder_id: str = "", supplier_name: str = ""):
     """
     Main entry point for processing table items. 
     Applies slicer for Excel/CSV generated Markdown, then calls LLM.
@@ -157,6 +194,12 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
         parsed = parse_gpt_json(llm_response)
         items = parsed.get("items", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
         
+        # Force supplier assignment if missing
+        if supplier_name:
+            for item in items:
+                if not item.get("supplier") or item.get("supplier") == "---":
+                    item["supplier"] = supplier_name
+                    
         # Apply Math Sanitizer
         validated_items = validate_math(items)
         return validated_items

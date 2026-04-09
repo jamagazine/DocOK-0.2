@@ -588,12 +588,13 @@ async def process_invoice(
 
             # Новая логика: Парсинг позиций (Items)
             yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
+            supplier_name = main_doc.get("organization_name", {}).get("value", "") if isinstance(main_doc, dict) else ""
             if p_method == "excel_rules":
                 # Для Excel-спеков мы уже имеем данные в MD, просто конвертируем их если нужно, 
                 # или используем process_items в режиме rules
-                all_items = await process_items(extracted_text, p_method, api_key, folder_id)
+                all_items = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
             else:
-                all_items = await process_items(extracted_text, p_method, api_key, folder_id)
+                all_items = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
 
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
