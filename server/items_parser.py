@@ -8,11 +8,8 @@ logger = logging.getLogger(__name__)
 
 def clean_and_group_markdown_table(md_text: str) -> str:
     """
-    Ultra-Squeezer: 
-    1. Весовой поиск заголовка.
-    2. Отсечение подвала.
-    3. Удаление полностью пустых колонок (Column Pruning).
-    4. Склейка многострочных позиций по якорю.
+    Ultra-Squeezer 4.0 (Semicolon Edition): 
+    Converts sparse Markdown into ultra-dense semicolon-separated text.
     """
     lines = [line.strip() for line in md_text.split('\n') if line.strip()]
     
@@ -29,7 +26,7 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     # 2. Весовой поиск заголовка таблицы
     header_idx = -1
     max_score = 0
-    for i, row in enumerate(grid[:50]):
+    for i, row in enumerate(grid[:200]):
         row_str = " ".join(row).lower()
         score = 0
         if re.search(r'\b(№|n|поз)\b', row_str): score += 1
@@ -43,37 +40,35 @@ def clean_and_group_markdown_table(md_text: str) -> str:
             header_idx = i
 
     if header_idx == -1:
-        return "" # Таблица не найдена
+        return ""
 
-    # 3. Поиск подвала (Footer)
+    # 3. Поиск подвала (Footer) с Peak-ahead на 3 строки
     footer_idx = len(grid)
     stop_words = ['итого', 'всего к оплате', 'всего наименований', 'внимание!', 'условия поставки', 'оплата данного счета', 'подготовлено:', 'руководитель', 'м.п.']
     
     for i in range(header_idx + 2, len(grid)):
         row_str = " ".join(grid[i]).lower()
         if any(stop in row_str for stop in stop_words):
-            # Smart Stop-Valve: проверяем следующие 3 строки на наличие якоря
-            is_subtotal = False
-            # Ищем якорь в № или Артикуле
-            for l_idx in range(i + 1, min(i + 4, len(grid))):
-                lookahead_row = grid[l_idx]
-                if not lookahead_row: continue
-                val_0 = lookahead_row[0].strip() if len(lookahead_row) > 0 else ""
-                val_1 = lookahead_row[1].strip() if len(lookahead_row) > 1 else ""
-                
-                if (val_0 and len(val_0) < 15 and val_0.lower() != 'итого') or \
-                   (val_1 and len(val_1) < 15 and val_1.lower() != 'итого'):
-                    is_subtotal = True
-                    break
+            # Smart Stop-Valve (Peak-ahead)
+            is_fake_stop = False
+            for j in range(1, 4):
+                if i + j < len(grid):
+                    next_row = grid[i+j]
+                    val_0 = next_row[0].strip() if len(next_row) > 0 else ""
+                    val_1 = next_row[1].strip() if len(next_row) > 1 else ""
+                    
+                    if (val_0 and len(val_0) < 15 and val_0.lower() not in stop_words) or \
+                       (val_1 and len(val_1) < 15 and val_1.lower() not in stop_words):
+                        if re.search(r'\d', val_0 + val_1): # Защита: должна быть хоть одна цифра
+                            is_fake_stop = True
+                            break
             
-            if is_subtotal:
-                continue # Считаем промежуточным итогом, идем дальше
-                
-            footer_idx = i
-            break
+            if not is_fake_stop:
+                footer_idx = i
+                break
             
     table_body = grid[header_idx:footer_idx]
-    if len(table_body) < 3: # Заголовок, разделитель, минимум 1 строка данных
+    if len(table_body) < 3:
         return ""
 
     # 4. Column Pruning (Удаление пустых колонок)
@@ -82,14 +77,12 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     
     for col_idx in range(num_cols):
         has_data = False
-        # Проверяем строки с данными (пропуская header и '---')
         for row in table_body[2:]:
             if col_idx < len(row) and re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', row[col_idx]):
                 has_data = True
                 break
         
         header_val = table_body[0][col_idx].lower()
-        # Оставляем, если есть данные ИЛИ если это нормальный заголовок (не Unnamed)
         if has_data or (header_val and 'unnamed' not in header_val):
             cols_to_keep.append(col_idx)
 
@@ -107,13 +100,13 @@ def clean_and_group_markdown_table(md_text: str) -> str:
         if not row or set("".join(row).replace('-', '').replace(' ', '')) == set():
             continue
             
-        val_0 = row[0].strip() if len(row) > 0 else ""
-        val_1 = row[1].strip() if len(row) > 1 else ""
+        val_col_0 = row[0].strip() if len(row) > 0 else ""
+        val_col_1 = row[1].strip() if len(row) > 1 else ""
         
         is_anchor = False
-        if val_0 and len(val_0) < 15 and val_0.lower() != 'итого':
+        if val_col_0 and len(val_col_0) < 15 and val_col_0.lower() not in stop_words:
             is_anchor = True
-        elif val_1 and len(val_1) < 15 and val_1.lower() != 'итого':
+        elif val_col_1 and len(val_col_1) < 15 and val_col_1.lower() not in stop_words:
             is_anchor = True
 
         has_useful_data = bool(re.search(r'[a-zA-Zа-яА-Я0-9]', " ".join(row)))
@@ -136,17 +129,25 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     if current_row_cells:
         valid_rows.append(current_row_cells)
 
-    # 6. Сборка финального Markdown
+    # 6. Сборка финального текста (DENSE SEMICOLON FORMAT)
     if not valid_rows:
         return ""
         
-    col_count = len(header)
-    separator = "|" + "|".join(["---"] * col_count) + "|"
+    def clean_cell(c):
+        # Удаляем лишние пробелы внутри ячейки
+        return re.sub(r'\s+', ' ', str(c)).strip()
+
+    result_lines = []
+    header_clean = [clean_cell(h) for h in header]
+    result_lines.append("; ".join(header_clean))
     
-    result_lines = ["| " + " | ".join(header) + " |", separator]
     for row in valid_rows:
-        padded_row = row + [""] * (col_count - len(row))
-        result_lines.append("| " + " | ".join(padded_row) + " |")
+        padded_row = row + [""] * (len(header) - len(row))
+        row_clean = [clean_cell(c) for c in padded_row]
+        # Удаляем пустые хвосты, чтобы не плодить "; ; ;" в конце строки
+        while row_clean and not row_clean[-1]:
+            row_clean.pop()
+        result_lines.append("; ".join(row_clean))
 
     return "\n".join(result_lines)
 
@@ -229,5 +230,5 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
         return validated_items
         
     except Exception as e:
-        print(f"Error calling LLM for items parsing: {e}")
+        logger.error(f"CRITICAL: Error calling LLM for items parsing: {e}", exc_info=True)
         return []
