@@ -59,6 +59,8 @@ export interface FieldWithConfidence<T> {
 }
 
 export interface SupplierData {
+  document_type?: FieldWithConfidence<string | null>;
+  contact_person?: FieldWithConfidence<string | null>;
   organization_name: FieldWithConfidence<string | null>;
   inn: FieldWithConfidence<string | null>;
   kpp: FieldWithConfidence<string | null>;

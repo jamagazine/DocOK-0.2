@@ -1310,8 +1310,16 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
 
     # 2. Лечим данные (убираем NaN и исправляем баг двойных кавычек "")
     df = df.fillna('')
+    def clean_and_fix(x):
+        if not isinstance(x, str): return str(x)
+        val = x.replace('""', '"').replace('.0', '').strip()
+        # БИК: 04... (если упал ноль, имеем 8 цифр на '4')
+        if val.isdigit() and len(val) == 8 and val.startswith('4'):
+            val = '0' + val
+        return val
+
     for col in df.columns:
-        df[col] = df[col].apply(lambda x: str(x).replace('""', '"').replace('.0', '').strip() if isinstance(x, str) else x)
+        df[col] = df[col].apply(clean_and_fix)
 
     # 3. Ищем начало таблицы товаров (Smart Cut-off)
     table_start_idx = len(df)

@@ -7,6 +7,7 @@ import {
   AccordionTrigger,
 } from './ui/accordion';
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import { FileItem } from '../types';
 import { EditableField } from './EditableField';
 import { exportSupplierToExcel } from '../utils/exportUtils';
@@ -89,10 +90,17 @@ export const InvoicesInfoList: React.FC = () => {
                         <div className={`w-3 h-3 rounded-full ${overallStatus} shadow-sm`} />
                       )}
                     </div>
-                    <div className="flex flex-col items-start min-w-0 flex-1">
-                      <span className="text-[13px] font-bold text-slate-800 whitespace-normal text-left">
-                        {orgName}
-                      </span>
+                    <div className="flex flex-col items-start min-w-0 flex-1 gap-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-bold text-slate-800 whitespace-normal text-left">
+                          {orgName}
+                        </span>
+                        {data.document_type?.value && data.document_type.value !== "---" && (
+                          <Badge variant="outline" className="text-[10px] h-5 py-0 px-1.5 border-indigo-200 text-indigo-600 bg-indigo-50">
+                            {data.document_type.value}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                     <div className="flex-shrink-0 text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
                       {itemCount} поз.
@@ -114,6 +122,8 @@ export const InvoicesInfoList: React.FC = () => {
                       <AccordionContent className="px-3 pb-3 pt-1">
                         <div className="flex flex-col">
                           {[
+                            { key: 'document_type', label: 'Тип док-та' },
+                            { key: 'contact_person', label: 'Ответств. лицо' },
                             { key: 'inn', label: 'ИНН' },
                             { key: 'kpp', label: 'КПП' },
                             { key: 'phone', label: 'Телефон' },

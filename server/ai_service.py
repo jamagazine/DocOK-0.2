@@ -508,6 +508,8 @@ def safe_parse_llm_json(response_text: str) -> dict:
             
         # Wrap for HITL Sprint 3.3 - Updated for Sprint 4 confidence passing
         wrapped_data = {
+            "document_type": extract_field(raw_dict.get("document_type")),
+            "contact_person": extract_field(raw_dict.get("contact_person")),
             "organization_name": extract_field(raw_dict.get("organization_name")),
             "inn": extract_field(raw_dict.get("inn")),
             "kpp": extract_field(raw_dict.get("kpp")),
@@ -643,7 +645,9 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
             wrapped_data["corr_account"]["note"] = "К/С автоматически найден по префиксу 301"
     # ------------------------------------------
 
-    from validators import validate_inn, validate_kpp, validate_bank_account, validate_bik
+    from validators import validate_inn, validate_kpp, validate_bank_requisites
+    
+    doc_type = wrapped_data.get("document_type", {}).get("value", "Счет на оплату")
 
     # 5. Математический арбитраж (ИНН/КПП)
     inn_val = wrapped_data.get("inn", {}).get("value")
@@ -657,27 +661,20 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         wrapped_data["kpp"]["confidence"] = 0.01
         wrapped_data["kpp"]["note"] = "Неверный формат КПП (должно быть 9 цифр)"
 
-    # 6. Валидация банковских реквизитов
+    # 6. Валидация банковских реквизитов с прощением для КП
     bik_field = wrapped_data.get("bank_bik", {})
     bik_val = bik_field.get("value")
     
     # Валидация БИК
-    if bik_val and not validate_bik(bik_val):
-        wrapped_data["bank_bik"]["confidence"] = 0.01
-        wrapped_data["bank_bik"]["note"] = "Неверный формат БИК (должно быть 9 цифр, начало 04)"
-
+    wrapped_data["bank_bik"] = validate_bank_requisites(bik_val, "bank_bik", doc_type)
+    new_bik_val = wrapped_data.get("bank_bik", {}).get("value")
+    
     # Валидация Расчетного счета (р/с)
     rs_field = wrapped_data.get("bank_account", {})
-    if rs_field.get("value") and bik_val:
-        if not validate_bank_account(rs_field["value"], bik_val, is_corr=False):
-            wrapped_data["bank_account"]["confidence"] = 0.01
-            wrapped_data["bank_account"]["note"] = "Ошибка контрольного ключа р/с (не совпадает с БИК)"
+    wrapped_data["bank_account"] = validate_bank_requisites(rs_field.get("value"), "bank_account", doc_type, is_corr=False, bik=new_bik_val)
 
     # Валидация Корреспондентского счета (к/с)
     ks_field = wrapped_data.get("corr_account", {})
-    if ks_field.get("value") and bik_val:
-        if not validate_bank_account(ks_field["value"], bik_val, is_corr=True):
-            wrapped_data["corr_account"]["confidence"] = 0.01
-            wrapped_data["corr_account"]["note"] = "Ошибка контрольного ключа к/с (не совпадает с БИК)"
+    wrapped_data["corr_account"] = validate_bank_requisites(ks_field.get("value"), "corr_account", doc_type, is_corr=True, bik=new_bik_val)
 
     return wrapped_data

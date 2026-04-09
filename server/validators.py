@@ -66,3 +66,30 @@ def validate_bik(bik: str) -> bool:
     """Проверка формата БИК (9 цифр, начинается на 04)."""
     bik = re.sub(r'\D', '', str(bik))
     return len(bik) == 9 and bik.startswith('04')
+
+def validate_bank_requisites(value: str, field_name: str, document_type: str = "Счет на оплату", is_corr: bool = False, bik: str = None) -> dict:
+    """
+    Универсальная проверка для БИК и Счетов, которая прощает пустоту для КП.
+    """
+    is_empty = value in ["---", None, "", "null"]
+    is_kp = "коммерческое" in str(document_type).lower()
+
+    if is_empty:
+        if is_kp:
+            # Для КП отсутствие банка - это норма. Ошибки нет.
+            return {"value": "---", "confidence": 1.0, "isVerified": False, "note": "Не требуется для КП"}
+        else:
+            # Для Счета отсутствие банка - это критическая ошибка.
+            return {"value": "---", "confidence": 0.01, "isVerified": False, "note": f"Обязательное поле {field_name} отсутствует"}
+
+    # Если данные есть, проверяем их стандартно
+    val_str = str(value)
+    
+    if field_name == "bank_bik":
+        if not validate_bik(val_str):
+            return {"value": val_str, "confidence": 0.01, "isVerified": False, "note": "Неверный формат БИК (должно быть 9 цифр, начало 04)"}
+    elif field_name in ["bank_account", "corr_account"]:
+        if bik and not validate_bank_account(val_str, bik, is_corr=is_corr):
+            return {"value": val_str, "confidence": 0.01, "isVerified": False, "note": f"Ошибка контрольного ключа {'к/с' if is_corr else 'р/с'} (не совпадает с БИК)"}
+
+    return {"value": val_str, "confidence": 1.0, "isVerified": False}
