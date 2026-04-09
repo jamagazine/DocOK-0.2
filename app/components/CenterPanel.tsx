@@ -11,7 +11,8 @@ import {
   ChevronsRight,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Loader2
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -535,7 +536,7 @@ function SpecTable() {
 
 
 function InvoiceTable() {
-  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows, displayRows, searchQuery, setSearchQuery } = useData();
+  const { invoiceRows, setInvoiceRows, handleFile, selectedIds, toggleRowSelection, specRows, displayRows, searchQuery, setSearchQuery, uploadStatuses } = useData();
   const { handleCellUpdate } = useTableEditor('invoice');
   const { handleKeyDown } = useTableNavigation();
 
@@ -566,6 +567,8 @@ function InvoiceTable() {
     );
   }
 
+  const invoiceFiles = Object.values(uploadStatuses).filter(f => f.type === 'invoice');
+
   return (
     <div className="flex flex-col">
       {invoiceRows.length > 0 ? (
@@ -588,6 +591,11 @@ function InvoiceTable() {
               />
             ))}
           </div>
+        </div>
+      ) : invoiceFiles.length > 0 ? (
+        <div className="p-12 flex flex-col items-center justify-center">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
+          <p className="text-slate-600 font-medium">ИИ анализирует товарные позиции...</p>
         </div>
       ) : (
         <div className="p-4">

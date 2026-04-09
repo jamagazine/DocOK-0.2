@@ -522,10 +522,16 @@ async def process_invoice(
                 with open(raw_log_p, "w", encoding="utf-8") as f:
                     json.dump(raw_ocr_data, f, ensure_ascii=False, indent=2)
             elif filename.endswith((".xlsx", ".xls", ".csv")):
-                from parser_utils import excel_to_grid_markdown, excel_to_markdown_header
-                extracted_text = excel_to_grid_markdown(temp_path)
-                _, ext = os.path.splitext(filename)
-                full_header_text = excel_to_markdown_header(temp_path, ext)
+                from parser_utils import split_excel_to_md_sections
+                header_md, items_md, footer_md = split_excel_to_md_sections(temp_path)
+                
+                extracted_text = items_md
+                
+                # Собираем данные для LLM реквизитов (шапка + подвал, без мусора)
+                full_header_text = header_md
+                if footer_md:
+                    full_header_text += "\n\n" + footer_md
+                
                 main_doc = None
                 
                 # --- ТЗ: Если это файл спецификации и Excel, используем правила вместо ИИ ---
@@ -546,11 +552,14 @@ async def process_invoice(
             # Save sterile MD files locally for reference (Full Debug View)
             debug_header = f"DEBUG_INFO: Size={p_width}x{p_height}, Method={p_method}\n"
             
-            # Для Excel файлов full_header_text уже содержит в себе маркер скрытой таблицы.
-            # Мы можем просто вставить таблицу товаров на место маркера для красивого дебаг-файла.
-            if p_method in ["excel_ai", "excel_rules"] and "... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ..." in full_header_text:
-                full_md_debug = full_header_text.replace("... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...", extracted_text)
-                full_md_debug = (debug_header + full_md_debug).strip()
+            if p_method in ["excel_ai", "excel_rules"]:
+                # Жесткая сборка дебаг-файла без дублей
+                parts = [debug_header, header_md]
+                if items_md:
+                    parts.extend(["\n\n[ТАБЛИЦА ТОВАРОВ]\n\n", items_md])
+                if footer_md:
+                    parts.extend(["\n\n[ПОДВАЛ ДОКУМЕНТА]\n\n", footer_md])
+                full_md_debug = "".join(parts).strip()
             else:
                 full_md_debug = (debug_header + full_header_text + "\n\n" + extracted_text).strip()
             

@@ -1196,11 +1196,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
 
           if (resData.raw_markdown) {
-            const instantRows = parseMarkdownToRows(resData.raw_markdown, stage, file.name);
             if (stage === 'spec') {
+              const instantRows = parseMarkdownToRows(resData.raw_markdown, stage, file.name);
               setSpecRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as SpecRow[]]);
-            } else {
-              setInvoiceRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as InvoiceRow[]]);
             }
           }
 
@@ -1303,6 +1301,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
               });
 
               if (data.status === 'final') {
+                 if (currentStage === 'invoice' && data.data?.items) {
+                    const parsedItems = data.data.items.map((it: any) => {
+                      // Убедимся, что ID и fileId присутствуют для корректной привязки UI
+                      return {
+                        ...it,
+                        id: it.id || String(Date.now() + Math.random()),
+                        fileId: fileName
+                      };
+                    });
+                    setInvoiceRows(prev => [...prev.filter(r => r.fileId !== fileName), ...parsedItems]);
+                 }
                  await fetchStorageFiles(); 
               }
             } catch (e) {

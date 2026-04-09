@@ -1294,6 +1294,78 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     else:
         return markdown_header
 
+def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
+    """
+    Разделяет Excel-документ на три MD-блока: 
+    1. header_md: от начала до заголовка товарной таблицы.
+    2. items_md: строго от заголовка до строки «Итого/Всего» (включая её).
+    3. footer_md: контакты/подписи после строки «Итого», пропуская сами строки сумм.
+    """
+    try:
+        if file_path.lower().endswith('.csv'):
+            df = pd.read_csv(file_path, dtype=str, sep=None, engine='python', on_bad_lines='skip')
+        else:
+            df = pd.read_excel(file_path, header=None, dtype=str)
+    except Exception as e:
+        print(f"Error reading spreadsheet: {e}")
+        return "", "", ""
+
+    # Bulk cleaning
+    df = df.map(clean_val)
+    
+    # 1. Поиск начала таблицы (строка с заголовками товаров)
+    table_start_idx = len(df)
+    target_words = {'кол-во', 'цена', 'количество', 'сумма', 'товар', 'наименование', 'артикул'}
+    for idx, row in df.iterrows():
+        row_text = ' '.join(map(str, row.values)).lower()
+        matches = sum(1 for word in target_words if word in row_text)
+        if matches >= 2:
+            table_start_idx = idx
+            break
+
+    # 2. Поиск конца таблицы (первая строка «Итого» или «Всего» после начала таблицы)
+    table_end_idx = len(df)
+    stop_words = {'итого', 'всего к оплате', 'всего наименований', 'сумма ндс', 'в т.ч. ндс', 'итого с ндс', 'всего'}
+    for idx in range(table_start_idx + 1, len(df)):
+        row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+        if any(stop in row_text for stop in stop_words):
+            table_end_idx = idx
+            break
+
+    # 3. Поиск настоящего подвала (пропуская строки сумм)
+    # Ищем первую строку через 1-2 строки после итогового блока, 
+    # которая не содержит словесный мусор сумм, или просто пропускаем строки с суммами.
+    real_footer_idx = len(df)
+    summary_noise_words = {'итого', 'всего', 'ндс', 'сумм', 'рубл', 'копе'}
+    
+    if table_end_idx < len(df):
+        for idx in range(table_end_idx, len(df)):
+            row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
+            if not row_text.strip():
+                continue
+            # Если строка содержит слова-паразиты сумм, мы её пропускаем
+            if any(noise in row_text for noise in summary_noise_words):
+                continue
+            
+            # Нашли первую информативную строку подвала (вероятно, контакты, подписи)
+            real_footer_idx = idx
+            break
+
+    # Срезка блоков
+    header_df = df.iloc[:table_start_idx].dropna(axis=1, how='all').dropna(axis=0, how='all')
+    items_df = df.iloc[table_start_idx:table_end_idx + 1].dropna(axis=1, how='all').dropna(axis=0, how='all')
+    footer_df = df.iloc[real_footer_idx:].dropna(axis=1, how='all').dropna(axis=0, how='all')
+
+    for d in [header_df, items_df, footer_df]:
+        if not d.empty:
+            d.columns = ["" if (isinstance(c, int) or "Unnamed" in str(c)) else c for c in d.columns]
+
+    header_md = header_df.to_markdown(index=False) if not header_df.empty else ""
+    items_md = items_df.to_markdown(index=False) if not items_df.empty else ""
+    footer_md = footer_df.to_markdown(index=False) if not footer_df.empty else ""
+
+    return header_md, items_md, footer_md
+
 
 
 

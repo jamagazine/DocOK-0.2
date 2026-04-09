@@ -90,14 +90,13 @@ def clean_and_group_markdown_table(md_text: str) -> str:
         if not row or set("".join(row).replace('-', '').replace(' ', '')) == set():
             continue
             
-        # Лечим дробные номера (47.0 -> 47)
-        val_col_0 = row[0].replace('.0', '').replace('.', '').strip() if len(row) > 0 else ""
-        val_col_1 = row[1].replace('.0', '').replace('.', '').strip() if len(row) > 1 else ""
+        val_0 = row[0].strip() if len(row) > 0 else ""
+        val_1 = row[1].strip() if len(row) > 1 else ""
         
         is_anchor = False
-        if re.fullmatch(r'\d+', val_col_0) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', row[0] if len(row)>0 else ""):
+        if val_0 and len(val_0) < 15 and val_0.lower() != 'итого':
             is_anchor = True
-        elif val_col_1 and (re.fullmatch(r'\d+', val_col_1) or re.fullmatch(r'[А-Яа-яA-Za-z]\d+[а-я]?', row[1] if len(row)>1 else "")):
+        elif val_1 and len(val_1) < 15 and val_1.lower() != 'итого':
             is_anchor = True
 
         has_useful_data = bool(re.search(r'[a-zA-Zа-яА-Я0-9]', " ".join(row)))
