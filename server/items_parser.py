@@ -96,7 +96,7 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     current_row_cells = []
     header = pruned_body[0]
 
-    for row in pruned_body[2:]:
+    for row in pruned_body[1:]:
         if not row or set("".join(row).replace('-', '').replace(' ', '')) == set():
             continue
             
@@ -177,17 +177,18 @@ def validate_math(items: list) -> list:
 async def process_items(extracted_text: str, p_method: str = "", api_key: str = "", folder_id: str = "", supplier_name: str = ""):
     """
     Main entry point for processing table items. 
-    Applies slicer for Excel/CSV generated Markdown, then calls LLM.
+    Applies slicer for Excel/CSV generated Markdown, chunks the payload, then calls LLM concurrently.
+    Returns: (items_list, total_tokens, total_cost)
     """
     from ai_service import gpt_yandex, parse_gpt_json, load_prompt
     
     if not extracted_text:
-        return []
+        return [], 0, 0.0
 
     markdown_payload = extracted_text
     
     if p_method == "excel_ai":
-        # Apply Excel/CSV Markdown Squeezer
+        # Apply Excel/CSV Semicolon Squeezer
         markdown_payload = clean_and_group_markdown_table(extracted_text)
     elif p_method in ["ocr_table", "pdf_text"]:
         # OCR PDF filter: keep only lines containing digits (price/quantity candidates)
@@ -201,34 +202,62 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     prompt_template = load_prompt("invoice_items")
     if not prompt_template:
         print("Error: invoice_items_prompt.md not found")
-        return []
+        return [], 0, 0.0
         
     parts = prompt_template.split("[INSTRUCTION]")
     system_prompt = parts[0].strip()
-    instruction = "[INSTRUCTION]" + parts[1].replace("{markdown_payload}", markdown_payload).strip()
     
-    try:
-        llm_response, _ = await gpt_yandex(
-            text=instruction, 
-            api_key=api_key, 
-            folder_id=folder_id, 
-            system_prompt=system_prompt,
-            model_type="pro"
-        )
+    # Chunking Semicolon Payload (15 rows max per chunk) to avoid output token truncation
+    lines = markdown_payload.split('\n')
+    header_line = lines[0] if lines else ""
+    data_lines = lines[1:] if len(lines) > 1 else []
+    
+    chunks = []
+    chunk_size = 15
+    if data_lines:
+        for i in range(0, len(data_lines), chunk_size):
+            chunk = [header_line] + data_lines[i:i+chunk_size]
+            chunks.append('\n'.join(chunk))
+    else:
+        chunks = [markdown_payload]
         
-        parsed = parse_gpt_json(llm_response)
-        items = parsed.get("items", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+    total_tokens = 0
+    total_cost = 0.0
+    all_items = []
+    
+    async def process_chunk(chunk_payload):
+        instruction = "[INSTRUCTION]" + parts[1].replace("{markdown_payload}", chunk_payload).strip()
+        try:
+            llm_response, used_tokens = await gpt_yandex(
+                text=instruction, 
+                api_key=api_key, 
+                folder_id=folder_id, 
+                system_prompt=system_prompt,
+                model_type="pro"
+            )
+            parsed = parse_gpt_json(llm_response)
+            chunk_items = parsed.get("items", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+            return chunk_items, used_tokens
+        except Exception as e:
+            logger.error(f"CRITICAL: Error calling LLM for items parsing chunk: {e}", exc_info=True)
+            return [], 0
+
+    chunk_tasks = [process_chunk(c) for c in chunks]
+    results = await asyncio.gather(*chunk_tasks)
+    
+    for items, t in results:
+        all_items.extend(items)
+        total_tokens += t
         
-        # Force supplier assignment if missing
-        if supplier_name:
-            for item in items:
-                if not item.get("supplier") or item.get("supplier") == "---":
-                    item["supplier"] = supplier_name
-                    
-        # Apply Math Sanitizer
-        validated_items = validate_math(items)
-        return validated_items
-        
-    except Exception as e:
-        logger.error(f"CRITICAL: Error calling LLM for items parsing: {e}", exc_info=True)
-        return []
+    # Cost calculation: Yandex Pro is usually ~0.6 rub per 1000 tokens
+    total_cost = (total_tokens / 1000.0) * 0.6
+
+    # Force supplier assignment if missing
+    if supplier_name:
+        for item in all_items:
+            if not item.get("supplier") or item.get("supplier") == "---":
+                item["supplier"] = supplier_name
+                
+    # Apply Math Sanitizer
+    validated_items = validate_math(all_items)
+    return validated_items, total_tokens, total_cost

@@ -606,18 +606,17 @@ async def process_invoice(
             yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
             supplier_name = main_doc.get("organization_name", {}).get("value", "") if isinstance(main_doc, dict) else ""
             if p_method == "excel_rules":
-                # Для Excel-спеков мы уже имеем данные в MD, просто конвертируем их если нужно, 
-                # или используем process_items в режиме rules
-                all_items = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
+                all_items, items_tokens, items_cost = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
             else:
-                all_items = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
+                all_items, items_tokens, items_cost = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
 
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
                 print(f"Warning: LLM returned empty data for file [{original_name}]")
             
             footer_data = {}
-            total_tokens = 0
+            total_tokens = items_tokens
+            total_cost = items_cost
 
             # Final structural assembly
             final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)
@@ -626,8 +625,9 @@ async def process_invoice(
             # Summary and Cost
             from parser_utils import generate_invoice_summary
             summary_md = generate_invoice_summary(final_struct)
-            rate = 0.6 if p_method == "ocr_table" else 0.2
-            cost = round((total_tokens * rate) / 1000 + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)
+            
+            # Add vision/document base cost (Yandex Pro cost already added via items_cost)
+            cost = round(total_cost + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)
             final_struct.update({"cost": cost, "method": p_method, "usage": {"tokens": total_tokens}, "summary_md": summary_md})
             
             # Cache and Manifest update

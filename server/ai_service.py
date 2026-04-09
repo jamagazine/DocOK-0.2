@@ -195,13 +195,16 @@ async def get_token_count(text: str, model_type: str, api_key: str, folder_id: s
     return 0
 
 def parse_gpt_json(text: str):
+    import logging
+    logger = logging.getLogger(__name__)
     try:
-        text = re.sub(r'```json|```', '', text).strip()
-        match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
+        text_clean = re.sub(r'```json|```', '', text).strip()
+        match = re.search(r'(\[.*\]|\{.*\})', text_clean, re.DOTALL)
         if match:
             return json.loads(match.group(1))
-        return json.loads(text.strip())
+        return json.loads(text_clean.strip())
     except:
+        logger.error(f"Failed to parse LLM response. Possible truncation. Response: {text[:200]}...")
         return None
 
 def normalize_invoice_table(md_text: str) -> str:
