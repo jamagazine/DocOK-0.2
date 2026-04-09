@@ -11,6 +11,18 @@ from thefuzz import fuzz
 CLIENT_INN = "5904003027"  # ПАО ММК-Пермь
 CLIENT_ADDRESS = "614058, ПЕРМСКИЙ КРАЙ, ПЕРМЬ Г, ПРОМЫШЛЕННАЯ УЛ, ДОМ 110"
 
+def clean_val(x):
+    if pd.isna(x) or x is None:
+        return ""
+    s = str(x).strip()
+    if s.lower() in ['nan', 'none', 'null']:
+        return ""
+    # Удаляем лишние кавычки из начала и конца, если они есть
+    if s.startswith('"') and s.endswith('"'):
+        s = s[1:-1]
+    # Экранируем пайпы для корректного Markdown
+    return s.replace('|', '\\|').replace('\n', ' ')
+
 def deskew_image(pil_img):
     """
     Straightens a tilted scan (OCR Stage 1 Optimization).
@@ -703,30 +715,26 @@ def excel_to_grid_markdown(file_path: str) -> str:
     Converts an Excel invoice to Markdown using Pandas.
     Cleans up empty rows/cols and removes 'Unnamed' headers to avoid token explosion.
     """
-    import pandas as pd
     try:
         if file_path.lower().endswith('.csv'):
             df = pd.read_csv(file_path, dtype=str, sep=None, engine='python', on_bad_lines='skip')
         else:
-            df = pd.read_excel(file_path, dtype=str)
+            # Читаем без заголовков, чтобы не потерять первую строку полезных данных
+            df = pd.read_excel(file_path, header=None, dtype=str)
     except Exception as e:
         return f"Error reading spreadsheet: {e}"
 
     # Drop fully empty cols and rows
     df = df.dropna(axis=1, how='all')
     df = df.dropna(axis=0, how='all')
-    df = df.fillna('')
     
-    # Rename 'Unnamed' columns to empty string to avoid MD pollution
-    df.columns = ["" if "Unnamed" in str(c) else c for c in df.columns]
-
-    def clean_val(x):
-        if not isinstance(x, str): return str(x)
-        return x.replace('""', '"').replace('.0', '').replace('\n', ' ').replace('|', '\\|').strip()
-
-    for col in df.columns:
-        df[col] = df[col].apply(clean_val)
-        
+    # Очищаем данные через карту (безопасно для имен колонок)
+    df = df.map(clean_val)
+    
+    # Даем пустые имена колонкам (т.к. мы читали без заголовков, имена будут 0, 1, 2...)
+    # Или заменяем Unnamed, если pandas все же их создал
+    df.columns = ["" if (isinstance(c, int) or "Unnamed" in str(c)) else c for c in df.columns]
+    
     return df.to_markdown(index=False)
 
 
@@ -1221,31 +1229,22 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     лечит кавычки, отрезает таблицу товаров и возвращает Markdown.
     """
     try:
-        # 1. Читаем файл принудительно как строки (чтобы не потерять ведущие нули в БИК/ИНН)
         ext = file_extension.lower()
         if ext == '.csv':
             df = pd.read_csv(file_path, dtype=str, sep=None, engine='python', on_bad_lines='skip')
         elif ext in ['.xlsx', '.xls']:
-            df = pd.read_excel(file_path, dtype=str)
+            df = pd.read_excel(file_path, header=None, dtype=str)
         else:
             return ""
-            
     except Exception as e:
         print(f"Error reading spreadsheet: {e}")
         return ""
 
-    # 2. Лечим данные (убираем NaN и исправляем баг двойных кавычек "")
-    df = df.fillna('')
-    def clean_and_fix(x):
-        if not isinstance(x, str): return str(x)
-        val = x.replace('""', '"').replace('.0', '').strip()
-        # БИК: 04... (если упал ноль, имеем 8 цифр на '4')
-        if val.isdigit() and len(val) == 8 and val.startswith('4'):
-            val = '0' + val
-        return val
-
-    for col in df.columns:
-        df[col] = df[col].apply(clean_and_fix)
+    # Primary cleanup
+    df = df.dropna(axis=1, how='all')
+    
+    # Bulk cleaning
+    df = df.map(clean_val)
 
     # 3. Ищем начало таблицы товаров (Smart Cut-off)
     table_start_idx = len(df)
@@ -1253,7 +1252,6 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     
     for idx, row in df.iterrows():
         row_text = ' '.join(map(str, row.values)).lower()
-        # Ищем пересечение: если в строке есть хотя бы 2 маркера таблицы
         matches = sum(1 for word in target_words if word in row_text)
         if matches >= 2:
             table_start_idx = idx
@@ -1270,35 +1268,31 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
                 table_end_idx = idx
                 break
         if table_end_idx == table_start_idx:
-            table_end_idx = len(df) - 1
+            # Если стоп-слова не найдены, считаем что таблица до конца (или была ошибка поиска)
+            table_end_idx = len(df)
             
-    # 4. Отрезаем всё, что ниже шапки (экономия токенов)
-    header_df = df.iloc[:table_start_idx]
-    header_df = header_df.head(60) # Защита от бесконечных шапок
-
-    # Убираем колонки Unnamed из шапки (по ТЗ: переименовать в пустые строки)
-    header_df.columns = ["" if "Unnamed" in str(c) else c for c in header_df.columns]
+    # Assembly
+    header_df = df.iloc[:table_start_idx].head(60)
+    header_df.columns = ["" if (isinstance(c, int) or "Unnamed" in str(c)) else c for c in header_df.columns]
     
-    # 5. Захватываем "подвал" документа ТОЛЬКО если есть данные после конца таблицы
-    footer_df = df.iloc[table_end_idx:]
-    if not footer_df.empty:
-        footer_df = footer_df.dropna(axis=1, how='all').dropna(axis=0, how='all')
-        footer_df.columns = ["" if "Unnamed" in str(c) else c for c in footer_df.columns]
-        
-    # 6. Конвертируем в Markdown
+    footer_text = ""
+    if table_end_idx < len(df):
+        footer_df = df.iloc[table_end_idx:]
+        if not footer_df.empty:
+            footer_df = footer_df.dropna(axis=1, how='all').dropna(axis=0, how='all')
+            if not footer_df.empty:
+                footer_df.columns = ["" if (isinstance(c, int) or "Unnamed" in str(c)) else c for c in footer_df.columns]
+                footer_text = footer_df.to_markdown(index=False)
+
     markdown_header = header_df.to_markdown(index=False) if not header_df.empty else ""
-    markdown_footer = footer_df.to_markdown(index=False) if not footer_df.empty else ""
     
     if not markdown_header:
         return ""
         
-    # Склеиваем сэндвич
-    if not footer_df.empty and table_end_idx < len(df):
-        combined_markdown = f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{markdown_footer}"
+    if footer_text:
+        return f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{footer_text}"
     else:
-        combined_markdown = markdown_header
-
-    return combined_markdown
+        return markdown_header
 
 
 
