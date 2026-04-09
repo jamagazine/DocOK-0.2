@@ -569,6 +569,9 @@ async def process_invoice(
             final_p = get_file_path(projectId, disk_name, "_invoice_final.md")
             with open(final_p, "w", encoding="utf-8") as f: f.write(full_md_debug)
 
+            from pricing import UsageStats
+            accumulator = UsageStats()
+
             # Metadata source (Header + bit of grid)
             metadata_source = (full_header_text + "\n" + (extracted_text[:1000] if extracted_text else "")).strip()
             if not metadata_source: metadata_source = "Empty Document"
@@ -595,7 +598,8 @@ async def process_invoice(
                     ai_data_to_pass = full_header_text
                 else:
                     ai_data_to_pass = raw_ocr_data
-                main_doc = await process_header_with_llm(ai_data_to_pass, api_key, folder_id)
+                main_doc, header_stats = await process_header_with_llm(ai_data_to_pass, api_key, folder_id)
+                accumulator.merge(header_stats)
 
             # --- ИНЪЕКЦИЯ МЕТОДА ДЛЯ ФРОНТЕНДА ---
             if isinstance(main_doc, dict):
@@ -606,17 +610,19 @@ async def process_invoice(
             yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
             supplier_name = main_doc.get("organization_name", {}).get("value", "") if isinstance(main_doc, dict) else ""
             if p_method == "excel_rules":
-                all_items, items_tokens, items_cost = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
+                all_items, items_stats = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
             else:
-                all_items, items_tokens, items_cost = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
+                all_items, items_stats = await process_items(extracted_text, p_method, api_key, folder_id, supplier_name)
+
+            accumulator.merge(items_stats)
+            if p_method == "ocr_table":
+                accumulator.add_ocr(num_pages, "ocr_table", "vision_ocr")
 
             # Sprint 4: Diagnostics
             if all((v.get("value") in [None, ""] if isinstance(v, dict) else v in [None, ""]) for v in main_doc.values()):
                 print(f"Warning: LLM returned empty data for file [{original_name}]")
             
             footer_data = {}
-            total_tokens = items_tokens
-            total_cost = items_cost
 
             # Final structural assembly
             final_struct = calculate_uncertainty({"document": main_doc, "items": all_items}, has_low_confidence)
@@ -626,9 +632,15 @@ async def process_invoice(
             from parser_utils import generate_invoice_summary
             summary_md = generate_invoice_summary(final_struct)
             
-            # Add vision/document base cost (Yandex Pro cost already added via items_cost)
-            cost = round(total_cost + (num_pages * 1.5 if p_method == "ocr_table" else 0), 2)
-            final_struct.update({"cost": cost, "method": p_method, "usage": {"tokens": total_tokens}, "summary_md": summary_md})
+            final_struct.update({
+                "cost": accumulator.cost, 
+                "method": p_method, 
+                "usage": {
+                    "tokens": accumulator.input_tokens + accumulator.output_tokens,
+                    "cost_breakdown": accumulator.details
+                }, 
+                "summary_md": summary_md
+            })
             
             # Cache and Manifest update
             with open(cache_path, "w", encoding="utf-8") as f: json.dump(final_struct, f, ensure_ascii=False, indent=2)
@@ -637,7 +649,7 @@ async def process_invoice(
                 # Гарантируем наличие метода для фронтенда (даже если данные пусты)
                 supp_safe = main_doc if isinstance(main_doc, dict) else {}
                 manifest[disk_name].update({
-                    "cost": cost, 
+                    "cost": accumulator.cost, 
                     "status": "READY_MD_OCR", # Унифицировано для Фронтенда
                     "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
@@ -647,7 +659,7 @@ async def process_invoice(
                     }
                 })
                 _save_manifest(manifest, projectId)
-            append_history({"fileName": original_name, "cost": cost, "tokens": total_tokens, "status": "DONE"}, projectId)
+            append_history({"fileName": original_name, "cost": accumulator.cost, "tokens": accumulator.input_tokens + accumulator.output_tokens, "status": "DONE"}, projectId)
             
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
 

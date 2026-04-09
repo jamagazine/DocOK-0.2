@@ -3,7 +3,10 @@ import json
 import re
 import asyncio
 import os
+import logging
 from thefuzz import fuzz
+
+logger = logging.getLogger(__name__)
 
 def find_account_by_context(text: str, prefix: str) -> str:
     """Ищет 20-значное число с заданным префиксом (407 или 301)."""
@@ -142,7 +145,7 @@ def load_prompt(name: str) -> str:
     except:
         return ""
 
-async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite"):
+async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite", label: str = "General"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     headers = {
         "Authorization": f"Api-Key {api_key}",
@@ -173,8 +176,17 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
         data = resp.json()
         
     usage = data.get('result', {}).get('usage', {})
-    total_tokens = int(usage.get('totalTokens', 0))
-    return data['result']['alternatives'][0]['message']['text'], total_tokens
+    in_tok = int(usage.get('inputTextTokens', 0))
+    out_tok = int(usage.get('completionTokens', 0))
+    
+    from pricing import UsageStats
+    stats = UsageStats()
+    model_key = "yandexgpt-pro" if model_type == "pro" else "yandexgpt-lite"
+    stats.add(in_tok, out_tok, model_key, label)
+    
+    logger.info(f"LLM call [{label}] — input: {in_tok}, output: {out_tok}, cost: {stats.cost}₽")
+    
+    return data['result']['alternatives'][0]['message']['text'], stats
 
 async def get_token_count(text: str, model_type: str, api_key: str, folder_id: str) -> int:
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
@@ -344,8 +356,10 @@ async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, syst
     clean_text = re.sub(r' +', ' ', clean_text)
     
     try:
-        raw_res, tokens = await gpt_yandex(clean_text, api_key, folder_id, system_prompt, model_type)
-        return parse_gpt_json(raw_res), tokens
+        logger.info("Attempting single API call for whole raw document...")
+        raw_res, stats = await gpt_yandex(clean_text, api_key, folder_id, system_prompt, model_type, label="Header_Single")
+        logger.info("Single API call successful.")
+        return parse_gpt_json(raw_res), stats
     except Exception as e:
         print(f"Metadata extraction error: {e}")
         return None, 0
@@ -366,9 +380,10 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
 
     # 3. Use unified large chunk for invoices (avoid fragmentation)
     CHUNK_SIZE = 9999 
+    from pricing import UsageStats
+    total_stats = UsageStats()
     all_items = []
     all_fixes = []
-    total_tokens = 0
     main_doc = {}
     footer_data = {}
 
@@ -379,13 +394,13 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         async with sem:
             chunk_text = header_block + "\n" + "\n".join(chunk)
             try:
-                raw_res, tokens = await gpt_yandex(chunk_text, api_key, folder_id, system_prompt, model_type)
+                raw_res, chunk_stats = await gpt_yandex(chunk_text, api_key, folder_id, system_prompt, model_type, label=f"Header_Chunk_{i+1}")
                 parsed = parse_gpt_json(raw_res)
                 if parsed:
-                    return i, True, parsed, tokens, None
-                return i, False, None, tokens, "Невалидный JSON"
+                    return i, True, parsed, chunk_stats, None
+                return i, False, None, UsageStats(), "Невалидный JSON"
             except Exception as e:
-                return i, False, None, 0, str(e)
+                return i, False, None, UsageStats(), str(e)
 
     tasks = [process_single_chunk(i, chunk) for i, chunk in enumerate(chunks)]
     results = []
@@ -396,8 +411,8 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     
     results.sort(key=lambda x: x[0])
     
-    for i, ok, parsed, tokens, err_msg in results:
-        total_tokens += tokens
+    for i, ok, parsed, chunk_stats, err_msg in results:
+        total_stats.merge(chunk_stats)
         if ok and parsed:
             fixes_to_add = []
             items_to_add = []
@@ -424,12 +439,11 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         "footer": footer_data
     }
     final_json = apply_math_arbitrage(final_json)
-            
     yield {
         "type": "result", 
         "items": final_json["items"], 
         "fixes": all_fixes, 
-        "tokens": total_tokens, 
+        "tokens": getattr(total_stats, "cost", 0.0), # Temporary placeholder if caller assumes it's cost/stats. Unused anyway.
         "main_doc": final_json["header"], 
         "footer": final_json["footer"],
         "chunks_report": []
@@ -559,7 +573,8 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         markdown_payload = clean_and_build_markdown(ocr_json)
     
     if not markdown_payload or markdown_payload == "NO_TEXT_FOUND":
-        return safe_parse_llm_json("")
+        from pricing import UsageStats
+        return safe_parse_llm_json(""), UsageStats()
 
     # 2. Читаем промпт
     with open(os.path.join(os.path.dirname(__file__), "prompts", "invoice_header_prompt.md"), "r", encoding="utf-8") as f:
@@ -571,16 +586,23 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     
     # 3. Вызываем LLM
     try:
-        llm_response, _ = await gpt_yandex(
+        llm_response, stats = await gpt_yandex(
             text=instruction, 
             api_key=api_key, 
             folder_id=folder_id, 
             system_prompt=system_prompt,
-            model_type="pro"
+            model_type="lite",
+            label="Header_Final"
         )
+        
+        parsed = parse_gpt_json(llm_response)
+        if isinstance(parsed, dict):
+            return parsed, stats
+        return main_doc, stats
     except Exception as e:
-        print(f"Error calling LLM for header parsing: {e}")
-        llm_response = ""
+        logger.error(f"Error calling LLM for prompt: {e}")
+        from pricing import UsageStats
+        return main_doc, UsageStats()
     
     # 4. Безопасно парсим
     wrapped_data = safe_parse_llm_json(llm_response)
@@ -594,7 +616,7 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
         for key in wrapped_data: 
             if isinstance(wrapped_data[key], dict) and "value" in wrapped_data[key]:
                 wrapped_data[key]["value"] = None # Стираем всё, это не поставщик
-        return wrapped_data
+        return wrapped_data, stats
 
     # 2. Нормализация телефона
     if wrapped_data.get("phone") and wrapped_data["phone"].get("value"):
@@ -686,4 +708,4 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     ks_field = wrapped_data.get("corr_account", {})
     wrapped_data["corr_account"] = validate_bank_requisites(ks_field.get("value"), "corr_account", doc_type, is_corr=True, bik=new_bik_val)
 
-    return wrapped_data
+    return wrapped_data, stats
