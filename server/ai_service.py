@@ -11,18 +11,11 @@ from dataclasses import dataclass, field
 from typing import Dict
 import pricing as pricing
 
-# --- ATOMIC ESTIMATION CONSTANTS ---
-# Атом 1: Реквизиты (Lite)
-EST_LITE_INPUT = 3500  # Усредненный вес промпта + текста счета
-EST_LITE_OUTPUT = 500  # Усредненный вес JSON с реквизитами
-
-# Атом 2: Чанк товаров (Pro)
-EST_PRO_CHUNK_OVERHEAD = 2500 # Промпт + Заголовки таблицы (отправляются в КАЖДОМ чанке)
-EST_PRO_CHUNK_OUTPUT = 600    # Усредненный вес JSON для пачки из 15 товаров
-
-# Настройки чанкинга
-CHUNK_SIZE = 15
-SAFE_BUFFER_MULTIPLIER = 1.15 # Запас +15% на "разговорчивость" ИИ
+# --- РЕАЛЬНЫЙ ВЕС ОПЕРАЦИЙ (КАЛИБРОВКА АПРЕЛЬ 2026) ---
+AVG_LITE_SESSION = 5000  # Весь цикл реквизитов (Input + Output)
+AVG_PRO_CHUNK = 4000     # Весь цикл одного чанка товаров (Input + Output)
+CHUNK_SIZE = 15          # Размер пачки строк
+SAFE_BUFFER_MULTIPLIER = 1.10 # Запас +10%
 
 @dataclass
 class UsageStats:
@@ -81,68 +74,24 @@ class UsageStats:
         }
 
 
-async def estimate_cost_before_processing(
-    text: str,
-    api_key: str = "",
-    folder_id: str = "",
-    num_positions: int = 0,
-    file_type: str = "excel_ai",
-    pages: int = 0
-) -> dict:
+async def estimate_cost_before_processing(text: str, num_positions: int = 0, **kwargs) -> dict:
     rates = pricing.PRICING_CONFIG
     
-    # --- СЦЕНАРИЙ 1: СКАНЫ (OCR) ---
-    if file_type in ["need_ocr", "ocr_table", "image"]:
-        pages = max(1, pages)
-        ocr_cost = pages * rates["ocr"]["table"]
-        
-        # Грубая прикидка для сканов: 1 страница = 1 чанк Pro + 1 вызов Lite
-        total_in = EST_LITE_INPUT + (EST_PRO_CHUNK_OVERHEAD + 2000) * pages
-        total_out = EST_LITE_OUTPUT + (EST_PRO_CHUNK_OUTPUT * pages)
-        
-        llm_cost = (total_in * rates["yandexgpt-pro"]["input_per_1k"] + 
-                    total_out * rates["yandexgpt-pro"]["output_per_1k"]) / 1000.0
-                    
-        total_cost = (ocr_cost + llm_cost) * SAFE_BUFFER_MULTIPLIER
-        return {
-            "estimated_cost": round(total_cost, 2),
-            "estimated_tokens": total_in + total_out,
-            "breakdown": f"OCR ({pages} стр) + Atomic LLM"
-        }
-
-    # --- СЦЕНАРИЙ 2: ТЕКСТ (Excel, CSV, PDF с текстом) ---
-    try:
-        # Попытка использовать точный токенизатор Яндекса
-        if api_key and folder_id:
-            raw_payload_tokens = await get_token_count(text, "pro", api_key, folder_id)
-        else:
-            raw_payload_tokens = len(text) // 3
-    except Exception:
-        raw_payload_tokens = len(text) // 3
-
-    # Атом 1: Стоимость Реквизитов (Lite)
-    lite_cost = (EST_LITE_INPUT * rates["yandexgpt-lite"]["input_per_1k"] + 
-                 EST_LITE_OUTPUT * rates["yandexgpt-lite"]["output_per_1k"]) / 1000.0
-
-    # Атом 2: Стоимость Товаров (Pro)
-    # Считаем количество чанков (минимум 1, даже если позиций 0, чтобы ИИ попытался найти таблицу)
+    # 1. Цена реквизитов (всегда 1 вызов Lite)
+    cost_lite = (AVG_LITE_SESSION * rates["yandexgpt-lite"]["input_per_1k"]) / 1000.0
+    
+    # 2. Цена товаров (количество чанков Pro)
     num_chunks = (num_positions // CHUNK_SIZE) + 1 if num_positions > 0 else 1
+    cost_pro = num_chunks * (AVG_PRO_CHUNK * rates["yandexgpt-pro"]["input_per_1k"]) / 1000.0
     
-    pro_in_tokens = (EST_PRO_CHUNK_OVERHEAD * num_chunks) + raw_payload_tokens
-    pro_out_tokens = EST_PRO_CHUNK_OUTPUT * num_chunks
-    
-    pro_cost = (pro_in_tokens * rates["yandexgpt-pro"]["input_per_1k"] + 
-                pro_out_tokens * rates["yandexgpt-pro"]["output_per_1k"]) / 1000.0
-
-    # Финальная сборка с динамическим буфером
-    total_base_cost = lite_cost + pro_cost
-    total_estimated_cost = total_base_cost * SAFE_BUFFER_MULTIPLIER
-    total_estimated_tokens = EST_LITE_INPUT + EST_LITE_OUTPUT + pro_in_tokens + pro_out_tokens
+    # 3. Итого (с символическим запасом 10% на очень длинные названия товаров)
+    final_cost = (cost_lite + cost_pro) * SAFE_BUFFER_MULTIPLIER
+    final_tokens = AVG_LITE_SESSION + (num_chunks * AVG_PRO_CHUNK)
 
     return {
-        "estimated_cost": round(total_estimated_cost, 2),
-        "estimated_tokens": total_estimated_tokens,
-        "breakdown": f"Atomic: Lite (1) + Pro ({num_chunks} chunks)"
+        "estimated_cost": round(final_cost, 2),
+        "estimated_tokens": int(final_tokens * SAFE_BUFFER_MULTIPLIER),
+        "breakdown": f"Lite(1) + Pro({num_chunks} ch)"
     }
 
 

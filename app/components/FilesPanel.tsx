@@ -142,7 +142,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 )}
                 {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
                   <span className="ml-2 text-[10px] text-slate-400 font-medium whitespace-nowrap">
-                    ~ {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов (прогноз)` : ''}
+                    ~ {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ (прогноз)
                   </span>
                 ) : null}
               </span>
@@ -261,10 +261,10 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   <div className="flex flex-col gap-0.5 opacity-70 ml-2">
                     <div className="flex items-center gap-1.5">
                       <span className="font-medium text-slate-600 text-[10px]">~ {data.estimated_cost?.toFixed(2) || 0} ₽</span>
-                      <span className="text-xs text-muted-foreground">• ~{data.estimated_tokens || 0} токенов (прогноз)</span>
+                      <span className="text-xs text-muted-foreground">(прогноз)</span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground/50 italic pl-0.5 leading-tight">
-                      * реальная стоимость обычно ниже на 10–15%
+                    <div className="text-[10px] text-muted-foreground/50 italic pl-0.5 mt-0.5 leading-tight">
+                      * расчет на базе 15 поз./чанк
                     </div>
                   </div>
                 ) : null}
