@@ -13,12 +13,12 @@ import pricing as pricing
 
 # --- ATOMIC ESTIMATION CONSTANTS ---
 # Атом 1: Реквизиты (Lite)
-EST_LITE_INPUT = 4500  # Усредненный вес промпта + текста счета
+EST_LITE_INPUT = 3500  # Усредненный вес промпта + текста счета
 EST_LITE_OUTPUT = 500  # Усредненный вес JSON с реквизитами
 
 # Атом 2: Чанк товаров (Pro)
-EST_PRO_CHUNK_OVERHEAD = 3500 # Промпт + Заголовки таблицы (отправляются в КАЖДОМ чанке)
-EST_PRO_CHUNK_OUTPUT = 800    # Усредненный вес JSON для пачки из 15 товаров
+EST_PRO_CHUNK_OVERHEAD = 2500 # Промпт + Заголовки таблицы (отправляются в КАЖДОМ чанке)
+EST_PRO_CHUNK_OUTPUT = 600    # Усредненный вес JSON для пачки из 15 товаров
 
 # Настройки чанкинга
 CHUNK_SIZE = 15
