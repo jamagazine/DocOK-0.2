@@ -796,7 +796,17 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     if is_spreadsheet:
         final_status = "READY_MD_LOCAL"
         file_method = "excel_ai"
-        num_pos = len(df) if locals().get('df') is not None else 0
+        # TZ#20: Считаем только реальные позиции товаров через Сквизер, 
+        # а не все строки датафрейма (которые включают шапку, пустые строки и хвост)
+        try:
+            from items_parser import clean_and_group_markdown_table
+            cleaned_md = clean_and_group_markdown_table(ext_text)
+            # Строки результата минус 1 заголовочная строка = реальные позиции товаров
+            cleaned_lines = [l for l in cleaned_md.split('\n') if l.strip()]
+            num_pos = max(0, len(cleaned_lines) - 1)
+        except Exception:
+            num_pos = len(df) if locals().get('df') is not None else 0
+
     elif is_pdf:
         if current_pdf_type == "TEXT_PDF" and stage == "invoice":
             final_status = "READY_MD_LOCAL"

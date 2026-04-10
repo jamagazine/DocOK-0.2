@@ -74,24 +74,42 @@ class UsageStats:
         }
 
 
-async def estimate_cost_before_processing(text: str, num_positions: int = 0, **kwargs) -> dict:
-    rates = pricing.PRICING_CONFIG
+async def estimate_cost_before_processing(
+    text: str,
+    num_positions: int = 0,
+    file_type: str = "excel_ai",
+    pages: int = 0,
+    **kwargs
+) -> dict:
+    # 1. Сценарий: Сканы (оставляем как было, 1.5р за стр.)
+    if file_type in ["need_ocr", "ocr_table", "image"]:
+        pages = max(1, pages)
+        est_cost = pages * 1.5
+        return {
+            "estimated_cost": round(est_cost, 2),
+            "estimated_tokens": pages * 5000,
+            "breakdown": f"OCR {pages} стр."
+        }
+
+    # 2. Сценарий: Текстовые файлы (Линейная модель)
+    # База (Реквизиты Lite)
+    base_fee = 0.60
+    # Переменная (Товары Pro)
+    rows_cost = num_positions * 0.20
+    # Налог на чанки (каждые 15 строк)
+    num_chunks = (num_positions // 15) + 1 if num_positions > 0 else 1
+    chunk_tax = (num_chunks - 1) * 0.50
     
-    # 1. Цена реквизитов (всегда 1 вызов Lite)
-    cost_lite = (AVG_LITE_SESSION * rates["yandexgpt-lite"]["input_per_1k"]) / 1000.0
+    # Итоговая цена (с микро-буфером 5%)
+    final_cost = (base_fee + rows_cost + chunk_tax) * 1.05
     
-    # 2. Цена товаров (количество чанков Pro)
-    num_chunks = (num_positions // CHUNK_SIZE) + 1 if num_positions > 0 else 1
-    cost_pro = num_chunks * (AVG_PRO_CHUNK * rates["yandexgpt-pro"]["input_per_1k"]) / 1000.0
-    
-    # 3. Итого (с символическим запасом 10% на очень длинные названия товаров)
-    final_cost = (cost_lite + cost_pro) * SAFE_BUFFER_MULTIPLIER
-    final_tokens = AVG_LITE_SESSION + (num_chunks * AVG_PRO_CHUNK)
+    # Оценка токенов для информации (0.35 — средний тариф Lite+Pro)
+    est_tokens = (final_cost / 0.35) * 1000
 
     return {
         "estimated_cost": round(final_cost, 2),
-        "estimated_tokens": int(final_tokens * SAFE_BUFFER_MULTIPLIER),
-        "breakdown": f"Lite(1) + Pro({num_chunks} ch)"
+        "estimated_tokens": int(est_tokens),
+        "breakdown": f"Base + {num_positions} rows + {num_chunks-1} tax"
     }
 
 
