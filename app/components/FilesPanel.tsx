@@ -12,6 +12,7 @@ import {
   Eraser
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
+import { toast } from 'sonner';
 import { twMerge } from 'tailwind-merge';
 import { useData } from '../context/DataContext';
 import { Badge } from './ui/badge';
@@ -35,6 +36,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
   const [isShiftPressed, setIsShiftPressed] = React.useState(false);
   const [billingHistory, setBillingHistory] = React.useState<any[]>([]);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if (activeProjectId && isOpen) {
@@ -485,15 +487,37 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
         </div>
 
         {/* Format Info - Moved to Top */}
-        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 text-[11px] text-slate-500">
-          <p className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-            Поддерживаемые форматы: <b>PDF, Excel (xlsx/xls), CSV, JPEG, PNG</b>
-          </p>
-          <p className="flex items-center gap-2 mt-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-            Максимальный размер: 20 МБ
-          </p>
+        <div 
+          onClick={() => fileInputRef.current?.click()}
+          className="px-4 py-3 bg-slate-50 border-b border-slate-200 text-[11px] text-slate-500 cursor-pointer hover:bg-slate-100 transition-colors group relative"
+        >
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                Поддерживаемые форматы: <b>PDF, Excel (xlsx/xls), CSV, JPEG, PNG</b>
+              </p>
+              <p className="flex items-center gap-2 mt-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                Максимальный размер: 20 МБ
+              </p>
+            </div>
+            <div className="bg-indigo-100 text-indigo-700 font-semibold px-2 py-1 rounded-md text-[10px] uppercase shadow-sm group-hover:bg-indigo-200 transition-colors">
+              + Импорт файлов
+            </div>
+          </div>
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            ref={fileInputRef}
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                handleFile(e.target.files, currentStage);
+                e.target.value = '';
+              }
+            }}
+          />
         </div>
 
         {/* Content List */}
@@ -655,8 +679,20 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   Итого за проект:
                   <button 
                     onClick={async () => {
+                      if (!activeProjectId) {
+                        toast.error("Проект не выбран");
+                        return;
+                      }
+                      if (!billingHistory || billingHistory.length === 0) {
+                        toast.error("К сожалению, нет данных для формирования отчета");
+                        return;
+                      }
                       try {
-                        const res = await fetch('http://localhost:8000/api/storage/history/export_xlsx');
+                        const res = await fetch(`http://localhost:8000/api/storage/history/export_xlsx?projectId=${activeProjectId}`);
+                        if (!res.ok) {
+                          toast.error("Не удалось сформировать отчет");
+                          return;
+                        }
                         const blob = await res.blob();
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
@@ -664,7 +700,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                         a.download = `Детализация - ${new Date().toLocaleDateString('ru-RU')}.xlsx`;
                         a.click();
                         window.URL.revokeObjectURL(url);
-                      } catch(e) { console.error('Failed to download XLSX', e); }
+                      } catch(e) { console.error('Failed to download XLSX', e); toast.error("Ошибка сети при скачивании детализации"); }
                     }} 
                     title="Скачать финансовую детализацию (XLSX) через Blob" 
                     className="p-1 ml-1 rounded hover:bg-slate-200 text-slate-500 hover:text-indigo-600 transition-colors"
