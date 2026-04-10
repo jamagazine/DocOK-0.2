@@ -99,42 +99,50 @@ async def estimate_cost_before_processing(
 
     # 2. Сценарий: Текстовые файлы (Excel, CSV, текстовые PDF)
     try:
-        # Попытка использовать точный токенизатор Яндекса
+        # Попытка использовать точный токенизатор Яндекса (Базовый замер)
         if api_key and folder_id:
-            input_tokens = await get_token_count(text, "pro", api_key, folder_id)
+            raw_input_tokens = await get_token_count(text, "pro", api_key, folder_id)
         else:
-            input_tokens = len(text) // 3
+            raw_input_tokens = len(text) // 3
     except Exception:
-        # Надежный Fallback, если токенизатор недоступен
-        input_tokens = len(text) // 3
+        raw_input_tokens = len(text) // 3
 
-    # Вес промптов Header + Items (усредненно)
-    input_tokens += 1200 
+    # ПЕРЕСЧЕТ С УЧЕТОМ РЕАЛЬНОГО ПАЙПЛАЙНА:
+    # 1. Вес промптов + полный контекст (Шапка/Подвал/Инструкции)
+    # Поднимаем с 1200 до 2500, так как Lite-вызов забирает много текста
+    input_tokens = raw_input_tokens + 2500 
 
-    # Оценка Output на основе количества строк
-    if num_positions == 0:
-        estimated_output = int(input_tokens * 0.45)
-    else:
-        header_output = 450
-        items_output = num_positions * 60 # В среднем 60 токенов на 1 позицию спецификации
+    # 2. Оценка Output (Генерация)
+    if num_positions > 0:
+        header_output = 500
+        # Поднимаем до 75 токенов на позицию (с запасом на детальный JSON)
+        items_output = num_positions * 75 
         estimated_output = header_output + items_output
+        
+        # 3. Налог на Чанкинг (Оверхед при пакетной обработке)
+        # Если строк много, каждый чанк (по 15 строк) добавляет ~600 токенов input
+        num_chunks = (num_positions // 15) + 1
+        if num_chunks > 1:
+            input_tokens += (num_chunks - 1) * 600
+    else:
+        estimated_output = int(input_tokens * 0.50)
 
     # Симуляция разделения (Шапка ~70% текста, Товары ~30% текста)
     header_input = int(input_tokens * 0.70)
     items_input = input_tokens - header_input
 
-    lite_rates = pricing.PRICING_CONFIG.get("yandexgpt-lite", {"input_per_1k": 0.15, "output_per_1k": 0.15})
-    pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.42, "output_per_1k": 0.42})
+    lite_rates = pricing.PRICING_CONFIG.get("yandexgpt-lite", {"input_per_1k": 0.20, "output_per_1k": 0.20})
+    pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.60, "output_per_1k": 0.60})
 
-    lite_cost = (header_input * lite_rates["input_per_1k"] + 450 * lite_rates["output_per_1k"]) / 1000.0
-    pro_cost = (items_input * pro_rates["input_per_1k"] + max(0, estimated_output - 450) * pro_rates["output_per_1k"]) / 1000.0
+    lite_cost = (header_input * lite_rates["input_per_1k"] + 500 * lite_rates["output_per_1k"]) / 1000.0
+    pro_cost = (items_input * pro_rates["input_per_1k"] + max(0, estimated_output - 500) * pro_rates["output_per_1k"]) / 1000.0
 
-    total_estimated = (lite_cost + pro_cost) * 1.30 # Буфер 30%
+    total_estimated = (lite_cost + pro_cost) * 1.30 # Финальный буфер 30%
 
     return {
         "estimated_cost": round(total_estimated, 2),
         "estimated_tokens": input_tokens + estimated_output,
-        "breakdown": f"Шапка (Lite) + Товары (Pro) + Запас 30%"
+        "breakdown": f"Шапка (Lite) + Товары (Pro) + Чанкинг + Запас 30%"
     }
 
 

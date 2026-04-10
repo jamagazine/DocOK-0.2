@@ -80,14 +80,15 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
     const statusStr = data.status || '';
     const isReadyMD = statusStr === 'READY_MD' || statusStr === 'READY_MD_LOCAL';
     const isReadyOCR = statusStr === 'READY_MD_OCR';
+    const isReadyAI = statusStr === 'READY_MD_AI';
     const isNeedOCR = statusStr === 'NEED_OCR';
     const isProcessed = statusStr === 'PROCESSED';
     const isProcessing = statusStr === 'PROCESSING' || (statusStr.includes('Анализ') && !isProcessed);
-    const isOk = statusStr.includes('Готово') || isReadyMD || isReadyOCR || isProcessed;
+    const isOk = statusStr.includes('Готово') || isReadyMD || isReadyOCR || isReadyAI || isProcessed;
     const isError = statusStr.includes('Ошибка');
-    const isLoading = !isOk && !isError && statusStr !== 'reset' && !isReadyMD && !isReadyOCR && !isProcessed && !isNeedOCR;
+    const isLoading = !isOk && !isError && statusStr !== 'reset' && !isReadyMD && !isReadyOCR && !isReadyAI && !isProcessed && !isNeedOCR;
     const isReset = statusStr === 'reset';
-    const method = (statusStr.includes('ИИ') || isProcessed || isReadyOCR || (data.cost !== undefined && data.cost > 0)) ? 'AI' : 'Local';
+    const method = (statusStr.includes('ИИ') || isProcessed || isReadyOCR || isReadyAI || (data.cost !== undefined && data.cost > 0)) ? 'AI' : 'Local';
     const isAiProcessed = method === 'AI';
     const file = filesMap[fileName];
     const fileSize = data.size || 0;
@@ -134,6 +135,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
               <span className="text-[11px] text-slate-500 mt-0.5">
                 {isReset ? 'Данные сброшены' : (
                   isReadyMD ? 'Готово (программный парсинг)' : 
+                  isReadyAI ? 'Готово (Yandex GPT)' :
                   isReadyOCR ? 'Готово (Yandex OCR)' : 
                   isNeedOCR ? 'Требуется OCR-анализ' :
                   isProcessed ? 'Готово (ИИ)' : statusStr

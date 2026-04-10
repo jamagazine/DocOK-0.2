@@ -649,7 +649,7 @@ async def process_invoice(
                     "cost": accumulator.total_cost, 
                     "tokens": accumulator.total_input + accumulator.total_output,
                     "usage": accumulator.to_dict(),
-                    "status": "READY_MD_OCR", # Унифицировано для Фронтенда
+                    "status": "READY_MD_AI" if p_method in ["excel_ai", "pdf_text"] else "READY_MD_OCR",
                     "method": p_method, # Ключ в корне для кнопок
                     "summary_md": summary_md,
                     "supplierData": {
