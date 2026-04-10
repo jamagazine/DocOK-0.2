@@ -746,6 +746,18 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
                         debug_p = get_file_path(projectId, secured_name, "_debug.md")
                         with open(debug_p, "w", encoding="utf-8") as f:
                             f.write(f"### DEBUG GRID FOR {secured_name}\n\n" + summary_md + "\n\n---\n\n" + "```\n" + debug_grid + "\n```")
+                            
+                    # Save local JSON cache mimicking AI structure for restoration
+                    if pre_items:
+                        cache_struct = {
+                            "doc_type": "spec",
+                            "method": "excel_rules",
+                            "items": pre_items
+                        }
+                        # Save to .json file matching secured_name
+                        json_cache_p = get_file_path(projectId, secured_name, ".json")
+                        with open(json_cache_p, "w", encoding="utf-8") as f:
+                            json.dump(cache_struct, f, ensure_ascii=False, indent=2)
                 except Exception as e_sum:
                     print(f"Pre-summary error: {e_sum}")
                     summary_md = ""
@@ -1022,6 +1034,18 @@ async def storage_delete(name: str, projectId: str, nuclear: bool = False):
             if os.path.exists(p):
                 os.remove(p)
                 
+    if nuclear:
+        h_path = get_history_path(projectId)
+        if os.path.exists(h_path):
+            try:
+                with open(h_path, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+                new_history = [h for h in history if h.get("fileName") != name and h.get("fileName") != dk]
+                with open(h_path, "w", encoding="utf-8") as f:
+                    json.dump(new_history, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"Error cleaning history during nuclear delete: {e}")
+
     if dk in m:
         del m[dk]
         _save_manifest(m, projectId)

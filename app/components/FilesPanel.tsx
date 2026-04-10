@@ -44,6 +44,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
         .catch(e => console.error("History fetch error:", e));
     }
   }, [activeProjectId, isOpen, uploadStatuses]);
+
+  React.useEffect(() => {
     const down = (e: KeyboardEvent) => { if (e.shiftKey) setIsShiftPressed(true); };
     const up = (e: KeyboardEvent) => { if (!e.shiftKey) setIsShiftPressed(false); };
     window.addEventListener('keydown', down);
@@ -53,8 +55,6 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
       window.removeEventListener('keyup', up);
     };
   }, []);
-
-  if (!isOpen) return null;
 
   const fileEntries = Object.entries(uploadStatuses);
 
@@ -245,54 +245,75 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   </>
                 )}
                 
-                {method === 'AI' && data.cost !== undefined && data.cost > 0 ? (
-                  <>
-                    <span className="text-slate-300 text-[10px]">•</span>
-                    <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="flex items-center gap-1.5 cursor-help">
-                            <Badge variant="secondary" className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-200 shadow-sm py-0 px-2 h-4.5 text-[10px] font-bold leading-none">
-                              {data.cost.toFixed(2)} ₽
-                            </Badge>
-                            <span className="text-[10px] text-slate-400 font-medium leading-none">
-                              {data.tokens} токенов
-                            </span>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6} className="py-2 px-3 text-xs bg-white border border-slate-100 rounded-md shadow-sm">
-                          {data.usage?.cost_breakdown ? (() => {
-                            // Агрегируем: все Header → "Реквизиты", все Items_Chunk_* → "Позиции"
-                            let headerCost = 0;
-                            let itemsCost = 0;
-                            Object.entries(data.usage.cost_breakdown).forEach(([key, info]: [string, any]) => {
-                              if (key.includes('Header')) headerCost += info.cost || 0;
-                              else if (key.includes('Items') || key.includes('Chunk')) itemsCost += info.cost || 0;
-                            });
-                            const rows: { label: string; cost: number }[] = [];
-                            if (headerCost > 0) rows.push({ label: 'Реквизиты', cost: headerCost });
-                            if (itemsCost > 0) rows.push({ label: 'Позиции', cost: itemsCost });
-                            if (rows.length === 0) return <span className="text-slate-400">Нет данных</span>;
-                            return (
-                              <div className="flex flex-col gap-1 min-w-[120px]">
-                                {rows.map(row => (
-                                  <div key={row.label} className="flex justify-between items-center gap-3">
-                                    <span className="text-slate-500 font-normal">{row.label}</span>
-                                    <span className="text-slate-900 font-bold tabular-nums">
-                                      {row.cost.toFixed(2)} <span className="text-[10px] font-normal text-slate-400">₽</span>
-                                    </span>
-                                  </div>
-                                ))}
+                {method === 'AI' && (data.cost !== undefined || data.tokens !== undefined) ? (() => {
+                  const cumulativeCost = billingHistory
+                    .filter(item => item.fileName === fileName)
+                    .reduce((sum, item) => sum + (Number(item.cost) || 0), 0) || data.cost || 0;
+                    
+                  const cumulativeTokens = billingHistory
+                    .filter(item => item.fileName === fileName)
+                    .reduce((sum, item) => sum + (Number(item.tokens) || 0), 0) || data.tokens || 0;
+
+                  if (cumulativeCost === 0 && cumulativeTokens === 0) return null;
+
+                  return (
+                    <>
+                      <span className="text-slate-300 text-[10px]">•</span>
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-1.5 cursor-help">
+                              <Badge variant="secondary" className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border-emerald-200 shadow-sm py-0 px-2 h-4.5 text-[10px] font-bold leading-none">
+                                {cumulativeCost.toFixed(2)} ₽
+                              </Badge>
+                              <span className="text-[10px] text-slate-400 font-medium leading-none">
+                                {cumulativeTokens} токенов
+                              </span>
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" sideOffset={6} className="py-2 px-3 text-xs bg-white border border-slate-100 rounded-md shadow-sm">
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex justify-between items-center gap-4 text-[10px] pb-1 border-b border-slate-100 font-bold text-slate-400">
+                                <span>НАКОПИТЕЛЬНЫЙ ИТОГ</span>
+                                <span className="text-indigo-600">Все запуски</span>
                               </div>
-                            );
-                          })() : (
-                            <span className="text-slate-400">Нет данных</span>
-                          )}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </>
-                ) : method === 'AI' ? (
+                              {data.usage?.cost_breakdown ? (() => {
+                                // Агрегируем: все Header → "Реквизиты", все Items_Chunk_* → "Позиции"
+                                let headerCost = 0;
+                                let itemsCost = 0;
+                                Object.entries(data.usage.cost_breakdown).forEach(([key, info]: [string, any]) => {
+                                  if (key.includes('Header')) headerCost += info.cost || 0;
+                                  else if (key.includes('Items') || key.includes('Chunk')) itemsCost += info.cost || 0;
+                                });
+                                const rows: { label: string; cost: number }[] = [];
+                                if (headerCost > 0) rows.push({ label: 'Реквизиты', cost: headerCost });
+                                if (itemsCost > 0) rows.push({ label: 'Позиции', cost: itemsCost });
+                                if (rows.length === 0) return <span className="text-slate-400">Нет данных о текущем запуске</span>;
+                                return (
+                                  <div className="flex flex-col gap-1 min-w-[120px]">
+                                    {rows.map(row => (
+                                      <div key={row.label} className="flex justify-between items-center gap-3">
+                                        <span className="text-slate-500 font-normal">{row.label}</span>
+                                        <span className="text-slate-900 font-bold tabular-nums">
+                                          {row.cost.toFixed(2)} <span className="text-[10px] font-normal text-slate-400">₽</span>
+                                        </span>
+                                      </div>
+                                    ))}
+                                    <div className="mt-1 pt-1 border-t border-slate-100 text-[9px] text-slate-400 italic">
+                                      * детализация только за последний запуск
+                                    </div>
+                                  </div>
+                                );
+                              })() : (
+                                <span className="text-slate-400">Детализация недоступна</span>
+                              )}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </>
+                  );
+                })() : method === 'AI' ? (
                   <div className="flex flex-col gap-0.5 opacity-70 ml-2">
                     <div className="flex items-center gap-1.5">
                       <span className="font-medium text-slate-600 text-[10px]">~ {data.estimated_cost?.toFixed(2) || 0} ₽</span>
@@ -428,11 +449,13 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   };
 
   const projectTotalCost = React.useMemo(() => {
-    if (billingHistory && billingHistory.length > 0) {
+    if (Array.isArray(billingHistory) && billingHistory.length > 0) {
       return billingHistory.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
     }
-    return fileEntries.reduce((acc: number, [_, d]: [string, any]) => acc + (d.cost || 0), 0);
-  }, [billingHistory, fileEntries]);
+    return Object.values(uploadStatuses).reduce((acc: number, d: any) => acc + (d.cost || 0), 0);
+  }, [billingHistory, uploadStatuses]);
+
+  if (!isOpen) return null;
 
   return (
     <>
@@ -471,42 +494,63 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
         </div>
 
         {/* Content List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 pt-2">
           {fileEntries.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-slate-400">
               <FileText className="w-10 h-10 mb-2 opacity-50" />
               <p className="text-sm">Нет загруженных файлов</p>
             </div>
-          ) : (
-            <>
+          ) : (() => {
+            const isInvoiceStage = currentStage.includes('invoice');
+            
+            const specFiles = fileEntries.filter(([_, d]) => d.type === 'spec');
+            const invoiceFiles = fileEntries.filter(([_, d]) => d.type === 'invoice');
 
-              <div className="flex items-center gap-2 py-1 mb-2">
-                <hr className="flex-1 border-slate-200" />
-                <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Файлы спецификаций</span>
-                <hr className="flex-1 border-slate-200" />
-              </div>
+            const renderSection = (title: string, files: [string, any][], type: string) => {
+              if (files.length === 0) return null;
+              
+              // Sort files within section: active (non-reset) first
+              const sortedFiles = [...files].sort(([_, a], [__, b]) => {
+                if (a.status !== 'reset' && b.status === 'reset') return -1;
+                if (a.status === 'reset' && b.status !== 'reset') return 1;
+                return 0;
+              });
 
-              {/* Sorted File Entries */}
-              {Object.entries(uploadStatuses)
-                .sort(([nameA, statusA]: [string, any], [nameB, statusB]: [string, any]) => {
-                  const currentStageBase = currentStage.replace('_ai', '');
-                  const isCurrentA = statusA.method?.includes(currentStageBase);
-                  const isCurrentB = statusB.method?.includes(currentStageBase);
-                  if (isCurrentA && !isCurrentB) return -1;
-                  if (!isCurrentA && isCurrentB) return 1;
+              return (
+                <div className="space-y-3 mb-6">
+                  <div className="flex items-center gap-2 py-1">
+                    <hr className="flex-1 border-slate-200" />
+                    <span className={cn(
+                      "text-[9px] uppercase tracking-widest font-bold",
+                      type === (isInvoiceStage ? 'invoice' : 'spec') ? "text-indigo-500" : "text-slate-400"
+                    )}>
+                      {title}
+                    </span>
+                    <hr className="flex-1 border-slate-200" />
+                  </div>
+                  <div className="space-y-3">
+                    {sortedFiles.map(([fileName, data]) => renderFileItem(fileName, data, data.status === 'reset'))}
+                  </div>
+                </div>
+              );
+            };
 
-                  const isResetA = statusA.status === 'reset';
-                  const isResetB = statusB.status === 'reset';
-                  if (!isResetA && isResetB) return -1;
-                  if (isResetA && !isResetB) return 1;
-
-                  return 0;
-                })
-                .map(([fileName, data]: [string, any]) => {
-                  return renderFileItem(fileName, data, data.status === 'reset');
-                })}
-            </>
-          )}
+            return (
+              <>
+                {isInvoiceStage ? (
+                  <>
+                    {renderSection("Файлы счетов", invoiceFiles, 'invoice')}
+                    {renderSection("Файлы спецификаций", specFiles, 'spec')}
+                  </>
+                ) : (
+                  <>
+                    {renderSection("Файлы спецификаций", specFiles, 'spec')}
+                    {renderSection("Файлы счетов", invoiceFiles, 'invoice')}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Footer with Progress & Total */}

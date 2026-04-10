@@ -1303,7 +1303,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               });
 
               if (data.status === 'final') {
-                 if (currentStage === 'invoice' && data.data?.items) {
+                 if (stage === 'invoice' && data.data?.items) {
                     const parsedItems = data.data.items.map((it: any) => {
                       // Убедимся, что ID и fileId присутствуют для корректной привязки UI
                       return {
@@ -1368,7 +1368,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
       }
 
-      const newStatus = originalData.method?.includes('ocr') ? 'READY_MD_OCR' : 'READY_MD_AI';
+      let newStatus: FileStatus = 'READY_MD_AI';
+      if (originalData.method?.includes('ocr')) {
+        newStatus = 'READY_MD_OCR';
+      } else if (originalData.method === 'excel_rules' || originalData.method === 'rules') {
+        newStatus = 'READY_MD';
+      }
       
       setUploadStatuses(prev => ({
           ...prev,
@@ -2205,10 +2210,29 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [activeProjectId, syncProjectFilesCount, setUploadStatuses, setFilesMap, setSpecRows, setInvoiceRows, setEstimateRows]);
 
   const resetFileData = useCallback((fileName: string) => {
-    // 1. Убираем сроки только из активной вкладки
-    switch (currentStage) {
+    // 1. Убираем сроки только из активной вкладки, нормализуем название этапа
+    const stageBase = currentStage.replace('_ai', '');
+    
+    switch (stageBase) {
       case 'spec':
-        setSpecRows(prev => prev.filter(r => r.fileId !== fileName));
+        setSpecRows(prev => {
+          const filtered: SpecRow[] = [];
+          for (const row of prev) {
+            if (row.children && row.children.length > 0) {
+              const keptChildren = row.children.filter((c: SpecRow) => c.fileId !== fileName);
+              if (keptChildren.length === 0) continue;
+              if (keptChildren.length === row.children.length) {
+                filtered.push(row);
+              } else {
+                const newQty = keptChildren.reduce((acc, c) => acc + parseQtyNum(c.quantity), 0);
+                filtered.push({ ...row, children: keptChildren, quantity: String(newQty > 0 ? newQty : '') });
+              }
+            } else if (row.fileId !== fileName) {
+              filtered.push(row);
+            }
+          }
+          return filtered;
+        });
         break;
       case 'invoice':
         setInvoiceRows(prev => prev.filter(r => r.fileId !== fileName));
