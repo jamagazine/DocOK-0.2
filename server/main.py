@@ -921,6 +921,23 @@ async def clear_cache_for_reprocess(request: Request):
 
     return {"status": "success"}
 
+@app.get("/api/storage/projects/{project_id}/files/{name}/json")
+async def get_project_file_json(project_id: str, name: str):
+    m = _load_manifest(project_id)
+    dk = None
+    for k, v in m.items():
+        if isinstance(v, dict) and v.get("originalName") == name:
+            dk = k
+            break
+            
+    if not dk:
+        dk = secure_filename(name)
+        
+    p = get_file_path(project_id, dk, ".json")
+    if os.path.exists(p):
+        return FileResponse(p)
+    raise HTTPException(status_code=404, detail="JSON cache not found")
+
 @app.get("/api/storage/files")
 async def storage_list(projectId: str):
     manifest = _load_manifest(projectId)

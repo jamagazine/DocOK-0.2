@@ -254,6 +254,7 @@ interface DataContextType {
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
   reprocessAi: (fileName: string, forceOcr?: boolean) => Promise<void>;
+  restoreFromCache: (fileName: string) => Promise<void>;
   removeFile: (fileName: string, nuclear?: boolean) => void;
   retryFile: (fileName: string, stage: Stage) => Promise<void>;
   pdfGeometry: PdfGeometry | null;
@@ -1327,15 +1328,65 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const reprocessAi = useCallback(async (fileName: string, forceOcr: boolean = false) => {
     const file = filesMap[fileName];
     const status = uploadStatuses[fileName];
-    const serverFileId = status?.id || fileName; // Используем серверный ID если есть
+    const serverFileId = status?.id || fileName;
 
     if (file) {
       await handleFile([file], currentStage, true, forceOcr);
     } else {
-      // Иначе дергаем файл по его имени с сервера
       await processServerFile(fileName, serverFileId, currentStage, forceOcr);
     }
   }, [filesMap, uploadStatuses, currentStage, handleFile, processServerFile]);
+
+  const restoreFromCache = useCallback(async (fileName: string) => {
+    try {
+      if (!activeProjectId) return;
+
+      const response = await fetch(`http://localhost:8000/api/storage/projects/${activeProjectId}/files/${encodeURIComponent(fileName)}/json`);
+      if (!response.ok) throw new Error("Кэш не найден");
+      
+      const originalData = await response.json();
+
+      if (originalData.items && Array.isArray(originalData.items)) {
+          const itemsWithFileId = originalData.items.map((it: any) => ({
+              ...it,
+              fileId: fileName,
+              id: it.id || genId()
+          }));
+
+          const isSpec = (originalData.document?.doc_type || originalData.doc_type) === 'spec' || currentStage === 'spec';
+          
+          if (isSpec) {
+              setSpecRows(prev => {
+                  const otherFilesRows = prev.filter(row => row.fileId !== fileName);
+                  return [...otherFilesRows, ...itemsWithFileId];
+              });
+          } else {
+              setInvoiceRows(prev => {
+                  const otherFilesRows = prev.filter(row => row.fileId !== fileName);
+                  return [...otherFilesRows, ...itemsWithFileId];
+              });
+          }
+      }
+
+      const newStatus = originalData.method?.includes('ocr') ? 'READY_MD_OCR' : 'READY_MD_AI';
+      
+      setUploadStatuses(prev => ({
+          ...prev,
+          [fileName]: { 
+              ...prev[fileName], 
+              status: newStatus,
+              method: originalData.method || prev[fileName]?.method
+          }
+      }));
+      
+      await updateFileStatusOnServer(fileName, newStatus as FileStatus);
+      toast.success(`Данные файла ${fileName} восстановлены из памяти`);
+
+    } catch (error) {
+      console.error("Ошибка восстановления:", error);
+      toast.error("Не удалось подтянуть данные из памяти");
+    }
+  }, [activeProjectId, currentStage, updateFileStatusOnServer, setSpecRows, setInvoiceRows, setUploadStatuses]);
 
 
 
@@ -2647,6 +2698,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         totalProcessedCount,
         isPaginationActive,
         reprocessAi,
+        restoreFromCache,
         matchInvoiceToSpec,
         activeHeaderIds,
         setActiveHeaderIds,

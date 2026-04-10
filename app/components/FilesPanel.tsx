@@ -29,7 +29,7 @@ interface FilesPanelProps {
 export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const { 
     uploadStatuses, filesMap, removeFile, retryFile, handleFile, 
-    currentStage, resetFileData, reprocessAi,
+    currentStage, resetFileData, reprocessAi, restoreFromCache,
     activeFileId, setActiveFileId, activeProjectId
   } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
@@ -305,72 +305,112 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
           {/* Actions */}
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+            <TooltipProvider delayDuration={0}>
+              {statusStr === 'UPLOAD' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => handleAiProcess(fileName)}
+                      className="p-1.5 rounded-md text-amber-500 bg-amber-50 hover:text-amber-600 hover:bg-amber-100 transition-colors"
+                      disabled={isLoading}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>Запустить AI-анализ</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-            {statusStr === 'UPLOAD' && (
-              <button
-                onClick={() => handleAiProcess(fileName)}
-                className="p-1.5 rounded-md text-amber-500 bg-amber-50 hover:text-amber-600 hover:bg-amber-100 transition-colors"
-                title="Запустить AI-анализ"
-                disabled={isLoading}
-              >
-                <Sparkles className="w-4 h-4" />
-              </button>
-            )}
+              {(isProcessed || isReadyAI || isReadyMD || isReadyOCR || isError) && statusStr !== 'UPLOAD' && statusStr !== 'reset' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => handleReprocessClear(fileName)}
+                      className="p-1.5 rounded-md text-purple-500 bg-purple-50 hover:text-purple-600 hover:bg-purple-100 transition-colors"
+                      disabled={isLoading}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>Перепарсить заново (токены спишутся повторно)</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-            {(isProcessed || isReadyAI || isReadyMD || isReadyOCR || isError) && statusStr !== 'UPLOAD' && statusStr !== 'reset' && (
-              <button
-                onClick={() => handleReprocessClear(fileName)}
-                className="p-1.5 rounded-md text-purple-500 bg-purple-50 hover:text-purple-600 hover:bg-purple-100 transition-colors"
-                title="Перепарсить заново (токены спишутся повторно)"
-                disabled={isLoading}
-              >
-                <Sparkles className="w-4 h-4" />
-              </button>
-            )}
+              {fileName.toLowerCase().endsWith('.pdf') && !isLoading && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        reprocessAi(fileName, true);
+                      }}
+                      className="p-1.5 rounded-md text-indigo-400 bg-indigo-50 hover:text-indigo-600 hover:bg-indigo-100 transition-colors"
+                      disabled={isLoading}
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>Принудительное OCR-распознавание как картинки. Дольше и дороже, но спасает, если текст скопировался 'кракозябрами'.</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-            {fileName.toLowerCase().endsWith('.pdf') && !isLoading && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  reprocessAi(fileName, true);
-                }}
-                className="p-1.5 rounded-md text-indigo-400 bg-indigo-50 hover:text-indigo-600 hover:bg-indigo-100 transition-colors"
-                title="Принудительное OCR-распознавание как картинки. Дольше и дороже, но спасает, если текст скопировался 'кракозябрами'."
-                disabled={isLoading}
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            )}
+              {(isProcessed || isReadyAI || isReadyMD || isReadyOCR) && statusStr !== 'reset' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => resetFileData(fileName)}
+                      className="p-1.5 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                    >
+                      <Eraser className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>Стереть позиции из таблицы (оставит файл в списке)</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-            {(isProcessed || isReadyAI || isReadyMD || isReadyOCR) && statusStr !== 'reset' && (
-              <button
-                onClick={() => resetFileData(fileName)}
-                className="p-1.5 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
-                title="Стереть позиции из таблицы (оставит файл в списке)"
-              >
-                <Eraser className="w-4 h-4" />
-              </button>
-            )}
+              {isReset && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => restoreFromCache(fileName)}
+                      className="p-1.5 rounded-md text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                      disabled={isLoading}
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-emerald-600 text-white border-none">
+                    <p>Восстановить данные из памяти (Бесплатно)</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-            {isReset && (
-              <button
-                onClick={() => retryFile(fileName, currentStage)}
-                className="p-1.5 rounded-md text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors"
-                title="Восстановить данные из памяти (Бесплатно)"
-                disabled={isLoading}
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            )}
-
-            {/* Delete */}
-            <button
-              onClick={(e) => setPendingDelete({ name: fileName, nuclear: isShiftPressed })}
-              className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-              title={isShiftPressed ? "[ЯДЕРНОЕ УДАЛЕНИЕ] Удалить файл И стереть его стоимость из истории!" : "Удалить файл из проекта (затраты останутся в истории)"}
-            >
-              <Trash2 className={cn("w-4 h-4", isShiftPressed && "text-red-600")} />
-            </button>
+              {/* Delete */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={(e) => removeFile(fileName, isShiftPressed)}
+                    className={cn(
+                      "p-1.5 rounded-md transition-colors",
+                      isShiftPressed ? "text-red-600 bg-red-50" : "text-slate-400 hover:text-red-600"
+                    )}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="left" className={cn(isShiftPressed ? "bg-red-600 text-white border-none" : "")}>
+                  <p>{isShiftPressed ? "[ЯДЕРНОЕ УДАЛЕНИЕ] Стереть всё, включая историю затрат" : "Удалить файл из проекта"}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
       </div>
