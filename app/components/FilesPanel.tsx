@@ -30,9 +30,21 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const { 
     uploadStatuses, filesMap, removeFile, retryFile, handleFile, 
     currentStage, resetFileData, reprocessAi,
-    activeFileId, setActiveFileId
+    activeFileId, setActiveFileId, activeProjectId
   } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
+  const [isShiftPressed, setIsShiftPressed] = React.useState(false);
+
+  React.useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.shiftKey) setIsShiftPressed(true); };
+    const up = (e: KeyboardEvent) => { if (!e.shiftKey) setIsShiftPressed(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -50,9 +62,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const handleAiProcess = async (fileName: string) => {
     let file = filesMap[fileName];
     if (!file) {
-      // Auto-restore from storage if file is missing in memory (e.g. after refresh)
       try {
-        const res = await fetch(`http://localhost:8000/api/storage/files/${fileName}`);
+        const res = await fetch(`http://localhost:8000/api/storage/files/${fileName}?projectId=${activeProjectId}`);
         if (!res.ok) throw new Error('Failed to fetch file from storage');
         const blob = await res.blob();
         file = new File([blob], fileName, { type: blob.type });
@@ -64,9 +75,24 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
     await handleFile([file], currentStage, true);
   };
 
+  const handleReprocessClear = async (fileName: string) => {
+    try {
+      await fetch('http://localhost:8000/api/storage/files/reprocess_clear', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fileName, projectId: activeProjectId })
+      });
+      reprocessAi(fileName);
+    } catch (e) {
+      console.error('Reprocess clear failed:', e);
+    }
+  };
+
   const handleRestore = async (fileName: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/storage/files/${fileName}`);
+      const res = await fetch(`http://localhost:8000/api/storage/files/${fileName}?projectId=${activeProjectId}`);
       if (!res.ok) throw new Error('Failed to fetch file from storage');
       const blob = await res.blob();
       const file = new File([blob], fileName, { type: blob.type });
@@ -279,87 +305,71 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
           {/* Actions */}
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-            {/* Retry AI: shown for error states where file is available */}
-            {isError && file && (
-              <button
-                onClick={() => reprocessAi(fileName)}
-                className="p-1.5 rounded-md text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
-                title="Перезапустить через ИИ"
-                disabled={isLoading}
-              >
-                <Sparkles className="w-4 h-4" />
-              </button>
-            )}
 
-            {/* Sparkles: AI re-process for Table files (xls/xlsx/csv) only if not yet fully processed by AI */}
-            {isTableFile(fileName) && !isProcessed && !isProcessing && !isError && (
+            {statusStr === 'UPLOAD' && (
               <button
                 onClick={() => handleAiProcess(fileName)}
-                className="p-1.5 rounded-md text-amber-500 bg-amber-50 hover:text-purple-600 hover:bg-purple-100 transition-colors"
-                title="Анализ ИИ (Редактор Markdown)"
+                className="p-1.5 rounded-md text-amber-500 bg-amber-50 hover:text-amber-600 hover:bg-amber-100 transition-colors"
+                title="Запустить AI-анализ"
                 disabled={isLoading}
               >
                 <Sparkles className="w-4 h-4" />
               </button>
             )}
 
-            {/* Sparkles (Force OCR) for Digital PDFs parsed as text */}
-            {data.method === "pdf_text" && !isProcessing && (
+            {(isProcessed || isReadyAI || isReadyMD || isReadyOCR || isError) && statusStr !== 'UPLOAD' && statusStr !== 'reset' && (
+              <button
+                onClick={() => handleReprocessClear(fileName)}
+                className="p-1.5 rounded-md text-purple-500 bg-purple-50 hover:text-purple-600 hover:bg-purple-100 transition-colors"
+                title="Перепарсить заново (токены спишутся повторно)"
+                disabled={isLoading}
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
+            )}
+
+            {fileName.toLowerCase().endsWith('.pdf') && !isLoading && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   reprocessAi(fileName, true);
                 }}
                 className="p-1.5 rounded-md text-indigo-400 bg-indigo-50 hover:text-indigo-600 hover:bg-indigo-100 transition-colors"
-                title="Прогнать через OCR-сканер (если данные искажены)"
+                title="Принудительное OCR-распознавание как картинки. Дольше и дороже, но спасает, если текст скопировался 'кракозябрами'."
                 disabled={isLoading}
               >
-                <Sparkles className="w-4 h-4" />
+                <RefreshCw className="w-4 h-4" />
               </button>
             )}
 
-            {/* Restore / Retry */}
-            {file ? (
-              <button
-                onClick={() => retryFile(fileName, currentStage)}
-                className={cn(
-                  "p-1.5 rounded-md transition-colors",
-                  isReset ? "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
-                )}
-                title={isReset ? "Восстановить данные" : "Повторить загрузку"}
-                disabled={isLoading}
-              >
-                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-              </button>
-            ) : (
-              <button
-                onClick={() => handleRestore(fileName)}
-                className="p-1.5 rounded-md text-amber-600 bg-amber-50 hover:bg-amber-100 transition-colors"
-                title="Восстановить из хранилища"
-                disabled={isLoading}
-              >
-                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-              </button>
-            )}
-
-            {/* Reset File Data Only */}
-            {!isReset && (
+            {(isProcessed || isReadyAI || isReadyMD || isReadyOCR) && statusStr !== 'reset' && (
               <button
                 onClick={() => resetFileData(fileName)}
                 className="p-1.5 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
-                title="Сбросить строки из текущей таблицы (без удаления файла)"
+                title="Стереть позиции из таблицы (оставит файл в списке)"
               >
                 <Eraser className="w-4 h-4" />
               </button>
             )}
 
+            {isReset && (
+              <button
+                onClick={() => retryFile(fileName, currentStage)}
+                className="p-1.5 rounded-md text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                title="Восстановить данные из памяти (Бесплатно)"
+                disabled={isLoading}
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            )}
+
             {/* Delete */}
             <button
-              onClick={(e) => setPendingDelete({ name: fileName, nuclear: e.shiftKey })}
+              onClick={(e) => setPendingDelete({ name: fileName, nuclear: isShiftPressed })}
               className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-              title="Удалить файл и связанные данные (Shift + Click для Ядерного удаления из истории)"
+              title={isShiftPressed ? "[ЯДЕРНОЕ УДАЛЕНИЕ] Удалить файл И стереть его стоимость из истории!" : "Удалить файл из проекта (затраты останутся в истории)"}
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className={cn("w-4 h-4", isShiftPressed && "text-red-600")} />
             </button>
           </div>
         </div>
@@ -419,32 +429,25 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                 <hr className="flex-1 border-slate-200" />
               </div>
 
-              {/* Active Files */}
-              {fileEntries
-                .filter(([_, data]: [string, any]) => data.status !== 'reset')
-                .map(([fileName, data]: [string, any]) => {
-                  return renderFileItem(fileName, data, false);
-                })}
+              {/* Sorted File Entries */}
+              {Object.entries(uploadStatuses)
+                .sort(([nameA, statusA]: [string, any], [nameB, statusB]: [string, any]) => {
+                  const currentStageBase = currentStage.replace('_ai', '');
+                  const isCurrentA = statusA.method?.includes(currentStageBase);
+                  const isCurrentB = statusB.method?.includes(currentStageBase);
+                  if (isCurrentA && !isCurrentB) return -1;
+                  if (!isCurrentA && isCurrentB) return 1;
 
-              {/* Reset Files Divider */}
-              {fileEntries.some(([_, data]: [string, any]) => data.status === 'reset') && (
-                <>
-                  {fileEntries.some(([_, data]: [string, any]) => data.status !== 'reset') && (
-                    <div className="flex items-center gap-2 py-2">
-                      <hr className="flex-1 border-slate-200" />
-                      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">
-                        Сброшенные данные
-                      </span>
-                      <hr className="flex-1 border-slate-200" />
-                    </div>
-                  )}
-                  {fileEntries
-                    .filter(([_, data]: [string, any]) => data.status === 'reset')
-                    .map(([fileName, data]: [string, any]) => {
-                      return renderFileItem(fileName, data, true);
-                    })}
-                </>
-              )}
+                  const isResetA = statusA.status === 'reset';
+                  const isResetB = statusB.status === 'reset';
+                  if (!isResetA && isResetB) return -1;
+                  if (isResetA && !isResetB) return 1;
+
+                  return 0;
+                })
+                .map(([fileName, data]: [string, any]) => {
+                  return renderFileItem(fileName, data, data.status === 'reset');
+                })}
             </>
           )}
         </div>

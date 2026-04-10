@@ -884,6 +884,43 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "method": p_method
     }
 
+@app.post("/api/storage/files/reprocess_clear")
+async def clear_cache_for_reprocess(request: Request):
+    data = await request.json()
+    file_name = data.get("fileName")
+    project_id = data.get("projectId")
+
+    if not file_name or not project_id:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Missing params"}, status_code=400)
+
+    try:
+        project_dir = get_project_dir(project_id)
+        files_dir = get_files_dir(project_id)
+    except Exception:
+        project_dir = os.path.join("data", "projects", project_id)
+        files_dir = os.path.join(project_dir, "files")
+    
+    # Ищем и удаляем все связанные .md и .json (кроме manifest/history/state)
+    for ext in [".json", "_invoice.md", "_invoice_final.md", "_spec.md"]:
+        path = os.path.join(files_dir, f"{file_name}{ext}")
+        if os.path.exists(path) and not file_name.endswith(ext): # Защита от дурака
+            try:
+                os.remove(path)
+            except: pass
+
+    # Сбрасываем статус в манифесте
+    manifest_path = os.path.join(project_dir, "manifest.json")
+    if os.path.exists(manifest_path):
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        if file_name in manifest:
+            manifest[file_name]["status"] = "UPLOAD"
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, indent=4, ensure_ascii=False)
+
+    return {"status": "success"}
+
 @app.get("/api/storage/files")
 async def storage_list(projectId: str):
     manifest = _load_manifest(projectId)
