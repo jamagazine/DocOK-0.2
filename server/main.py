@@ -684,6 +684,43 @@ async def match_items_endpoint(request: Request):
         item["match_data"] = {"target_id": best["id"] if best else None, "target_name": best["raw"] if best else None, "score": round(best_s, 1), "status": "perfect" if best_s > 90 else ("warning" if best_s >= 60 else "none")}
     return {"invoice_items": invoice_items}
 
+def detect_file_method(file_path: str, filename: str) -> str:
+    """Определяет метод обработки файла перед основным парсингом.
+    Returns: 'invoice_ai' | 'specification'
+    """
+    lower = filename.lower()
+    if lower.endswith('.pdf') or lower.endswith(('.png', '.jpg', '.jpeg')):
+        return 'invoice_ai'  # PDF/изображения всегда идут как счета
+
+    if not lower.endswith(('.xls', '.xlsx', '.csv')):
+        return 'invoice_ai'  # Неизвестный формат — безопасно в AI
+
+    try:
+        if lower.endswith('.csv'):
+            df_detect = pd.read_csv(file_path, nrows=30, header=None, dtype=str)
+        elif lower.endswith('.xls'):
+            df_detect = pd.read_excel(file_path, nrows=30, header=None, dtype=str, engine='xlrd')
+        else:
+            df_detect = pd.read_excel(file_path, nrows=30, header=None, dtype=str, engine='openpyxl')
+
+        text_content = " ".join(df_detect.fillna("").values.flatten()).lower()
+
+        invoice_markers = [
+            'бик', 'инн', 'кпп', 'расчетный счет', 'р/с',
+            'коммерческое предложение', 'счет на оплату', 'счёт на оплату',
+            'банк получателя', 'корр. счет', 'корр.счет'
+        ]
+
+        for marker in invoice_markers:
+            if marker in text_content:
+                return 'invoice_ai'
+
+        return 'specification'
+    except Exception as e:
+        print(f"[detect_file_method] Fast detection failed for {filename}: {e}")
+        return 'specification'  # Безопасный Fallback — не тратим деньги
+
+
 @app.post("/api/storage/upload")
 async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...), stage: str = Form("spec")):
     original_filename = file.filename
@@ -692,7 +729,13 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     dest_path = get_file_path(projectId, secured_name)
     with open(dest_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
-        
+
+    # TZ#25: Умный детектор типа файла
+    detected_method = detect_file_method(dest_path, original_filename)
+    detected_type = 'invoice' if detected_method == 'invoice_ai' else 'spec'
+    # Используем обнаруженный тип вместо стадии, переданной с фронтенда
+    effective_stage = detected_type
+
     estimated_cost = 0.0
     estimated_tokens = 0
     api_key, folder_id = get_yandex_keys()
@@ -714,7 +757,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             unnamed_empty = [c for c in df.columns if str(c).startswith("Unnamed") and (df[c].astype(str).replace("", "nan").isnull().all() or (df[c].astype(str).str.strip() == "").all())]
             if unnamed_empty: df = df.drop(columns=unnamed_empty)
             
-            if stage == "invoice":
+            if effective_stage == "invoice":
                 # TK v2.0: GRID METHOD for Invoices
                 md_text = excel_to_grid_markdown(dest_path)
                 # Save physical grid MD
@@ -727,7 +770,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             ext_text = md_text
 
             # --- AUTO-EXTRACT SUMMARY (Pre-AI) - ONLY FOR SPECS ---
-            if stage == "spec":
+            if effective_stage == "spec":
                 try:
                     # We can do a quick pass to get basic stats
                     pre_items = convert_df_to_items(df)
@@ -807,7 +850,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     final_status = "ok"
     if is_spreadsheet:
         final_status = "READY_MD_LOCAL"
-        file_method = "excel_ai"
+        file_method = "excel_ai" if effective_stage == 'invoice' else "excel_rules"
         # TZ#21: Умный Fallback для подсчета позиций и выбора отправляемого текста
         try:
             from items_parser import clean_and_group_markdown_table
@@ -829,7 +872,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             text_to_estimate = ext_text
 
     elif is_pdf:
-        if current_pdf_type == "TEXT_PDF" and stage == "invoice":
+        if current_pdf_type == "TEXT_PDF" and effective_stage == "invoice":
             final_status = "READY_MD_LOCAL"
             file_method = "pdf_text"
         else:
@@ -872,7 +915,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "raw_markdown": ext_text,
         "summary_md": summary_md,
         "summary_fields": summary_fields,
-        "type": stage
+        "type": effective_stage
     }
     _save_manifest(manifest, projectId)
     
@@ -893,7 +936,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "pages_count": pages_count,
         "is_scan": is_scan_val,
         "pdf_type": current_pdf_type,
-        "method": p_method
+        "method": p_method,
+        "detected_type": effective_stage
     }
 
 @app.post("/api/storage/files/reprocess_clear")

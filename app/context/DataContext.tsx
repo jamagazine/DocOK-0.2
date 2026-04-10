@@ -253,6 +253,7 @@ interface DataContextType {
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
+  aiQueue: {fileName: string, serverFilename: string}[];
   reprocessAi: (fileName: string, forceOcr?: boolean) => Promise<void>;
   restoreFromCache: (fileName: string) => Promise<void>;
   removeFile: (fileName: string, nuclear?: boolean) => void;
@@ -1155,6 +1156,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, [activeProjectId, projects]);
 
+  // TZ#25: AI Queue for sequential invoice processing
+  const [aiQueue, setAiQueue] = useState<{fileName: string, serverFilename: string}[]>([]);
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+
   const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false, forceOcr: boolean = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
@@ -1163,7 +1168,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const now = new Date();
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
 
-    const results = await Promise.all(fileArray.map(async (file) => {
+    let firstDetectedType: string | null = null;
+
+    for (const file of fileArray) {
       setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...', type: stage } }));
 
       let serverFilename = '';
@@ -1183,7 +1190,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (res.ok) {
           const resData = await res.json();
           serverFilename = resData.filename || '';
-          
+
+          // TZ#25: Backend detected type (fallback to stage)
+          const detectedType = resData.detected_type || stage;
+          if (!firstDetectedType) firstDetectedType = detectedType;
+
+          // Update status from server response
           if (resData.estimated_cost !== undefined) {
             setUploadStatuses((prev: any) => ({
               ...prev,
@@ -1192,58 +1204,88 @@ export function DataProvider({ children }: { children: ReactNode }) {
                 estimated_cost: resData.estimated_cost,
                 estimated_tokens: resData.estimated_tokens,
                 summary_fields: resData.summary_fields,
-                summary_md: resData.summary_md
+                summary_md: resData.summary_md,
+                type: detectedType
               }
             }));
           }
 
-          if (resData.raw_markdown) {
-            if (stage === 'spec') {
-              const instantRows = parseMarkdownToRows(resData.raw_markdown, stage, file.name);
+          // TZ#25: DUAL-LANE ROUTING
+          if (detectedType === 'spec') {
+            // ПОЛОСА А: Локальный парсинг спецификаций — мгновенно
+            if (resData.raw_markdown) {
+              const instantRows = parseMarkdownToRows(resData.raw_markdown, 'spec', file.name);
               setSpecRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as SpecRow[]]);
             }
-          }
-
-          setActiveFileId(file.name);
-          const finalStatus = resData.file_status || 'READY_MD';
-          setUploadStatuses((prev: any) => ({
-            ...prev,
-            [file.name]: {
-              ...prev[file.name],
-              status: finalStatus,
-              time: currentTime,
-              method: resData.method || 'MD_Instant'
+            setActiveFileId(file.name);
+            const finalStatus = resData.file_status || 'READY_MD';
+            setUploadStatuses((prev: any) => ({
+              ...prev,
+              [file.name]: {
+                ...prev[file.name],
+                status: finalStatus,
+                time: currentTime,
+                method: resData.method || 'MD_Instant',
+                type: 'spec'
+              }
+            }));
+            updateFileStatusOnServer(file.name, finalStatus);
+          } else {
+            // ПОЛОСА Б: Счета — в AI-очередь
+            const isSpreadsheet = file.name.toLowerCase().match(/\.(xlsx|xls|csv)$/);
+            if (isSpreadsheet && !forceAI) {
+              // Excel-счет без forceAI — тоже в очередь на AI
             }
-          }));
-          updateFileStatusOnServer(file.name, finalStatus);
-
-          return { file, serverFilename, stage: stage as Stage, isLarge: (resData.pages_count || 1) > 3 };
+            setUploadStatuses((prev: any) => ({
+              ...prev,
+              [file.name]: {
+                ...prev[file.name],
+                status: 'В очереди на ИИ...',
+                time: currentTime,
+                method: resData.method || 'pending_ai',
+                type: 'invoice'
+              }
+            }));
+            setAiQueue(prev => [...prev, { fileName: file.name, serverFilename }]);
+          }
         }
       } catch (e) {
         console.error('Failed to upload file to storage:', e);
-      }
-      return null;
-    }));
-
-    // --- TЗ: Отключаем ИИ для Excel-спецификаций по умолчанию ---
-    const ocrQueue = (results.filter(r => r !== null) as {file: File; serverFilename: string; stage: Stage; isLarge: boolean}[])
-      .filter(item => {
-        const isSpreadsheet = item.file.name.toLowerCase().match(/\.(xlsx|xls|csv)$/);
-        // Если это спека и это Excel — НЕ пускаем в очередь ИИ-обработки
-        if (item.stage === 'spec' && isSpreadsheet) {
-          console.log(`[DataContext] Skipping AI for ${item.file.name} (Spec/Excel)`);
-          return false;
-        }
-        return true;
-      });
-
-    if (ocrQueue.length > 0) {
-      for (const item of ocrQueue) {
-          await processServerFile(item.file.name, item.serverFilename, item.stage, forceOcr);
+        setUploadStatuses((prev: any) => ({
+          ...prev,
+          [file.name]: { ...prev[file.name], status: 'Ошибка загрузки' }
+        }));
       }
     }
+
+    // TZ#25: Автопереключение вкладки по первому файлу
+    if (firstDetectedType && firstDetectedType !== currentStage) {
+      setCurrentStage(firstDetectedType as Stage);
+    }
+
     syncProjectFilesCount();
-  }, [yandexConfig, activeProjectId, syncProjectFilesCount, updateFileStatusOnServer, fetchStorageFiles]);
+  }, [activeProjectId, currentStage, syncProjectFilesCount, updateFileStatusOnServer, setCurrentStage]);
+
+  // TZ#25: Эффект-Диспетчер (Полоса Б: Последовательная AI обработка)
+  useEffect(() => {
+    if (aiQueue.length > 0 && !isAiProcessing) {
+      const next = aiQueue[0];
+      setIsAiProcessing(true);
+
+      processServerFile(next.fileName, next.serverFilename, 'invoice' as Stage)
+        .catch(err => {
+          console.error(`[AI Queue] Error processing ${next.fileName}:`, err);
+          setUploadStatuses(prev => ({
+            ...prev,
+            [next.fileName]: { ...prev[next.fileName], status: 'Ошибка ИИ' }
+          }));
+        })
+        .finally(() => {
+          setAiQueue(prev => prev.slice(1));
+          setIsAiProcessing(false);
+        });
+    }
+  }, [aiQueue, isAiProcessing, processServerFile]);
 
   const processServerFile = useCallback(async (fileName: string, serverFilename: string, stage: Stage, forceOcr: boolean = false) => {
     const formData = new FormData();
@@ -2724,6 +2766,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         reprocessAi,
         restoreFromCache,
         matchInvoiceToSpec,
+        aiQueue,
         activeHeaderIds,
         setActiveHeaderIds,
         getNavigatorTree,

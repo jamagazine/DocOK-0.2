@@ -30,7 +30,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const { 
     uploadStatuses, filesMap, removeFile, retryFile, handleFile, 
     currentStage, resetFileData, reprocessAi, restoreFromCache,
-    activeFileId, setActiveFileId, activeProjectId
+    activeFileId, setActiveFileId, activeProjectId, aiQueue
   } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
   const [isShiftPressed, setIsShiftPressed] = React.useState(false);
@@ -59,6 +59,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const fileEntries = Object.entries(uploadStatuses);
 
   const isTableFile = (name: string) => /\.(xlsx?|xls|csv)$/i.test(name);
+
+  // TZ#25: Set of filenames currently in AI queue
+  const aiQueueNames = React.useMemo(() => new Set(aiQueue.map(q => q.fileName)), [aiQueue]);
 
   const handleDeleteConfirm = () => {
     if (pendingDelete) {
@@ -503,8 +506,68 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
           ) : (() => {
             const isInvoiceStage = currentStage.includes('invoice');
             
-            const specFiles = fileEntries.filter(([_, d]) => d.type === 'spec');
-            const invoiceFiles = fileEntries.filter(([_, d]) => d.type === 'invoice');
+            // TZ#25: Separate queue files from completed files
+            const queueFiles = fileEntries.filter(([name]) => aiQueueNames.has(name));
+            const nonQueueFiles = fileEntries.filter(([name]) => !aiQueueNames.has(name));
+            
+            const specFiles = nonQueueFiles.filter(([_, d]) => d.type === 'spec');
+            const invoiceFiles = nonQueueFiles.filter(([_, d]) => d.type === 'invoice');
+
+            const renderQueueSection = () => {
+              if (queueFiles.length === 0) return null;
+              return (
+                <div className="space-y-3 mb-6">
+                  <div className="flex items-center gap-2 py-1">
+                    <hr className="flex-1 border-amber-300" />
+                    <span className="text-[9px] uppercase tracking-widest font-bold text-amber-600 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 animate-pulse" />
+                      В обработке ({queueFiles.length})
+                    </span>
+                    <hr className="flex-1 border-amber-300" />
+                  </div>
+                  <div className="space-y-3">
+                    {queueFiles.map(([fileName, data]) => {
+                      const queueIdx = aiQueue.findIndex(q => q.fileName === fileName);
+                      const isFirst = queueIdx === 0;
+                      return (
+                        <div
+                          key={fileName}
+                          className={cn(
+                            "flex flex-col p-3 rounded-lg border shadow-sm transition-all",
+                            isFirst 
+                              ? "border-amber-400 bg-amber-50/50 ring-1 ring-amber-200" 
+                              : "border-slate-200 bg-white"
+                          )}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="shrink-0">
+                              {isFirst ? (
+                                <Sparkles className="w-5 h-5 text-amber-500 animate-pulse" />
+                              ) : (
+                                <Clock className="w-5 h-5 text-slate-400" />
+                              )}
+                            </div>
+                            <div className="flex flex-col flex-1 min-w-0">
+                              <span className="font-medium text-slate-900 truncate" title={fileName}>
+                                {fileName.replace(/\.[^/.]+$/, '')}
+                              </span>
+                              <span className="text-[11px] mt-0.5 font-medium" style={{ color: isFirst ? '#d97706' : '#94a3b8' }}>
+                                {isFirst ? 'Анализ ИИ...' : `В очереди (${queueIdx + 1}-й)`}
+                              </span>
+                              {isFirst && (
+                                <div className="h-1.5 w-full bg-amber-100 rounded-full mt-1.5 overflow-hidden">
+                                  <div className="h-full bg-amber-400 rounded-full animate-pulse" style={{ width: '60%' }} />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            };
 
             const renderSection = (title: string, files: [string, any][], type: string) => {
               if (files.length === 0) return null;
@@ -537,6 +600,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
 
             return (
               <>
+                {renderQueueSection()}
                 {isInvoiceStage ? (
                   <>
                     {renderSection("Файлы счетов", invoiceFiles, 'invoice')}
