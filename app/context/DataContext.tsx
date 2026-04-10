@@ -3,8 +3,7 @@ import { toast } from 'sonner';
 import { parseFile, autoDetectMapping, INVOICE_ALIASES, SPEC_ALIASES, mergeDuplicateMaterials, exportGeometryToXLSX } from '../utils/fileUtils';
 import { parsePdfGeometry, PdfGeometry } from '../utils/pdfUtils';
 import { calculateHierarchy } from '../utils/hierarchy';
-import { Stage, FileStatus, UploadStatus, SupplierData, MaterialPosition, SpecRow, InvoiceRow, EstimateRow } from '../types';
-
+import { Stage, FileStatus, UploadStatus, SupplierData, MaterialPosition, SpecRow, InvoiceRow, EstimateRow, Supplier } from '../types';
 export interface YandexConfig {
   apiKey: string;
   catalogId: string;
@@ -234,6 +233,9 @@ export function emptyEstimateRow(): EstimateRow {
 interface DataContextType {
   projectName: string;
   setProjectName: (name: string) => void;
+  suppliers: Record<string, Supplier>;
+  fetchSuppliers: () => Promise<void>;
+  saveSuppliers: (newSuppliers: Record<string, Supplier>) => Promise<void>;
   specRows: SpecRow[];
   setSpecRows: React.Dispatch<React.SetStateAction<SpecRow[]>>;
   invoiceRows: InvoiceRow[];
@@ -385,6 +387,42 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
+
+  const [suppliers, setSuppliers] = useState<Record<string, Supplier>>({});
+
+  const fetchSuppliers = useCallback(async () => {
+    if (!activeProjectId) return;
+    try {
+      const res = await fetch(`http://localhost:8000/api/storage/projects/${activeProjectId}/suppliers`);
+      if (res.ok) {
+        const data = await res.json();
+        setSuppliers(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch suppliers", e);
+    }
+  }, [activeProjectId]);
+
+  const saveSuppliers = useCallback(async (newSuppliers: Record<string, Supplier>) => {
+    if (!activeProjectId) return;
+    setSuppliers(newSuppliers);
+    try {
+      await fetch(`http://localhost:8000/api/storage/projects/${activeProjectId}/suppliers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSuppliers)
+      });
+    } catch (e) {
+      console.error("Failed to save suppliers", e);
+      toast.error("Ошибка при сохранении справочника поставщиков");
+    }
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (activeProjectId) {
+      fetchSuppliers();
+    }
+  }, [activeProjectId, fetchSuppliers]);
 
   const [currentStage, setCurrentStageRaw] = useState<Stage>(() => {
     if (typeof window !== 'undefined') {
@@ -1375,6 +1413,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     setInvoiceRows(prev => [...prev.filter(r => r.fileId !== fileName), ...parsedItems]);
                  }
                  await fetchStorageFiles(); 
+                 await fetchSuppliers();
               }
             } catch (e) {
               console.error("Ошибка парсинга чанка:", e);
@@ -1383,7 +1422,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (e) { console.error(e); }
-  }, [yandexConfig, activeProjectId, fetchStorageFiles]);
+  }, [yandexConfig, activeProjectId, fetchStorageFiles, fetchSuppliers]);
 
   // TZ#25: Эффект-Диспетчер (Полоса Б: Последовательная AI обработка)
   // Размещен ниже processServerFile, чтобы избежать TDZ (Temporal Dead Zone)
@@ -2844,7 +2883,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         activeCategory,
         setActiveCategory,
         verifyField,
-        updateSupplierField
+        updateSupplierField,
+        suppliers,
+        fetchSuppliers,
+        saveSuppliers
       }}
     >
       {children}

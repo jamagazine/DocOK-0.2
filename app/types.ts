@@ -87,6 +87,19 @@ export interface SupplierData {
   [key: string]: any;
 }
 
+export interface SupplierRequisitesProfile {
+  profile_id: string;
+  data: Record<string, string>;
+  linked_files: string[];
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  inn: string | null;
+  requisites_profiles: SupplierRequisitesProfile[];
+}
+
 export interface MaterialPosition {
   pos: string;
   name: string;

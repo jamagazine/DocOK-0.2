@@ -175,6 +175,76 @@ def get_file_path(project_id: str, filename: str, suffix: str = ""):
     files_dir = get_files_dir(project_id)
     return os.path.join(files_dir, base_name + suffix)
 
+def update_supplier_profile(project_id: str, new_data: dict, file_name: str):
+    """
+    new_data - это сырой JSON-ответ от AI для конкретного счета (шапка).
+    """
+    suppliers_file = os.path.join(get_project_dir(project_id), "suppliers.json")
+    
+    # 1. Загружаем текущую базу
+    suppliers = {}
+    if os.path.exists(suppliers_file):
+        try:
+            with open(suppliers_file, 'r', encoding='utf-8') as f:
+                suppliers = json.load(f)
+        except Exception as e:
+            print(f"Error loading suppliers: {e}")
+            
+    inn = new_data.get("inn", {}).get("value")
+    org_name = new_data.get("organization_name", {}).get("value", "Неизвестный поставщик")
+    
+    # Если ИНН не найден ИИ - генерируем временный ключ из названия
+    supplier_key = inn if inn else f"unknown_{org_name}"
+    
+    # 2. Формируем блок реквизитов из текущего документа
+    current_requisites = {
+        "bank_name": new_data.get("bank_name", {}).get("value", ""),
+        "bank_bik": new_data.get("bank_bik", {}).get("value", ""),
+        "bank_account": new_data.get("bank_account", {}).get("value", ""),
+        "corr_account": new_data.get("corr_account", {}).get("value", ""),
+        "kpp": new_data.get("kpp", {}).get("value", ""),
+        "legal_address": new_data.get("legal_address", {}).get("value", ""),
+        "postal_address": new_data.get("postal_address", {}).get("value", ""),
+        "phone": new_data.get("phone", {}).get("value", "")
+    }
+    
+    # 3. Если поставщик новый
+    if supplier_key not in suppliers:
+        suppliers[supplier_key] = {
+            "id": supplier_key,
+            "name": org_name,
+            "inn": inn,
+            "requisites_profiles": [
+                {
+                    "profile_id": str(uuid.uuid4())[:8],
+                    "data": current_requisites,
+                    "linked_files": [file_name]
+                }
+            ]
+        }
+    else:
+        # 4. Если поставщик существует - ищем совпадение реквизитов (по Р/С)
+        profile_found = False
+        for profile in suppliers[supplier_key]["requisites_profiles"]:
+            # Проверяем совпадение расчетного счета (или БИК)
+            if profile["data"].get("bank_account") == current_requisites.get("bank_account"):
+                if file_name not in profile["linked_files"]:
+                    profile["linked_files"].append(file_name)
+                profile_found = True
+                break
+                
+        # 5. Если счет новый (другой банк) - добавляем новый профиль
+        if not profile_found:
+             suppliers[supplier_key]["requisites_profiles"].append({
+                "profile_id": str(uuid.uuid4())[:8],
+                "data": current_requisites,
+                "linked_files": [file_name]
+             })
+
+    # Сохраняем обновленную базу
+    with open(suppliers_file, 'w', encoding='utf-8') as f:
+        json.dump(suppliers, f, indent=4, ensure_ascii=False)
+
 def _load_manifest(project_id: str):
     manifest_file = get_manifest_path(project_id)
     if not os.path.exists(manifest_file):
@@ -659,6 +729,10 @@ async def process_invoice(
                 })
                 _save_manifest(manifest, projectId)
             append_history({"fileName": original_name, "cost": accumulator.total_cost, "tokens": accumulator.total_input + accumulator.total_output, "status": "DONE"}, projectId)
+            
+            # TZ#28: Update supplier directory after successful AI processing
+            if projectId and main_doc:
+                update_supplier_profile(projectId, main_doc, original_name)
             
             yield f"data: {json.dumps({'status': 'final', 'data': final_struct}, ensure_ascii=False)}\n\n"
 
@@ -1453,3 +1527,27 @@ async def delete_project_endpoint(project_id: str):
         shutil.rmtree(p_path)
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="Project not found")
+
+@app.get("/api/storage/projects/{project_id}/suppliers")
+async def get_suppliers(project_id: str):
+    p_path = get_project_dir(project_id)
+    suppliers_file = os.path.join(p_path, "suppliers.json")
+    if os.path.exists(suppliers_file):
+        try:
+            with open(suppliers_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading suppliers: {e}")
+            return {}
+    return {}
+
+@app.post("/api/storage/projects/{project_id}/suppliers")
+async def save_suppliers(project_id: str, data: dict = Body(...)):
+    p_path = get_project_dir(project_id)
+    suppliers_file = os.path.join(p_path, "suppliers.json")
+    try:
+        with open(suppliers_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save suppliers: {e}")
