@@ -796,16 +796,25 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
     if is_spreadsheet:
         final_status = "READY_MD_LOCAL"
         file_method = "excel_ai"
-        # TZ#20: Считаем только реальные позиции товаров через Сквизер, 
-        # а не все строки датафрейма (которые включают шапку, пустые строки и хвост)
+        # TZ#21: Умный Fallback для подсчета позиций и выбора отправляемого текста
         try:
             from items_parser import clean_and_group_markdown_table
             cleaned_md = clean_and_group_markdown_table(ext_text)
-            # Строки результата минус 1 заголовочная строка = реальные позиции товаров
+            
+            # Считаем только непустые строки (Сквизер выдает через точку с запятой, а не |)
             cleaned_lines = [l for l in cleaned_md.split('\n') if l.strip()]
-            num_pos = max(0, len(cleaned_lines) - 1)
+            squeezer_rows = max(0, len(cleaned_lines) - 1)
+            
+            if squeezer_rows > 0:
+                num_pos = squeezer_rows # Верим Сквизеру
+                text_to_estimate = cleaned_md
+            else:
+                # Если Сквизер ослеп, считаем по длине сырого текста
+                num_pos = len(ext_text) // 1500
+                text_to_estimate = ext_text
         except Exception:
             num_pos = len(df) if locals().get('df') is not None else 0
+            text_to_estimate = ext_text
 
     elif is_pdf:
         if current_pdf_type == "TEXT_PDF" and stage == "invoice":
@@ -819,11 +828,12 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         final_status = "NEED_OCR"
         file_method = "image"
         num_pos = 0
+        text_to_estimate = ext_text
 
     from ai_service import estimate_cost_before_processing
     try:
         estimate = await estimate_cost_before_processing(
-            text=ext_text,
+            text=text_to_estimate,
             api_key=api_key,
             folder_id=folder_id,
             num_positions=num_pos,

@@ -11,11 +11,11 @@ from dataclasses import dataclass, field
 from typing import Dict
 import pricing as pricing
 
-# --- РЕАЛЬНЫЙ ВЕС ОПЕРАЦИЙ (КАЛИБРОВКА АПРЕЛЬ 2026) ---
-AVG_LITE_SESSION = 5000  # Весь цикл реквизитов (Input + Output)
-AVG_PRO_CHUNK = 4000     # Весь цикл одного чанка товаров (Input + Output)
-CHUNK_SIZE = 15          # Размер пачки строк
-SAFE_BUFFER_MULTIPLIER = 1.10 # Запас +10%
+# Финализированные константы (Калибровка: Факт + 20%)
+BASE_LITE_FEE = 1.00    # Реквизиты
+PRO_SETUP_FEE = 0.80    # Первый промпт товаров
+PRICE_PER_ROW = 0.12    # Одна позиция
+CHUNK_TAX = 0.80        # Налог на новый чанк (повтор промпта)
 
 @dataclass
 class UsageStats:
@@ -74,42 +74,21 @@ class UsageStats:
         }
 
 
-async def estimate_cost_before_processing(
-    text: str,
-    num_positions: int = 0,
-    file_type: str = "excel_ai",
-    pages: int = 0,
-    **kwargs
-) -> dict:
-    # 1. Сценарий: Сканы (оставляем как было, 1.5р за стр.)
-    if file_type in ["need_ocr", "ocr_table", "image"]:
-        pages = max(1, pages)
-        est_cost = pages * 1.5
-        return {
-            "estimated_cost": round(est_cost, 2),
-            "estimated_tokens": pages * 5000,
-            "breakdown": f"OCR {pages} стр."
-        }
-
-    # 2. Сценарий: Текстовые файлы (Линейная модель)
-    # База (Реквизиты Lite)
-    base_fee = 0.60
-    # Переменная (Товары Pro)
-    rows_cost = num_positions * 0.20
-    # Налог на чанки (каждые 15 строк)
+async def estimate_cost_before_processing(text: str, num_positions: int = 0, **kwargs) -> dict:
     num_chunks = (num_positions // 15) + 1 if num_positions > 0 else 1
-    chunk_tax = (num_chunks - 1) * 0.50
     
-    # Итоговая цена (с микро-буфером 5%)
-    final_cost = (base_fee + rows_cost + chunk_tax) * 1.05
+    # Считаем базу: Lite + Setup Pro + Строки + Налог на лишние чанки
+    base = BASE_LITE_FEE + PRO_SETUP_FEE + (num_positions * PRICE_PER_ROW) + ((num_chunks - 1) * CHUNK_TAX)
     
-    # Оценка токенов для информации (0.35 — средний тариф Lite+Pro)
-    est_tokens = (final_cost / 0.35) * 1000
+    # Итоговый прогноз с микро-буфером
+    final_cost = base * 1.05
+    # Для красоты считаем токены (1 руб ≈ 3200 токенов в нашей модели)
+    est_tokens = int(final_cost * 3200)
 
     return {
         "estimated_cost": round(final_cost, 2),
-        "estimated_tokens": int(est_tokens),
-        "breakdown": f"Base + {num_positions} rows + {num_chunks-1} tax"
+        "estimated_tokens": est_tokens,
+        "breakdown": f"Linear: {num_positions} rows, {num_chunks} chunks"
     }
 
 

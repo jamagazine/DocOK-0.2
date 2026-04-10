@@ -264,7 +264,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                       <span className="text-[10px] text-muted-foreground">(прогноз)</span>
                     </div>
                     <div className="text-[10px] text-muted-foreground/50 italic pl-0.5 mt-0.5 leading-tight">
-                      * реальная стоимость обычно на 10-15% ниже
+                      * реальная стоимость обычно ниже на 10-15%
                     </div>
                   </div>
                 ) : null}
