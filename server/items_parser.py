@@ -223,7 +223,7 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     total_stats = UsageStats()
     all_items = []
     
-    async def process_chunk(chunk_payload):
+    async def process_chunk(chunk_payload, index):
         instruction = "[INSTRUCTION]" + parts[1].replace("{markdown_payload}", chunk_payload).strip()
         try:
             llm_response, in_tok, out_tok = await gpt_yandex(
@@ -232,19 +232,19 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
                 folder_id=folder_id, 
                 system_prompt=system_prompt,
                 model_type="pro",
-                label=f"Items_Chunk"
+                label=f"Items_Chunk_{index}"
             )
             chunk_stats = UsageStats()
-            chunk_stats.add(f"Items_Chunk", "yandexgpt-pro", in_tok, out_tok)
+            chunk_stats.add(f"Items_Chunk_{index}", "yandexgpt-pro", in_tok, out_tok)
             
             parsed = parse_gpt_json(llm_response)
             chunk_items = parsed.get("items", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
             return chunk_items, chunk_stats
         except Exception as e:
-            logger.error(f"CRITICAL: Error calling LLM for items parsing chunk: {e}", exc_info=True)
+            logger.error(f"CRITICAL: Error calling LLM for items parsing chunk {index}: {e}", exc_info=True)
             return [], UsageStats()
 
-    chunk_tasks = [process_chunk(c) for c in chunks]
+    chunk_tasks = [process_chunk(c, i + 1) for i, c in enumerate(chunks)]
     results = await asyncio.gather(*chunk_tasks)
     
     for items, stats in results:

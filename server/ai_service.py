@@ -11,6 +11,19 @@ from dataclasses import dataclass, field
 from typing import Dict
 import pricing as pricing
 
+# --- ATOMIC ESTIMATION CONSTANTS ---
+# Атом 1: Реквизиты (Lite)
+EST_LITE_INPUT = 4500  # Усредненный вес промпта + текста счета
+EST_LITE_OUTPUT = 500  # Усредненный вес JSON с реквизитами
+
+# Атом 2: Чанк товаров (Pro)
+EST_PRO_CHUNK_OVERHEAD = 3500 # Промпт + Заголовки таблицы (отправляются в КАЖДОМ чанке)
+EST_PRO_CHUNK_OUTPUT = 800    # Усредненный вес JSON для пачки из 15 товаров
+
+# Настройки чанкинга
+CHUNK_SIZE = 15
+SAFE_BUFFER_MULTIPLIER = 1.15 # Запас +15% на "разговорчивость" ИИ
+
 @dataclass
 class UsageStats:
     total_input: int = 0
@@ -76,73 +89,60 @@ async def estimate_cost_before_processing(
     file_type: str = "excel_ai",
     pages: int = 0
 ) -> dict:
-    """
-    Умный прогноз стоимости до нажатия кнопки 'Обработать'.
-    Включает +30% буфер для защиты от непредвиденных расходов.
-    """
-    # 1. Сценарий: Сканы (требуют Yandex Vision OCR)
+    rates = pricing.PRICING_CONFIG
+    
+    # --- СЦЕНАРИЙ 1: СКАНЫ (OCR) ---
     if file_type in ["need_ocr", "ocr_table", "image"]:
         pages = max(1, pages)
-        ocr_cost = pages * pricing.PRICING_CONFIG["ocr"]["table"]
-        llm_input = pages * 4000
-        estimated_output = pages * 800
+        ocr_cost = pages * rates["ocr"]["table"]
         
-        pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.42, "output_per_1k": 0.42})
-        llm_cost = (llm_input * pro_rates["input_per_1k"] + estimated_output * pro_rates["output_per_1k"]) / 1000.0
+        # Грубая прикидка для сканов: 1 страница = 1 чанк Pro + 1 вызов Lite
+        total_in = EST_LITE_INPUT + (EST_PRO_CHUNK_OVERHEAD + 2000) * pages
+        total_out = EST_LITE_OUTPUT + (EST_PRO_CHUNK_OUTPUT * pages)
         
-        total_cost = (ocr_cost + llm_cost) * 1.30 # Буфер 30%
+        llm_cost = (total_in * rates["yandexgpt-pro"]["input_per_1k"] + 
+                    total_out * rates["yandexgpt-pro"]["output_per_1k"]) / 1000.0
+                    
+        total_cost = (ocr_cost + llm_cost) * SAFE_BUFFER_MULTIPLIER
         return {
             "estimated_cost": round(total_cost, 2),
-            "estimated_tokens": llm_input + estimated_output,
-            "breakdown": f"OCR ({pages} стр.) + LLM Pro"
+            "estimated_tokens": total_in + total_out,
+            "breakdown": f"OCR ({pages} стр) + Atomic LLM"
         }
 
-    # 2. Сценарий: Текстовые файлы (Excel, CSV, текстовые PDF)
+    # --- СЦЕНАРИЙ 2: ТЕКСТ (Excel, CSV, PDF с текстом) ---
     try:
-        # Попытка использовать точный токенизатор Яндекса (Базовый замер)
+        # Попытка использовать точный токенизатор Яндекса
         if api_key and folder_id:
-            raw_input_tokens = await get_token_count(text, "pro", api_key, folder_id)
+            raw_payload_tokens = await get_token_count(text, "pro", api_key, folder_id)
         else:
-            raw_input_tokens = len(text) // 3
+            raw_payload_tokens = len(text) // 3
     except Exception:
-        raw_input_tokens = len(text) // 3
+        raw_payload_tokens = len(text) // 3
 
-    # ПЕРЕСЧЕТ С УЧЕТОМ РЕАЛЬНОГО ПАЙПЛАЙНА:
-    # 1. Вес промптов + полный контекст (Шапка/Подвал/Инструкции)
-    # Поднимаем с 1200 до 2500, так как Lite-вызов забирает много текста
-    input_tokens = raw_input_tokens + 2500 
+    # Атом 1: Стоимость Реквизитов (Lite)
+    lite_cost = (EST_LITE_INPUT * rates["yandexgpt-lite"]["input_per_1k"] + 
+                 EST_LITE_OUTPUT * rates["yandexgpt-lite"]["output_per_1k"]) / 1000.0
 
-    # 2. Оценка Output (Генерация)
-    if num_positions > 0:
-        header_output = 500
-        # Поднимаем до 75 токенов на позицию (с запасом на детальный JSON)
-        items_output = num_positions * 75 
-        estimated_output = header_output + items_output
-        
-        # 3. Налог на Чанкинг (Оверхед при пакетной обработке)
-        # Если строк много, каждый чанк (по 15 строк) добавляет ~600 токенов input
-        num_chunks = (num_positions // 15) + 1
-        if num_chunks > 1:
-            input_tokens += (num_chunks - 1) * 600
-    else:
-        estimated_output = int(input_tokens * 0.50)
+    # Атом 2: Стоимость Товаров (Pro)
+    # Считаем количество чанков (минимум 1, даже если позиций 0, чтобы ИИ попытался найти таблицу)
+    num_chunks = (num_positions // CHUNK_SIZE) + 1 if num_positions > 0 else 1
+    
+    pro_in_tokens = (EST_PRO_CHUNK_OVERHEAD * num_chunks) + raw_payload_tokens
+    pro_out_tokens = EST_PRO_CHUNK_OUTPUT * num_chunks
+    
+    pro_cost = (pro_in_tokens * rates["yandexgpt-pro"]["input_per_1k"] + 
+                pro_out_tokens * rates["yandexgpt-pro"]["output_per_1k"]) / 1000.0
 
-    # Симуляция разделения (Шапка ~70% текста, Товары ~30% текста)
-    header_input = int(input_tokens * 0.70)
-    items_input = input_tokens - header_input
-
-    lite_rates = pricing.PRICING_CONFIG.get("yandexgpt-lite", {"input_per_1k": 0.20, "output_per_1k": 0.20})
-    pro_rates = pricing.PRICING_CONFIG.get("yandexgpt-pro", {"input_per_1k": 0.60, "output_per_1k": 0.60})
-
-    lite_cost = (header_input * lite_rates["input_per_1k"] + 500 * lite_rates["output_per_1k"]) / 1000.0
-    pro_cost = (items_input * pro_rates["input_per_1k"] + max(0, estimated_output - 500) * pro_rates["output_per_1k"]) / 1000.0
-
-    total_estimated = (lite_cost + pro_cost) * 1.30 # Финальный буфер 30%
+    # Финальная сборка с динамическим буфером
+    total_base_cost = lite_cost + pro_cost
+    total_estimated_cost = total_base_cost * SAFE_BUFFER_MULTIPLIER
+    total_estimated_tokens = EST_LITE_INPUT + EST_LITE_OUTPUT + pro_in_tokens + pro_out_tokens
 
     return {
-        "estimated_cost": round(total_estimated, 2),
-        "estimated_tokens": input_tokens + estimated_output,
-        "breakdown": f"Шапка (Lite) + Товары (Pro) + Чанкинг + Запас 30%"
+        "estimated_cost": round(total_estimated_cost, 2),
+        "estimated_tokens": total_estimated_tokens,
+        "breakdown": f"Atomic: Lite (1) + Pro ({num_chunks} chunks)"
     }
 
 

@@ -141,8 +141,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   isProcessed ? 'Готово (ИИ)' : statusStr
                 )}
                 {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
-                  <span className="ml-2 text-[10px] text-slate-400 font-medium">
-                    до {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов` : ''} (макс. прогноз)
+                  <span className="ml-2 text-[10px] text-slate-400 font-medium whitespace-nowrap">
+                    ~ {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ { (data?.estimated_tokens && data.estimated_tokens > 0) ? `• ~${data.estimated_tokens} токенов (прогноз)` : ''}
                   </span>
                 ) : null}
               </span>
@@ -258,11 +258,14 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                     </TooltipProvider>
                   </>
                 ) : method === 'AI' ? (
-                  <div className="flex items-center gap-1.5 opacity-60 ml-2">
-                    <span className="text-[10px]">до {data.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      • ~{data.estimated_tokens || 0} токенов (макс. прогноз)
-                    </span>
+                  <div className="flex flex-col gap-0.5 opacity-70 ml-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-slate-600 text-[10px]">~ {data.estimated_cost?.toFixed(2) || 0} ₽</span>
+                      <span className="text-xs text-muted-foreground">• ~{data.estimated_tokens || 0} токенов (прогноз)</span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/50 italic pl-0.5 leading-tight">
+                      * реальная стоимость обычно ниже на 10–15%
+                    </div>
                   </div>
                 ) : null}
               </div>
