@@ -34,8 +34,16 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   } = useData();
   const [pendingDelete, setPendingDelete] = React.useState<{ name: string; nuclear: boolean } | null>(null);
   const [isShiftPressed, setIsShiftPressed] = React.useState(false);
+  const [billingHistory, setBillingHistory] = React.useState<any[]>([]);
 
   React.useEffect(() => {
+    if (activeProjectId && isOpen) {
+      fetch(`http://localhost:8000/api/storage/projects/${activeProjectId}/history`)
+        .then(res => res.json())
+        .then(data => setBillingHistory(data))
+        .catch(e => console.error("History fetch error:", e));
+    }
+  }, [activeProjectId, isOpen, uploadStatuses]);
     const down = (e: KeyboardEvent) => { if (e.shiftKey) setIsShiftPressed(true); };
     const up = (e: KeyboardEvent) => { if (!e.shiftKey) setIsShiftPressed(false); };
     window.addEventListener('keydown', down);
@@ -167,8 +175,9 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   isProcessed ? 'Готово (ИИ)' : statusStr
                 )}
                 {(!isProcessed && !isReset && ((data?.estimated_cost !== undefined ) || (data?.estimated_tokens && data.estimated_tokens > 0))) ? (
-                  <span className="ml-2 text-[10px] text-slate-400 font-medium whitespace-nowrap">
-                    ~ {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ (прогноз)
+                  <span className="ml-2 text-[10px] text-slate-400 font-medium whitespace-nowrap inline-flex items-center gap-1.5">
+                    <span>~ {data?.estimated_cost ? Number(data.estimated_cost).toFixed(2) : 0} ₽ (прогноз)</span>
+                    <span className="text-[10px] text-muted-foreground">• ~{data.estimated_tokens || 0} токенов</span>
                   </span>
                 ) : null}
               </span>
@@ -335,7 +344,8 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top">
-                    <p>Перепарсить заново (токены спишутся повторно)</p>
+                    <p>Пересчитать через ИИ (Обновить данные из файла)</p>
+                    <p className="text-[10px] opacity-80 mt-0.5" style={{ color: 'rgba(255,255,255,0.7)' }}>Внимание: это платная операция, стоимость добавится к общему счету.</p>
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -381,14 +391,14 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   <TooltipTrigger asChild>
                     <button
                       onClick={() => restoreFromCache(fileName)}
-                      className="p-1.5 rounded-md text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                      className="p-1.5 rounded-md text-emerald-500 bg-emerald-50 hover:bg-emerald-100 transition-colors"
                       disabled={isLoading}
                     >
                       <RefreshCw className="w-4 h-4" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="bg-emerald-600 text-white border-none">
-                    <p>Восстановить данные из памяти (Бесплатно)</p>
+                    <p>Бесплатное восстановление из кэша (без участия ИИ)</p>
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -416,6 +426,13 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
       </div>
     );
   };
+
+  const projectTotalCost = React.useMemo(() => {
+    if (billingHistory && billingHistory.length > 0) {
+      return billingHistory.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+    }
+    return fileEntries.reduce((acc: number, [_, d]: [string, any]) => acc + (d.cost || 0), 0);
+  }, [billingHistory, fileEntries]);
 
   return (
     <>
@@ -545,9 +562,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                   </button>
                 </span>
                 <span className="text-sm font-bold text-indigo-700">
-                  {fileEntries
-                    .reduce((acc: number, [_, d]: [string, any]) => acc + (d.cost || 0), 0)
-                    .toFixed(2)}{' '}
+                  {projectTotalCost.toFixed(2)}{' '}
                   ₽
                 </span>
               </div>

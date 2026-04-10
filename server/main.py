@@ -938,6 +938,17 @@ async def get_project_file_json(project_id: str, name: str):
         return FileResponse(p)
     raise HTTPException(status_code=404, detail="JSON cache not found")
 
+@app.get("/api/storage/projects/{project_id}/history")
+async def get_project_history(project_id: str):
+    p = get_history_path(project_id)
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
 @app.get("/api/storage/files")
 async def storage_list(projectId: str):
     manifest = _load_manifest(projectId)
