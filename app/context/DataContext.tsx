@@ -380,6 +380,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // TZ#25: AI Queue for sequential invoice processing
+  const [aiQueue, setAiQueue] = useState<{fileName: string, serverFilename: string}[]>([]);
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
 
   const [currentStage, setCurrentStageRaw] = useState<Stage>(() => {
@@ -1156,10 +1160,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
   }, [activeProjectId, projects]);
 
-  // TZ#25: AI Queue for sequential invoice processing
-  const [aiQueue, setAiQueue] = useState<{fileName: string, serverFilename: string}[]>([]);
-  const [isAiProcessing, setIsAiProcessing] = useState(false);
-
   const handleFile = useCallback(async (files: FileList | File[], stage: string, forceAI: boolean = false, forceOcr: boolean = false) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
@@ -1266,26 +1266,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     syncProjectFilesCount();
   }, [activeProjectId, currentStage, syncProjectFilesCount, updateFileStatusOnServer, setCurrentStage]);
 
-  // TZ#25: Эффект-Диспетчер (Полоса Б: Последовательная AI обработка)
-  useEffect(() => {
-    if (aiQueue.length > 0 && !isAiProcessing) {
-      const next = aiQueue[0];
-      setIsAiProcessing(true);
 
-      processServerFile(next.fileName, next.serverFilename, 'invoice' as Stage)
-        .catch(err => {
-          console.error(`[AI Queue] Error processing ${next.fileName}:`, err);
-          setUploadStatuses(prev => ({
-            ...prev,
-            [next.fileName]: { ...prev[next.fileName], status: 'Ошибка ИИ' }
-          }));
-        })
-        .finally(() => {
-          setAiQueue(prev => prev.slice(1));
-          setIsAiProcessing(false);
-        });
-    }
-  }, [aiQueue, isAiProcessing, processServerFile]);
 
   const processServerFile = useCallback(async (fileName: string, serverFilename: string, stage: Stage, forceOcr: boolean = false) => {
     const formData = new FormData();
@@ -1366,6 +1347,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     } catch (e) { console.error(e); }
   }, [yandexConfig, activeProjectId, fetchStorageFiles]);
+
+  // TZ#25: Эффект-Диспетчер (Полоса Б: Последовательная AI обработка)
+  // Размещен ниже processServerFile, чтобы избежать TDZ (Temporal Dead Zone)
+  useEffect(() => {
+    if (aiQueue.length > 0 && !isAiProcessing) {
+      const next = aiQueue[0];
+      setIsAiProcessing(true);
+
+      processServerFile(next.fileName, next.serverFilename, 'invoice' as Stage)
+        .catch(err => {
+          console.error(`[AI Queue] Error processing ${next.fileName}:`, err);
+          setUploadStatuses(prev => ({
+            ...prev,
+            [next.fileName]: { ...prev[next.fileName], status: 'Ошибка ИИ' }
+          }));
+        })
+        .finally(() => {
+          setAiQueue(prev => prev.slice(1));
+          setIsAiProcessing(false);
+        });
+    }
+  }, [aiQueue, isAiProcessing, processServerFile]);
 
   const reprocessAi = useCallback(async (fileName: string, forceOcr: boolean = false) => {
     const file = filesMap[fileName];

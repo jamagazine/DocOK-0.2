@@ -61,7 +61,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
   const isTableFile = (name: string) => /\.(xlsx?|xls|csv)$/i.test(name);
 
   // TZ#25: Set of filenames currently in AI queue
-  const aiQueueNames = React.useMemo(() => new Set(aiQueue.map(q => q.fileName)), [aiQueue]);
+  const aiQueueNames = React.useMemo(() => new Set((aiQueue || []).map(q => q.fileName)), [aiQueue]);
 
   const handleDeleteConfirm = () => {
     if (pendingDelete) {
