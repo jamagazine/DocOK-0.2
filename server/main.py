@@ -937,7 +937,8 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
         "is_scan": is_scan_val,
         "pdf_type": current_pdf_type,
         "method": p_method,
-        "detected_type": effective_stage
+        "detected_type": effective_stage,
+        "total_rows": num_pos
     }
 
 @app.post("/api/storage/files/reprocess_clear")

@@ -529,6 +529,7 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                     {queueFiles.map(([fileName, data]) => {
                       const queueIdx = aiQueue.findIndex(q => q.fileName === fileName);
                       const isFirst = queueIdx === 0;
+                      const fileProgress = data.progress || 0;
                       return (
                         <div
                           key={fileName}
@@ -552,13 +553,17 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
                                 {fileName.replace(/\.[^/.]+$/, '')}
                               </span>
                               <span className="text-[11px] mt-0.5 font-medium" style={{ color: isFirst ? '#d97706' : '#94a3b8' }}>
-                                {isFirst ? 'Анализ ИИ...' : `В очереди (${queueIdx + 1}-й)`}
+                                {isFirst ? `Анализ ИИ... ${fileProgress}%` : `В очереди (${queueIdx + 1}-й)`}
                               </span>
-                              {isFirst && (
-                                <div className="h-1.5 w-full bg-amber-100 rounded-full mt-1.5 overflow-hidden">
-                                  <div className="h-full bg-amber-400 rounded-full animate-pulse" style={{ width: '60%' }} />
-                                </div>
-                              )}
+                              <div className="h-1.5 w-full bg-amber-100 rounded-full mt-1.5 overflow-hidden">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all duration-700 ease-out",
+                                    isFirst ? "bg-amber-400" : "bg-slate-300"
+                                  )}
+                                  style={{ width: `${fileProgress}%` }}
+                                />
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -622,29 +627,27 @@ export function FilesPanel({ isOpen, onClose }: FilesPanelProps) {
           {fileEntries.length > 0 && (
             <>
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px] font-medium">
-                  <span className="text-slate-600">Общий прогресс обработки</span>
-                  <span className="text-indigo-600">
-                    {Math.round(
-                      (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово') || d.status === 'reset').length /
-                        fileEntries.length) *
-                        100
-                    )}
-                    %
-                  </span>
-                </div>
-                <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 transition-all duration-500 ease-out"
-                    style={{
-                      width: `${
-                        (fileEntries.filter(([_, d]: [string, any]) => d.status.includes('Готово') || d.status === 'reset').length /
-                          fileEntries.length) *
-                        100
-                      }%`,
-                    }}
-                  />
-                </div>
+                {(() => {
+                  const totalProgress = (() => {
+                    const values = fileEntries.map(([_, d]: [string, any]) => d.progress || 0);
+                    if (values.length === 0) return 0;
+                    return Math.round(values.reduce((a: number, b: number) => a + b, 0) / values.length);
+                  })();
+                  return (
+                    <>
+                      <div className="flex items-center justify-between text-[11px] font-medium">
+                        <span className="text-slate-600">Общий прогресс обработки</span>
+                        <span className="text-indigo-600">{totalProgress}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-indigo-500 transition-all duration-700 ease-out"
+                          style={{ width: `${totalProgress}%` }}
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="flex items-center justify-between pt-1 border-t border-slate-200">

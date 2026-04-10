@@ -55,6 +55,8 @@ export interface UploadStatus {
   type?: Stage;
   supplierData?: SupplierData;
   verifiedFields?: Record<string, boolean>;
+  progress?: number;
+  total_rows?: number;
 }
 
 export interface FileItem extends UploadStatus {

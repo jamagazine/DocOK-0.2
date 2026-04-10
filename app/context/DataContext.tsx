@@ -1171,7 +1171,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     let firstDetectedType: string | null = null;
 
     for (const file of fileArray) {
-      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...', type: stage } }));
+      setUploadStatuses((prev: any) => ({ ...prev, [file.name]: { ...prev[file.name], status: 'Старт...', type: stage, progress: 0 } }));
 
       let serverFilename = '';
       try {
@@ -1182,72 +1182,95 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         uploadData.append('stage', stage);
 
-        const res = await fetch('http://localhost:8000/api/storage/upload', {
-          method: 'POST',
-          body: uploadData,
+        // TZ#26: Upload with progress tracking (Phase 1: 0-20%)
+        const resData: any = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', 'http://localhost:8000/api/storage/upload');
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const uploadPercent = Math.round((e.loaded / e.total) * 20);
+              setUploadStatuses((prev: any) => ({
+                ...prev,
+                [file.name]: { ...prev[file.name], progress: uploadPercent, status: `Загрузка ${uploadPercent}%...` }
+              }));
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try { resolve(JSON.parse(xhr.responseText)); }
+              catch (e) { reject(new Error('Invalid JSON response')); }
+            } else {
+              reject(new Error(`Upload failed: ${xhr.status}`));
+            }
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send(uploadData);
         });
 
-        if (res.ok) {
-          const resData = await res.json();
-          serverFilename = resData.filename || '';
+        serverFilename = resData.filename || '';
 
-          // TZ#25: Backend detected type (fallback to stage)
-          const detectedType = resData.detected_type || stage;
-          if (!firstDetectedType) firstDetectedType = detectedType;
+        // TZ#25: Backend detected type (fallback to stage)
+        const detectedType = resData.detected_type || stage;
+        if (!firstDetectedType) firstDetectedType = detectedType;
 
-          // Update status from server response
-          if (resData.estimated_cost !== undefined) {
-            setUploadStatuses((prev: any) => ({
-              ...prev,
-              [file.name]: {
-                ...prev[file.name],
-                estimated_cost: resData.estimated_cost,
-                estimated_tokens: resData.estimated_tokens,
-                summary_fields: resData.summary_fields,
-                summary_md: resData.summary_md,
-                type: detectedType
-              }
-            }));
-          }
+        // TZ#26: Save total_rows for chunk progress calculation
+        const totalRows = resData.total_rows || 0;
 
-          // TZ#25: DUAL-LANE ROUTING
-          if (detectedType === 'spec') {
-            // ПОЛОСА А: Локальный парсинг спецификаций — мгновенно
-            if (resData.raw_markdown) {
-              const instantRows = parseMarkdownToRows(resData.raw_markdown, 'spec', file.name);
-              setSpecRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as SpecRow[]]);
+        // Update status from server response
+        if (resData.estimated_cost !== undefined) {
+          setUploadStatuses((prev: any) => ({
+            ...prev,
+            [file.name]: {
+              ...prev[file.name],
+              estimated_cost: resData.estimated_cost,
+              estimated_tokens: resData.estimated_tokens,
+              summary_fields: resData.summary_fields,
+              summary_md: resData.summary_md,
+              type: detectedType,
+              total_rows: totalRows,
+              progress: 20
             }
-            setActiveFileId(file.name);
-            const finalStatus = resData.file_status || 'READY_MD';
-            setUploadStatuses((prev: any) => ({
-              ...prev,
-              [file.name]: {
-                ...prev[file.name],
-                status: finalStatus,
-                time: currentTime,
-                method: resData.method || 'MD_Instant',
-                type: 'spec'
-              }
-            }));
-            updateFileStatusOnServer(file.name, finalStatus);
-          } else {
-            // ПОЛОСА Б: Счета — в AI-очередь
-            const isSpreadsheet = file.name.toLowerCase().match(/\.(xlsx|xls|csv)$/);
-            if (isSpreadsheet && !forceAI) {
-              // Excel-счет без forceAI — тоже в очередь на AI
-            }
-            setUploadStatuses((prev: any) => ({
-              ...prev,
-              [file.name]: {
-                ...prev[file.name],
-                status: 'В очереди на ИИ...',
-                time: currentTime,
-                method: resData.method || 'pending_ai',
-                type: 'invoice'
-              }
-            }));
-            setAiQueue(prev => [...prev, { fileName: file.name, serverFilename }]);
+          }));
+        }
+
+        // TZ#25: DUAL-LANE ROUTING
+        if (detectedType === 'spec') {
+          // ПОЛОСА А: Локальный парсинг спецификаций — мгновенно
+          if (resData.raw_markdown) {
+            const instantRows = parseMarkdownToRows(resData.raw_markdown, 'spec', file.name);
+            setSpecRows(prev => [...prev.filter(r => r.fileId !== file.name), ...instantRows as SpecRow[]]);
           }
+          setActiveFileId(file.name);
+          const finalStatus = resData.file_status || 'READY_MD';
+          setUploadStatuses((prev: any) => ({
+            ...prev,
+            [file.name]: {
+              ...prev[file.name],
+              status: finalStatus,
+              time: currentTime,
+              method: resData.method || 'MD_Instant',
+              type: 'spec',
+              progress: 100
+            }
+          }));
+          updateFileStatusOnServer(file.name, finalStatus);
+        } else {
+          // ПОЛОСА Б: Счета — в AI-очередь
+          setUploadStatuses((prev: any) => ({
+            ...prev,
+            [file.name]: {
+              ...prev[file.name],
+              status: 'В очереди на ИИ...',
+              time: currentTime,
+              method: resData.method || 'pending_ai',
+              type: 'invoice',
+              total_rows: totalRows,
+              progress: 20
+            }
+          }));
+          setAiQueue(prev => [...prev, { fileName: file.name, serverFilename }]);
         }
       } catch (e) {
         console.error('Failed to upload file to storage:', e);
@@ -1279,7 +1302,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const currentTime = `${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} | ${now.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}`;
 
     try {
-      setUploadStatuses((prev: any) => ({ ...prev, [fileName]: { ...prev[fileName], status: 'Анализ OCR...', time: currentTime } }));
+      // TZ#26: Initialize chunk counter for progress tracking
+      let processedChunksCount = 0;
+
+      setUploadStatuses((prev: any) => ({ ...prev, [fileName]: { ...prev[fileName], status: 'Анализ OCR...', time: currentTime, progress: prev[fileName]?.progress || 30 } }));
       const response = await fetch('http://localhost:8000/api/process-invoice', {
         method: 'POST',
         body: formData,
@@ -1310,12 +1336,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
                 const incomingDoc = data.data?.document || data.supplierData || {};
                 const newMethod = data.data?.method || data.method || prevData.method;
 
+                // TZ#26: Calculate chunk-based progress (30-100%)
+                let newProgress = prevData.progress || 30;
+                if (data.status === 'chunk') {
+                  processedChunksCount++;
+                  const totalChunks = Math.ceil((prevData.total_rows || 15) / 15) || 1;
+                  newProgress = Math.min(95, 30 + Math.round(70 * (processedChunksCount / totalChunks)));
+                } else if (data.status === 'final') {
+                  newProgress = 100;
+                }
+
                  return {
                   ...prev,
                   [fileName]: { 
                      ...prevData, 
                      status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
                      method: newMethod,
+                     progress: newProgress,
                      supplierData: {
                         ...(prevData.supplierData || {}),
                         ...incomingDoc,
@@ -1354,6 +1391,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (aiQueue.length > 0 && !isAiProcessing) {
       const next = aiQueue[0];
       setIsAiProcessing(true);
+
+      // TZ#26: Phase 2 — set progress to 30% when AI starts
+      setUploadStatuses(prev => ({
+        ...prev,
+        [next.fileName]: { ...prev[next.fileName], progress: 30, status: 'Анализ ИИ...' }
+      }));
 
       processServerFile(next.fileName, next.serverFilename, 'invoice' as Stage)
         .catch(err => {
