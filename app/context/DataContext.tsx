@@ -927,6 +927,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
     return { apiKey: '', catalogId: '' };
   });
+
+  // Загружаем конфигурацию с бэкенда при старте
+  useEffect(() => {
+    const loadBackendConfig = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/config');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.keys) {
+            const backendConfig = {
+              apiKey: data.keys.YANDEX_API_KEY || '',
+              catalogId: data.keys.YANDEX_FOLDER_ID || ''
+            };
+            // Обновляем состояние и localStorage если есть данные с бэкенда
+            if (backendConfig.apiKey || backendConfig.catalogId) {
+              setYandexConfig(backendConfig);
+              localStorage.setItem('docok_yandex_config', JSON.stringify(backendConfig));
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load config from backend:', error);
+      }
+    };
+    loadBackendConfig();
+  }, []);
   const [uploadStatuses, setUploadStatuses] = useState<Record<string, UploadStatus>>({});
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [filesMap, setFilesMap] = useState<Record<string, File>>({});
@@ -1031,9 +1057,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setIsOnlySelectedView(false);
   }, [currentStage]);
 
-  const saveYandexConfig = useCallback((config: YandexConfig) => {
+  const saveYandexConfig = useCallback(async (config: YandexConfig) => {
     setYandexConfig(config);
     localStorage.setItem('docok_yandex_config', JSON.stringify(config));
+    
+    // Отправляем ключи на бэкенд для сохранения в config.json
+    try {
+      await fetch('http://localhost:8000/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keys: {
+            YANDEX_API_KEY: config.apiKey,
+            YANDEX_FOLDER_ID: config.catalogId
+          }
+        })
+      });
+    } catch (error) {
+      console.error('Failed to save config to backend:', error);
+    }
   }, []);
 
   const parseMarkdownToRows = (md: string, stage: string, fileName: string) => {

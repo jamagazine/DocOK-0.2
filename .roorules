@@ -1,0 +1,70 @@
+# Roo Rules для проекта DocOK
+
+## Контекст проекта
+DocOK — веб-приложение для автоматизированной обработки документов снабжения (спецификации, счета, сметы) с использованием AI (Yandex Cloud GPT + OCR).
+
+## Архитектура
+- Frontend: React 18 + TypeScript 6 + Vite 6 + TailwindCSS 4 + Radix UI
+- Backend: Python + FastAPI + pandas + rapidfuzz
+- Состояние: React Context API (DataContext.tsx — центральный хаб, 2902 строки)
+- AI: Yandex Cloud (GPT для парсинга, Vision для OCR)
+
+## Структура данных
+- Оригинальные ответы ИИ: `[имя_файла].json` (Read-only)
+- Текущее состояние таблиц: `project_state.json`
+- Справочник поставщиков: `suppliers.json`
+- История и биллинг: `history.json`
+
+## Ключевые концепции
+1. **Трёхэтапный процесс:** spec → invoice → estimate
+2. **Двухполосная обработка:** Спецификации (локально) + Счета (AI-очередь)
+3. **Режимы таблиц:** original / merged / supplier
+4. **Автосохранение:** каждые 5 секунд
+
+## Правила работы
+
+### Код
+- TypeScript: строгая типизация, избегай `any`
+- React: функциональные компоненты + хуки (useCallback, useMemo)
+- Именование: camelCase для переменных, PascalCase для компонентов
+- Всегда добавляй toast-уведомления (toast.success/error/info)
+- Обрабатывай ошибки: try-catch + toast.error
+- Проверяй activeProjectId перед операциями с проектами
+
+### UI
+- **Анти-матрешка:** избегай карточек внутри карточек
+- Используй визуальную иерархию через отступы и размеры шрифтов
+- Не добавляй лишние рамки и тени внутри существующих карточек
+- TailwindCSS 4 для стилей, Radix UI для компонентов, Lucide React для иконок
+
+### Архитектура
+- НЕ переписывай весь файл — делай точечные изменения
+- Используй существующие функции из DataContext
+- Проверяй зависимости в useEffect — избегай бесконечных циклов
+- Типы берутся из types.ts (SpecRow, InvoiceRow, EstimateRow, Project)
+
+### Частые задачи
+- Новое поле в таблице → обнови types.ts + DataContext + компоненты таблиц
+- Новый API endpoint → добавь в server/main.py + обнови DataContext
+- Новая UI функция → создай компонент в app/components/ + интегрируй через DataContext
+
+## Важные файлы
+- `app/context/DataContext.tsx` — глобальное состояние (БОЛЬШОЙ, будь точным)
+- `app/types.ts` — TypeScript типы
+- `server/main.py` — FastAPI endpoints
+- `server/ai_service.py` — Yandex AI интеграция
+
+## API Endpoints
+- POST /api/storage/upload — загрузка файла
+- POST /api/process-invoice — AI-обработка (SSE stream)
+- GET /api/storage/files?projectId={id} — список файлов
+- POST /api/projects/save — сохранение проекта
+- GET /api/storage/history/export_xlsx?projectId={id} — экспорт истории
+
+## Перед коммитом
+- [ ] Нет ошибок в консоли
+- [ ] TypeScript типы корректны
+- [ ] Добавлены toast-уведомления
+- [ ] Обработаны ошибки
+- [ ] Код отформатирован
+- [ ] Проверена работа в UI

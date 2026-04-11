@@ -135,7 +135,14 @@ def clean_and_group_markdown_table(md_text: str) -> str:
         
     def clean_cell(c):
         # Удаляем лишние пробелы внутри ячейки
-        return re.sub(r'\s+', ' ', str(c)).strip()
+        text = re.sub(r'\s+', ' ', str(c)).strip()
+        
+        # Нормализация чисел: удаляем пробелы из чисел с разделителями тысяч
+        # Примеры: "15 540,00" → "15540,00", "1 234 567.89" → "1234567.89"
+        # Паттерн: цифра + (пробел + цифры)+ + опционально (запятая/точка + цифры)
+        text = re.sub(r'(\d)\s+(?=\d)', r'\1', text)
+        
+        return text
 
     result_lines = []
     header_clean = [clean_cell(h) for h in header]
@@ -189,7 +196,10 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     if p_method == "excel_ai":
         # Apply Excel/CSV Semicolon Squeezer
         markdown_payload = clean_and_group_markdown_table(extracted_text)
-    elif p_method in ["ocr_table", "pdf_text"]:
+    elif p_method == "pdf_text":
+        # Apply Ultra-Squeezer for digital PDF tables (same as Excel)
+        markdown_payload = clean_and_group_markdown_table(extracted_text)
+    elif p_method == "ocr_table":
         # OCR PDF filter: keep only lines containing digits (price/quantity candidates)
         lines = extracted_text.split('\n')
         filtered = []

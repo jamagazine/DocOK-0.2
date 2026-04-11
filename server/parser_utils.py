@@ -1227,6 +1227,440 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
             pages_data.append(page_words)
             
     return pages_data
+
+
+# ============================================================================
+# PDF TABLE EXTRACTION FUNCTIONS (Этап 1: Извлечение позиций из цифровых PDF)
+# ============================================================================
+
+def group_words_into_lines(words: list, y_threshold: int = 5) -> list:
+    """
+    Группирует слова в строки по Y-координате.
+    
+    Args:
+        words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
+        y_threshold: Порог для объединения в одну строку (по умолчанию 5)
+    
+    Returns:
+        Список кортежей (y_coordinate, line_text)
+    
+    Example:
+        >>> words = [
+        ...     {"text": "ООО", "x": 50, "y": 100, "w": 30, "h": 12},
+        ...     {"text": "Поставщик", "x": 90, "y": 100, "w": 80, "h": 12},
+        ...     {"text": "Счет", "x": 50, "y": 130, "w": 40, "h": 12},
+        ... ]
+        >>> group_words_into_lines(words)
+        [(100, "ООО Поставщик"), (130, "Счет")]
+    """
+    if not words:
+        return []
+    
+    words_sorted = sorted(words, key=lambda w: w['y'])
+    lines = []
+    current_line = [words_sorted[0]]
+    
+    for word in words_sorted[1:]:
+        if abs(word['y'] - current_line[0]['y']) < y_threshold:
+            current_line.append(word)
+        else:
+            # Сортируем по X и склеиваем
+            current_line.sort(key=lambda w: w['x'])
+            line_text = ' '.join(w['text'] for w in current_line)
+            lines.append((current_line[0]['y'], line_text))
+            current_line = [word]
+    
+    # Последняя строка
+    if current_line:
+        current_line.sort(key=lambda w: w['x'])
+        line_text = ' '.join(w['text'] for w in current_line)
+        lines.append((current_line[0]['y'], line_text))
+    
+    return lines
+
+
+def detect_table_columns(words: list, x_threshold: int = 20) -> list:
+    """
+    Определяет границы колонок таблицы по X-координатам слов.
+    
+    Args:
+        words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
+        x_threshold: Порог для объединения в одну колонку (по умолчанию 20)
+    
+    Returns:
+        Список средних X-координат колонок (отсортированный)
+    
+    Example:
+        >>> words = [
+        ...     {"text": "№", "x": 50, "y": 100, ...},
+        ...     {"text": "Наименование", "x": 100, "y": 100, ...},
+        ...     {"text": "Цена", "x": 350, "y": 100, ...},
+        ... ]
+        >>> detect_table_columns(words)
+        [50, 100, 350]
+    """
+    if not words:
+        return []
+    
+    x_coords = sorted(set(w['x'] for w in words))
+    
+    if not x_coords:
+        return []
+    
+    columns = []
+    current_col = [x_coords[0]]
+    
+    for x in x_coords[1:]:
+        if x - current_col[-1] < x_threshold:
+            current_col.append(x)
+        else:
+            columns.append(sum(current_col) / len(current_col))
+            current_col = [x]
+    
+    if current_col:
+        columns.append(sum(current_col) / len(current_col))
+    
+    return columns
+
+
+def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int = 20) -> str:
+    """
+    Конвертирует координатные слова в Markdown-таблицу.
+    
+    Args:
+        words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
+        y_threshold: Порог для группировки строк
+        x_threshold: Порог для определения колонок
+    
+    Returns:
+        Markdown-таблица в виде строки
+    
+    Example:
+        >>> words = [
+        ...     {"text": "№", "x": 50, "y": 100, ...},
+        ...     {"text": "Наименование", "x": 100, "y": 100, ...},
+        ...     {"text": "1", "x": 52, "y": 120, ...},
+        ...     {"text": "Товар А", "x": 105, "y": 120, ...},
+        ... ]
+        >>> words_to_markdown_grid(words)
+        '| № | Наименование |\\n| 1 | Товар А |'
+    """
+    if not words:
+        return ""
+    
+    # 1. Определяем колонки
+    columns = detect_table_columns(words, x_threshold)
+    
+    if not columns:
+        return ""
+    
+    # 2. Группируем в строки
+    lines = group_words_into_lines(words, y_threshold)
+    
+    # 3. Распределяем слова по колонкам
+    grid = []
+    
+    for line_y, _ in lines:
+        line_words = [w for w in words if abs(w['y'] - line_y) < y_threshold]
+        line_words.sort(key=lambda w: w['x'])
+        
+        row = [''] * len(columns)
+        
+        for word in line_words:
+            # Находим ближайшую колонку
+            col_idx = min(range(len(columns)),
+                         key=lambda i: abs(columns[i] - word['x']))
+            
+            # Добавляем текст в ячейку
+            if row[col_idx]:
+                row[col_idx] += ' ' + word['text']
+            else:
+                row[col_idx] = word['text']
+        
+        grid.append(row)
+    
+    # 4. Очищаем и объединяем колонки
+    if not grid:
+        return ""
+    
+    cleaned_grid = clean_and_merge_table_columns(grid)
+    
+    # 5. Конвертируем в Markdown
+    md_lines = []
+    for row in cleaned_grid:
+        md_lines.append('| ' + ' | '.join(row) + ' |')
+    
+    return '\n'.join(md_lines)
+
+
+def clean_and_merge_table_columns(grid: list) -> list:
+    """
+    Очищает и объединяет колонки таблицы для улучшения парсинга GPT.
+    
+    Выполняет:
+    1. Удаление пустых колонок (>50% пустых ячеек)
+    2. Объединение соседних колонок с короткими значениями (только единицы измерения)
+    3. Упрощение заголовка (удаление дублирующих строк)
+    
+    Args:
+        grid: Двумерный массив строк таблицы
+    
+    Returns:
+        Очищенный grid
+    """
+    if not grid or len(grid) < 2:
+        return grid
+    
+    # Шаг 1: Удаляем полностью пустые колонки
+    num_cols = len(grid[0])
+    cols_to_keep = []
+    
+    for col_idx in range(num_cols):
+        non_empty_count = sum(1 for row in grid if col_idx < len(row) and row[col_idx].strip())
+        # Колонка должна быть заполнена хотя бы наполовину
+        if non_empty_count >= len(grid) * 0.5:
+            cols_to_keep.append(col_idx)
+    
+    # Применяем фильтр колонок
+    filtered_grid = []
+    for row in grid:
+        filtered_row = [row[i] if i < len(row) else '' for i in cols_to_keep]
+        filtered_grid.append(filtered_row)
+    
+    if not filtered_grid:
+        return grid
+    
+    # Шаг 2: Объединяем ТОЛЬКО единицы измерения с количеством
+    # Например: "1" + "шт" → "1 шт", "46" + "шт" → "46 шт"
+    # НЕ объединяем другие колонки!
+    merged_grid = []
+    
+    for row in filtered_grid:
+        merged_row = []
+        i = 0
+        while i < len(row):
+            cell = row[i].strip()
+            
+            # Проверяем, нужно ли объединить со следующей ячейкой
+            if i + 1 < len(row):
+                next_cell = row[i + 1].strip()
+                
+                # ТОЛЬКО случай: Число + единица измерения (шт, м, кг и т.д.)
+                # Единица измерения должна быть короткой (< 10 символов) и не содержать цифр
+                should_merge = False
+                
+                if cell and next_cell:
+                    # Текущая ячейка - число, следующая - единица измерения
+                    if (cell.replace(',', '').replace('.', '').replace(' ', '').isdigit() and
+                        len(next_cell) < 10 and
+                        not any(c.isdigit() for c in next_cell)):
+                        should_merge = True
+                
+                if should_merge:
+                    merged_row.append(f"{cell} {next_cell}")
+                    i += 2  # Пропускаем следующую ячейку
+                    continue
+            
+            merged_row.append(cell)
+            i += 1
+        
+        merged_grid.append(merged_row)
+    
+    # Шаг 3: Упрощаем заголовок (удаляем вторую строку, если она дублирует первую)
+    if len(merged_grid) >= 2:
+        header1 = merged_grid[0]
+        header2 = merged_grid[1]
+        
+        # Проверяем, является ли вторая строка продолжением заголовка
+        is_header_continuation = True
+        for cell in header2:
+            cell_lower = cell.lower().strip()
+            # Если во второй строке есть числа или длинный текст, это не заголовок
+            if cell_lower and (any(c.isdigit() for c in cell) or len(cell) > 20):
+                is_header_continuation = False
+                break
+        
+        # Если вторая строка - продолжение заголовка, объединяем или удаляем
+        if is_header_continuation:
+            # Объединяем заголовки
+            combined_header = []
+            for i in range(max(len(header1), len(header2))):
+                h1 = header1[i] if i < len(header1) else ''
+                h2 = header2[i] if i < len(header2) else ''
+                
+                if h1 and h2:
+                    combined_header.append(f"{h1} {h2}".strip())
+                else:
+                    combined_header.append((h1 or h2).strip())
+            
+            merged_grid[0] = combined_header
+            merged_grid.pop(1)  # Удаляем вторую строку заголовка
+    
+    return merged_grid
+
+
+def is_subtotal_line(lines: list, current_idx: int, words: list = None) -> bool:
+    """
+    Проверяет, является ли строка промежуточным итогом (Peak-ahead).
+    
+    Логика: Если после строки с "итого" есть строки с якорями (короткие значения
+    в начале строки, например номера позиций), то это промежуточный итог.
+    
+    Args:
+        lines: Список кортежей (y_coordinate, line_text)
+        current_idx: Индекс текущей строки
+        words: Опциональный список слов для более точной проверки
+    
+    Returns:
+        True если это промежуточный итог, False если финальный
+    
+    Example:
+        >>> lines = [
+        ...     (100, "1 Товар А 10 100"),
+        ...     (120, "Итого по разделу 100"),
+        ...     (140, "2 Товар Б 5 50"),  # <- есть якорь (2)
+        ... ]
+        >>> is_subtotal_line(lines, 1)
+        True  # Это промежуточный итог
+    """
+    # Проверяем следующие 3 строки
+    for look_idx in range(current_idx + 1, min(current_idx + 4, len(lines))):
+        _, line_text = lines[look_idx]
+        
+        # Ищем якорь: короткое значение в начале строки
+        tokens = line_text.strip().split()
+        if tokens:
+            first_token = tokens[0]
+            # Якорь: короткое значение (< 15 символов) и не "итого"
+            if len(first_token) < 15 and first_token.lower() != 'итого':
+                return True  # Промежуточный итог
+    
+    return False  # Финальный итог
+
+
+def extract_pdf_table_region(pages_data: list) -> str:
+    """
+    Извлекает только табличную часть из цифрового PDF.
+    
+    Алгоритм:
+    1. Ищет начало таблицы по маркерам (наименование, кол-во, цена, сумма)
+    2. Ищет конец таблицы по стоп-словам (итого, всего к оплате) с Peak-ahead
+    3. Извлекает слова из найденного региона
+    4. Конвертирует в Markdown-таблицу
+    
+    Args:
+        pages_data: Список страниц, каждая страница - список словарей слов
+                   [{'text': str, 'x': float, 'y': float, 'w': float, 'h': float}, ...]
+    
+    Returns:
+        Markdown-таблица в виде строки
+    
+    Example:
+        >>> pages_data = [[
+        ...     {"text": "Наименование", "x": 100, "y": 300, ...},
+        ...     {"text": "Цена", "x": 350, "y": 300, ...},
+        ...     {"text": "Товар А", "x": 100, "y": 320, ...},
+        ...     {"text": "100", "x": 355, "y": 320, ...},
+        ... ]]
+        >>> extract_pdf_table_region(pages_data)
+        '| Наименование | Цена |\\n| Товар А | 100 |'
+    """
+    if not pages_data:
+        return ""
+    
+    # Маркеры начала и конца таблицы
+    table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
+    stop_words = ['итого', 'всего к оплате', 'всего наименований', 'руководитель', 'м.п.', 'главный бухгалтер']
+    
+    # 1. ПОИСК НАЧАЛА ТАБЛИЦЫ
+    table_start_y = None
+    table_start_page = 0
+    
+    for page_idx, page_words in enumerate(pages_data):
+        if not page_words:
+            continue
+            
+        lines = group_words_into_lines(page_words, y_threshold=5)
+        
+        for line_y, line_text in lines:
+            line_lower = line_text.lower()
+            matches = sum(1 for marker in table_markers if marker in line_lower)
+            
+            if matches >= 2:
+                table_start_y = line_y
+                table_start_page = page_idx
+                break
+        
+        if table_start_y is not None:
+            break
+    
+    if table_start_y is None:
+        return ""  # Таблица не найдена
+    
+    # 2. ПОИСК КОНЦА ТАБЛИЦЫ
+    table_end_y = None
+    table_end_page = len(pages_data) - 1
+    
+    for page_idx in range(table_start_page, len(pages_data)):
+        if not pages_data[page_idx]:
+            continue
+            
+        lines = group_words_into_lines(pages_data[page_idx], y_threshold=5)
+        
+        for idx, (line_y, line_text) in enumerate(lines):
+            line_lower = line_text.lower()
+            
+            if any(stop in line_lower for stop in stop_words):
+                # Peak-ahead: проверяем промежуточный итог
+                is_subtotal = is_subtotal_line(lines, idx, pages_data[page_idx])
+                
+                # Дополнительная проверка: если на текущей странице нет якорей,
+                # проверяем следующую страницу на наличие маркеров таблицы
+                if not is_subtotal and page_idx + 1 < len(pages_data):
+                    next_page_lines = group_words_into_lines(pages_data[page_idx + 1], y_threshold=5)
+                    
+                    # Ищем маркеры таблицы на следующей странице
+                    for next_line_y, next_line_text in next_page_lines[:10]:  # Проверяем первые 10 строк
+                        next_line_lower = next_line_text.lower()
+                        matches = sum(1 for marker in table_markers if marker in next_line_lower)
+                        
+                        # Если нашли маркеры таблицы - это промежуточный итог
+                        if matches >= 2:
+                            is_subtotal = True
+                            break
+                
+                if not is_subtotal:
+                    table_end_y = line_y
+                    table_end_page = page_idx
+                    break
+        
+        if table_end_y is not None:
+            break
+    
+    # Если конец не найден, берем до конца документа
+    if table_end_y is None:
+        table_end_y = float('inf')
+        table_end_page = len(pages_data) - 1
+    
+    # 3. ИЗВЛЕЧЕНИЕ СЛОВ ИЗ РЕГИОНА
+    table_words = []
+    
+    for page_idx in range(table_start_page, table_end_page + 1):
+        for word in pages_data[page_idx]:
+            # Фильтруем по Y-координатам
+            if page_idx == table_start_page and word['y'] < table_start_y:
+                continue
+            if page_idx == table_end_page and word['y'] > table_end_y:
+                continue
+            
+            table_words.append(word)
+    
+    # 4. КОНВЕРТАЦИЯ В MARKDOWN
+    markdown_table = words_to_markdown_grid(table_words, y_threshold=5, x_threshold=35)
+    
+    return markdown_table
+
+
 def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     """
     Универсальный препроцессор. Читает Excel/CSV строго как текст, 

@@ -15,6 +15,9 @@ import uuid
 import re
 import zipfile
 import tempfile
+import logging
+
+logger = logging.getLogger(__name__)
 
 def slugify_translit(text: str) -> str:
     # 1. Transliterate using the existing helper
@@ -438,6 +441,7 @@ async def get_config():
 @app.post("/api/config")
 async def save_config(request: Request):
     data = await request.json()
+    logger.info(f"Saving config: API_KEY length={len(data.get('keys', {}).get('YANDEX_API_KEY', ''))}, FOLDER_ID={data.get('keys', {}).get('YANDEX_FOLDER_ID', '')}")
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
     return {"status": "success", "saved": True}
@@ -533,7 +537,7 @@ async def process_invoice(
                     # --- ПУТЬ 1: ЦИФРОВОЙ PDF (ЧЕРЕЗ ЗОНАЛЬНЫЙ АДАПТЕР) ---
                     if len(first_page.chars) > 50 and not is_force_ocr:
 
-                        from parser_utils import extract_digital_words_as_ocr
+                        from parser_utils import extract_digital_words_as_ocr, extract_pdf_table_region
                         
                         # Возвращает List[List[dict]] (слова по страницам)
                         pages_data = extract_digital_words_as_ocr(temp_path)
@@ -542,19 +546,16 @@ async def process_invoice(
                         p_height = float(first_page.height or 842)
                         has_low_confidence = False
                         
-                        all_ocr_text = ""
-                        for page_tokens in pages_data:
-                            # Передаем слова страницы напрямую в генератор сетки (с жестким порогом 5 для цифры)
-                            h, t = ocr_to_grid_markdown(page_tokens, y_threshold=5)
-                            if t: all_ocr_text += f"\n\n{t}"
-                            
-                        extracted_text = all_ocr_text.strip()
+                        # НОВАЯ ЛОГИКА: Разделяем реквизиты и позиции
+                        # 1. Извлекаем табличный регион для позиций
+                        table_markdown = extract_pdf_table_region(pages_data)
+                        extracted_text = table_markdown if table_markdown else ""
                         
-                        # Для реквизитов берем только ПЕРВУЮ страницу, чтобы избежать наслоения координат Y
-                        # (каждая новая страница в PDF начинается с Y=0)
+                        # 2. Для реквизитов берем только ПЕРВУЮ страницу
                         header_ai_data = pages_data[0] if pages_data else []
                         full_header_text = clean_and_build_markdown(header_ai_data)
                         p_method = "pdf_text"
+                        
                         # raw_ocr_data для таблиц (весь документ) остается полным
                         raw_ocr_data = [token for page in pages_data for token in page]
 
@@ -953,6 +954,7 @@ async def storage_upload(projectId: str = Form(...), file: UploadFile = File(...
             final_status = "NEED_OCR"
             file_method = "need_ocr"
         num_pos = 0
+        text_to_estimate = ext_text
     elif is_image:
         final_status = "NEED_OCR"
         file_method = "image"
