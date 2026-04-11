@@ -1388,11 +1388,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setUploadStatuses((prev: any) => ({ ...prev, [fileName]: { ...prev[fileName], status: 'Анализ OCR...', time: currentTime, progress: prev[fileName]?.progress || 30 } }));
       const response = await fetch('http://localhost:8000/api/process-invoice', {
         method: 'POST',
-        body: formData,
-        headers: {
-          'x-api-key': yandexConfig.apiKey,
-          'x-folder-id': yandexConfig.catalogId
-        }
+        body: formData
+        // Не отправляем заголовки - бэкенд использует ключи из config.json
       });
 
       const reader = response.body?.getReader();

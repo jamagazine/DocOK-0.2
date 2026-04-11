@@ -231,6 +231,11 @@ def load_prompt(name: str) -> str:
 
 async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite", label: str = "General"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+    
+    # Логируем параметры для отладки
+    logger.info(f"[{label}] API Key length: {len(api_key)}, Folder ID: {folder_id}")
+    logger.info(f"[{label}] API Key first 10 chars: {api_key[:10]}...")
+    
     headers = {
         "Authorization": f"Api-Key {api_key}",
         "x-folder-id": folder_id,

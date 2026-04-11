@@ -29,11 +29,13 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     for i, row in enumerate(grid[:200]):
         row_str = " ".join(row).lower()
         score = 0
-        if re.search(r'\b(№|n|поз)\b', row_str): score += 1
-        if re.search(r'\b(наименование|товар|услуг|работ|номенклатура)\b', row_str): score += 2
-        if re.search(r'\b(кол-во|количество)\b', row_str): score += 1
-        if re.search(r'\b(цена|стоимость)\b', row_str): score += 1
-        if re.search(r'\b(сумма|всего)\b', row_str): score += 1
+        # Используем более гибкий поиск без \b для символов типа №
+        if re.search(r'(№|n|поз)', row_str): score += 1
+        if re.search(r'(наименование|товар|услуг|работ|номенклатура)', row_str): score += 2
+        if re.search(r'(кол-во|количество)', row_str): score += 1
+        if re.search(r'(цена|стоимость)', row_str): score += 1
+        if re.search(r'(сумма|всего)', row_str): score += 1
+        if re.search(r'(код|артикул)', row_str): score += 1
         
         if score >= 3 and score > max_score:
             max_score = score
@@ -42,7 +44,7 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     if header_idx == -1:
         return ""
 
-    # 3. Поиск подвала (Footer) с Peak-ahead на 3 строки
+    # 3. Поиск подвала (Footer) с Peak-ahead на 3 строки + проверка повторного заголовка
     footer_idx = len(grid)
     stop_words = ['итого', 'всего к оплате', 'всего наименований', 'внимание!', 'условия поставки', 'оплата данного счета', 'подготовлено:', 'руководитель', 'м.п.']
     
@@ -51,6 +53,8 @@ def clean_and_group_markdown_table(md_text: str) -> str:
         if any(stop in row_str for stop in stop_words):
             # Smart Stop-Valve (Peak-ahead)
             is_fake_stop = False
+            
+            # Проверка 1: Ищем якоря в следующих 3 строках
             for j in range(1, 4):
                 if i + j < len(grid):
                     next_row = grid[i+j]
@@ -62,6 +66,21 @@ def clean_and_group_markdown_table(md_text: str) -> str:
                         if re.search(r'\d', val_0 + val_1): # Защита: должна быть хоть одна цифра
                             is_fake_stop = True
                             break
+            
+            # Проверка 2: Ищем повторный заголовок таблицы в следующих 50 строках
+            if not is_fake_stop:
+                for j in range(1, min(51, len(grid) - i)):
+                    next_row_str = " ".join(grid[i+j]).lower()
+                    score = 0
+                    if re.search(r'\b(№|n|поз)\b', next_row_str): score += 1
+                    if re.search(r'\b(наименование|товар|услуг|работ)\b', next_row_str): score += 2
+                    if re.search(r'\b(кол-во|количество)\b', next_row_str): score += 1
+                    if re.search(r'\b(цена|стоимость)\b', next_row_str): score += 1
+                    if re.search(r'\b(артикул|код)\b', next_row_str): score += 1
+                    
+                    if score >= 3:  # Найден повторный заголовок - это промежуточный итог
+                        is_fake_stop = True
+                        break
             
             if not is_fake_stop:
                 footer_idx = i
@@ -91,29 +110,98 @@ def clean_and_group_markdown_table(md_text: str) -> str:
         pruned_row = [row[i] for i in cols_to_keep if i < len(row)]
         pruned_body.append(pruned_row)
 
-    # 5. Склейка строк (The Squeezer)
+    # 5. Определение функции для проверки заголовков групп (нужна ДО обработки строк)
+    def is_group_header_row_early(row: list) -> tuple:
+        """Проверка заголовка группы ДО склеивания строк"""
+        if not row:
+            return False, ""
+        
+        # Случай 1: Вся строка в одной ячейке
+        if len(row) == 1:
+            full_text = row[0].strip()
+            match = re.match(r'^([А-ЯA-ZЁ]{1,3}\d{1,2})\s', full_text, re.IGNORECASE)
+            if match:
+                tag = match.group(1).upper()
+                rest = full_text[len(match.group(0)):]
+                if re.search(r'\d+[,\.]\d+', rest):
+                    return True, tag
+            return False, ""
+        
+        # Случай 2: Несколько ячеек
+        if len(row) >= 2:
+            first_cell = row[0].strip()
+            match = re.match(r'^([А-ЯA-ZЁ]{1,3}\d{1,2})$', first_cell, re.IGNORECASE)
+            if match and not first_cell.isdigit():
+                has_numbers = any(re.search(r'\d+[,\.]\d+', str(cell)) for cell in row[1:])
+                if has_numbers:
+                    return True, match.group(1).upper()
+        
+        return False, ""
+    
+    # 5.5. Склейка строк (The Squeezer) с отслеживанием тегов групп
     valid_rows = []
     current_row_cells = []
     header = pruned_body[0]
+    stop_words = {'итого', 'всего', 'total', 'sum'}
+    current_group_tag = ""  # Текущий тег группы
+    row_tags = []  # Теги для каждой строки в valid_rows
 
     for row in pruned_body[1:]:
         if not row or set("".join(row).replace('-', '').replace(' ', '')) == set():
+            continue
+        
+        # Проверяем, является ли строка заголовком группы
+        is_header, group_tag = is_group_header_row_early(row)
+        if is_header:
+            # Завершаем текущий товар если есть (с ПРЕДЫДУЩИМ тегом)
+            if current_row_cells:
+                valid_rows.append(current_row_cells)
+                row_tags.append(current_group_tag)  # Сохраняем старый тег
+                current_row_cells = []
+            # Обновляем тег группы для следующих товаров
+            current_group_tag = group_tag
             continue
             
         val_col_0 = row[0].strip() if len(row) > 0 else ""
         val_col_1 = row[1].strip() if len(row) > 1 else ""
         
+        # Проверяем, есть ли в последних колонках числовые значения (цены)
+        has_prices = False
+        if len(row) >= 2:
+            last_two = " ".join(row[-2:])
+            # Ищем числа с запятыми/точками (цены)
+            if re.search(r'\d+[,\.]\d+', last_two):
+                has_prices = True
+        
         is_anchor = False
-        if val_col_0 and len(val_col_0) < 15 and val_col_0.lower() not in stop_words:
+        # Проверка 1: Строка начинается с номера позиции (1-3 цифры в начале)
+        if val_col_0 and re.match(r'^\d{1,3}\s', val_col_0):
+            is_anchor = True
+        # Проверка 2: Короткое значение в первой или второй колонке (старая логика)
+        elif val_col_0 and len(val_col_0) < 15 and val_col_0.lower() not in stop_words:
             is_anchor = True
         elif val_col_1 and len(val_col_1) < 15 and val_col_1.lower() not in stop_words:
             is_anchor = True
 
         has_useful_data = bool(re.search(r'[a-zA-Zа-яА-Я0-9]', " ".join(row)))
 
-        if is_anchor:
+        # Если текущая строка имеет цены, это завершение товара
+        if has_prices and current_row_cells:
+            # Склеиваем текущую строку с накопленной
+            for idx, cell in enumerate(row):
+                if cell:
+                    if idx < len(current_row_cells):
+                        current_row_cells[idx] = f"{current_row_cells[idx]} {cell}".strip()
+                    else:
+                        current_row_cells.append(cell)
+            # Сохраняем завершенный товар с тегом
+            valid_rows.append(current_row_cells)
+            row_tags.append(current_group_tag)
+            current_row_cells = []
+        elif is_anchor:
             if current_row_cells:
                 valid_rows.append(current_row_cells)
+                row_tags.append(current_group_tag)
             current_row_cells = row
         else:
             if current_row_cells and has_useful_data:
@@ -128,6 +216,21 @@ def clean_and_group_markdown_table(md_text: str) -> str:
 
     if current_row_cells:
         valid_rows.append(current_row_cells)
+        row_tags.append(current_group_tag)
+
+    # 5.6. Присвоение тегов из row_tags
+    # Теги уже определены на этапе склеивания строк
+    final_rows = []
+    for i, row in enumerate(valid_rows):
+        tag = row_tags[i] if i < len(row_tags) else ""
+        row_with_tag = row + [tag]
+        final_rows.append(row_with_tag)
+    
+    # Обновляем valid_rows и header
+    valid_rows = final_rows
+    if header and final_rows:
+        # Добавляем колонку "Тег" в заголовок
+        header = header + ["Тег"]
 
     # 6. Сборка финального текста (DENSE SEMICOLON FORMAT)
     if not valid_rows:
@@ -150,10 +253,16 @@ def clean_and_group_markdown_table(md_text: str) -> str:
     
     for row in valid_rows:
         padded_row = row + [""] * (len(header) - len(row))
-        row_clean = [clean_cell(c) for c in padded_row]
-        # Удаляем пустые хвосты, чтобы не плодить "; ; ;" в конце строки
-        while row_clean and not row_clean[-1]:
-            row_clean.pop()
+        
+        # Обрабатываем все ячейки, но последнюю (тег) не трогаем через clean_cell
+        row_clean = []
+        for i, cell in enumerate(padded_row):
+            if i == len(padded_row) - 1:  # Последняя ячейка - это тег
+                row_clean.append(str(cell).strip())
+            else:
+                row_clean.append(clean_cell(cell))
+        
+        # НЕ удаляем последнюю колонку (Тег), даже если она пустая
         result_lines.append("; ".join(row_clean))
 
     return "\n".join(result_lines)
@@ -199,6 +308,35 @@ async def process_items(extracted_text: str, p_method: str = "", api_key: str = 
     elif p_method == "pdf_text":
         # Apply Ultra-Squeezer for digital PDF tables (same as Excel)
         markdown_payload = clean_and_group_markdown_table(extracted_text)
+    elif p_method == "squeezer":
+        # Apply Squeezer 4.0 WITHOUT LLM - return items directly
+        squeezed_text = clean_and_group_markdown_table(extracted_text)
+        if not squeezed_text:
+            return [], UsageStats()
+        
+        # Parse semicolon format into items
+        import pandas as pd
+        from parser_utils import convert_df_to_items
+        
+        # Convert semicolon text to DataFrame
+        lines = squeezed_text.strip().split('\n')
+        if len(lines) < 2:
+            return [], UsageStats()
+        
+        # Parse header and data
+        rows = [line.split(';') for line in lines]
+        rows = [[cell.strip() for cell in row] for row in rows]
+        
+        df = pd.DataFrame(rows[1:], columns=rows[0])
+        items = convert_df_to_items(df)
+        
+        # Force supplier assignment if missing
+        if supplier_name:
+            for item in items:
+                if not item.get("supplier") or item.get("supplier") == "---":
+                    item["supplier"] = supplier_name
+        validated_items = validate_math(items)
+        return validated_items, UsageStats()
     elif p_method == "ocr_table":
         # OCR PDF filter: keep only lines containing digits (price/quantity candidates)
         lines = extracted_text.split('\n')

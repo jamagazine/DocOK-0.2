@@ -35,6 +35,7 @@ build/Release/
 
 # --- Данные и временные файлы проекта ---
 temp_output/
+tmp/
 extracted_text.txt
 *.pdf
 *.txt

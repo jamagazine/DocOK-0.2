@@ -251,7 +251,7 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def convert_df_to_items(df: pd.DataFrame) -> list:
-    c_p, c_n, c_u, c_q, c_id = 0, 1, -1, -1, -1
+    c_p, c_n, c_u, c_q, c_id, c_tag = 0, 1, -1, -1, -1, -1
     for i, c in enumerate(df.columns):
         cl = str(c).lower()
         if "поз" in cl or "№" in cl: c_p = i
@@ -259,6 +259,7 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         elif "ед" in cl and "изм" in cl: c_u = i
         elif "кол" in cl: c_q = i
         elif "__id__" in cl: c_id = i
+        elif "тег" in cl: c_tag = i
 
     def is_empty_val(x):
         return str(x).strip().lower() in ("", "0", "0.0", "nan", "none")
@@ -279,6 +280,7 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
         pos_val  = v[c_p]
         unit_val = v[c_u] if c_u != -1 else ""
         qty_val  = v[c_q] if c_q != -1 else ""
+        tag_val  = v[c_tag] if c_tag != -1 else ""
 
         name_clean = str(name_val).strip()
         # Step 1: Preliminary identification of potential headers
@@ -292,6 +294,7 @@ def convert_df_to_items(df: pd.DataFrame) -> list:
             "name":     name_clean,
             "unit":     unit_val,
             "quantity": qty_val,
+            "tag":      tag_val,
             "is_item":  not is_potential,  # True = ITEM, False = potential HEADER
         })
 
@@ -1279,13 +1282,135 @@ def group_words_into_lines(words: list, y_threshold: int = 5) -> list:
     return lines
 
 
-def detect_table_columns(words: list, x_threshold: int = 20) -> list:
+def detect_compact_table(words: list) -> bool:
     """
-    Определяет границы колонок таблицы по X-координатам слов.
+    Определяет, является ли таблица "компактной" (колонки очень близко друг к другу).
+    
+    Признаки компактной таблицы:
+    - Медианное расстояние между X-координатами < 10px
+    - Большое количество уникальных X-координат (> 80)
+    - Высокая плотность слов
     
     Args:
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
-        x_threshold: Порог для объединения в одну колонку (по умолчанию 20)
+    
+    Returns:
+        True если таблица компактная, False иначе
+    """
+    if not words or len(words) < 20:
+        return False
+    
+    x_coords = sorted(set(w['x'] for w in words))
+    
+    if len(x_coords) < 80:
+        return False
+    
+    gaps = [x_coords[i+1] - x_coords[i] for i in range(len(x_coords)-1)]
+    
+    if not gaps:
+        return False
+    
+    sorted_gaps = sorted(gaps)
+    median_gap = sorted_gaps[len(sorted_gaps) // 2]
+    
+    # Компактная таблица: медианный зазор < 10px
+    return median_gap < 10
+
+
+def detect_columns_by_line_starts(words: list, y_threshold: int = 5) -> list:
+    """
+    Определяет колонки таблицы, анализируя ТОЛЬКО строку заголовка.
+    
+    ИСПРАВЛЕНИЕ (Вариант A): Анализируется только строка заголовка, а не все строки таблицы.
+    Это предотвращает создание лишних колонок из-за зазоров внутри ячеек данных.
+    
+    Алгоритм:
+    1. Группируем слова по строкам (Y-координата)
+    2. Находим строку заголовка таблицы (содержит "№" и "Артикул" или "Товары")
+    3. Извлекаем слова ТОЛЬКО из строки заголовка
+    4. Находим "начала колонок" - X-координаты первых слов после больших зазоров
+    5. Кластеризуем эти координаты
+    
+    Args:
+        words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
+        y_threshold: Порог для группировки слов в строки
+    
+    Returns:
+        Список X-координат колонок
+    """
+    if not words:
+        return []
+    
+    # 1. Группируем слова по строкам
+    lines = group_words_into_lines(words, y_threshold)
+    
+    # 2. Находим строку заголовка таблицы
+    header_line_y = None
+    for line_y, line_text in lines:
+        # Заголовок таблицы обычно содержит "№" и ("Артикул" или "Товары" или "Товар")
+        if '№' in line_text and ('Артикул' in line_text or 'Товары' in line_text or 'Товар' in line_text or 'Наименование' in line_text):
+            header_line_y = line_y
+            break
+    
+    if header_line_y is None:
+        return []
+    
+    # 3. ✅ ИСПРАВЛЕНИЕ: Извлекаем слова ТОЛЬКО из строки заголовка
+    header_words = sorted(
+        [w for w in words if abs(w['y'] - header_line_y) <= y_threshold],
+        key=lambda w: w['x']
+    )
+    
+    if not header_words:
+        return []
+    
+    # 4. Находим начала колонок в заголовке
+    column_starts = [header_words[0]['x']]
+    
+    for i in range(1, len(header_words)):
+        prev_word = header_words[i-1]
+        curr_word = header_words[i]
+        
+        # Вычисляем зазор между словами
+        gap = curr_word['x'] - (prev_word['x'] + prev_word.get('w', 0))
+        
+        # Большой зазор (>15px) = начало новой колонки
+        if gap > 15:
+            column_starts.append(curr_word['x'])
+    
+    if not column_starts:
+        return []
+    
+    # 5. Кластеризуем координаты (DBSCAN-подобный алгоритм)
+    x_coords = sorted(set(column_starts))
+    
+    if not x_coords:
+        return []
+    
+    # Используем фиксированный порог 10px для кластеризации
+    columns = []
+    current_col = [x_coords[0]]
+    
+    for x in x_coords[1:]:
+        if x - current_col[-1] < 10:
+            current_col.append(x)
+        else:
+            columns.append(sum(current_col) / len(current_col))
+            current_col = [x]
+    
+    if current_col:
+        columns.append(sum(current_col) / len(current_col))
+    
+    return columns
+
+
+def detect_table_columns(words: list, x_threshold: int = 20) -> list:
+    """
+    Определяет границы колонок таблицы по X-координатам слов с адаптивным порогом.
+    
+    Args:
+        words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
+        x_threshold: Максимальный порог для объединения в одну колонку (по умолчанию 20)
     
     Returns:
         Список средних X-координат колонок (отсортированный)
@@ -1307,11 +1432,23 @@ def detect_table_columns(words: list, x_threshold: int = 20) -> list:
     if not x_coords:
         return []
     
+    # Вычисляем распределение расстояний между соседними X-координатами
+    gaps = [x_coords[i+1] - x_coords[i] for i in range(len(x_coords)-1)]
+    
+    if not gaps:
+        return [x_coords[0]]
+    
+    # Адаптивный порог: используем медиану расстояний * 2.5, но не больше x_threshold
+    sorted_gaps = sorted(gaps)
+    median_gap = sorted_gaps[len(sorted_gaps) // 2]
+    adaptive_threshold = min(x_threshold, max(10, median_gap * 2.5))
+    
+    # Кластеризация с адаптивным порогом
     columns = []
     current_col = [x_coords[0]]
     
     for x in x_coords[1:]:
-        if x - current_col[-1] < x_threshold:
+        if x - current_col[-1] < adaptive_threshold:
             current_col.append(x)
         else:
             columns.append(sum(current_col) / len(current_col))
@@ -1323,7 +1460,56 @@ def detect_table_columns(words: list, x_threshold: int = 20) -> list:
     return columns
 
 
-def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int = 20) -> str:
+def assign_word_to_column_range(word_x: float, columns: list) -> int:
+    """
+    Определяет индекс колонки на основе диапазонов, а не ближайшей точки.
+    
+    Каждая колонка "владеет" диапазоном от середины до предыдущей колонки
+    до середины до следующей колонки.
+    
+    Args:
+        word_x: X-координата слова
+        columns: Список X-координат колонок (отсортированный)
+    
+    Returns:
+        Индекс колонки (0-based)
+    
+    Example:
+        >>> columns = [50, 100, 200, 300]
+        >>> assign_word_to_column_range(75, columns)  # Между 50 и 100
+        0  # Попадает в диапазон первой колонки [0, 75)
+        >>> assign_word_to_column_range(85, columns)  # Между 50 и 100
+        1  # Попадает в диапазон второй колонки [75, 150)
+    """
+    if not columns:
+        return 0
+    
+    if len(columns) == 1:
+        return 0
+    
+    # Для каждой колонки вычисляем её диапазон
+    for i in range(len(columns)):
+        # Левая граница диапазона
+        if i == 0:
+            left_bound = 0  # Первая колонка начинается от 0
+        else:
+            left_bound = (columns[i-1] + columns[i]) / 2
+        
+        # Правая граница диапазона
+        if i == len(columns) - 1:
+            right_bound = float('inf')  # Последняя колонка до бесконечности
+        else:
+            right_bound = (columns[i] + columns[i+1]) / 2
+        
+        # Проверяем попадание в диапазон
+        if left_bound <= word_x < right_bound:
+            return i
+    
+    # Если не попали ни в один диапазон (не должно происходить), возвращаем ближайшую
+    return min(range(len(columns)), key=lambda i: abs(columns[i] - word_x))
+
+
+def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int = 20, use_compact_mode: bool = False) -> str:
     """
     Конвертирует координатные слова в Markdown-таблицу.
     
@@ -1331,6 +1517,7 @@ def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int =
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
         y_threshold: Порог для группировки строк
         x_threshold: Порог для определения колонок
+        use_compact_mode: Использовать режим для компактных таблиц
     
     Returns:
         Markdown-таблица в виде строки
@@ -1348,8 +1535,12 @@ def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int =
     if not words:
         return ""
     
-    # 1. Определяем колонки
-    columns = detect_table_columns(words, x_threshold)
+    # 1. Определяем колонки (используем улучшенный алгоритм для компактных таблиц)
+    if use_compact_mode:
+        columns = detect_columns_by_line_starts(words, y_threshold)
+        print(f"Compact mode: detected {len(columns)} columns using line-starts algorithm")
+    else:
+        columns = detect_table_columns(words, x_threshold)
     
     if not columns:
         return ""
@@ -1367,9 +1558,8 @@ def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int =
         row = [''] * len(columns)
         
         for word in line_words:
-            # Находим ближайшую колонку
-            col_idx = min(range(len(columns)),
-                         key=lambda i: abs(columns[i] - word['x']))
+            # Определяем колонку на основе диапазонов (не ближайшей точки)
+            col_idx = assign_word_to_column_range(word['x'], columns)
             
             # Добавляем текст в ячейку
             if row[col_idx]:
@@ -1398,9 +1588,10 @@ def clean_and_merge_table_columns(grid: list) -> list:
     Очищает и объединяет колонки таблицы для улучшения парсинга GPT.
     
     Выполняет:
-    1. Удаление пустых колонок (>50% пустых ячеек)
-    2. Объединение соседних колонок с короткими значениями (только единицы измерения)
-    3. Упрощение заголовка (удаление дублирующих строк)
+    1. Удаление пустых колонок (>90% пустых ячеек) - ВАРИАНТ D
+    2. Удаление пустых колонок (>30% пустых ячеек) - существующая логика
+    3. Объединение соседних колонок с короткими значениями (только единицы измерения)
+    4. Упрощение заголовка (удаление дублирующих строк)
     
     Args:
         grid: Двумерный массив строк таблицы
@@ -1411,14 +1602,59 @@ def clean_and_merge_table_columns(grid: list) -> list:
     if not grid or len(grid) < 2:
         return grid
     
-    # Шаг 1: Удаляем полностью пустые колонки
     num_cols = len(grid[0])
+    num_rows = len(grid) - 1  # Без заголовка
+    
+    # ========== НОВОЕ (Вариант D): Удаление колонок с >90% пустых ячеек ==========
+    cols_to_remove_90 = set()
+    
+    for col_idx in range(num_cols):
+        empty_count = 0
+        for row_idx in range(1, len(grid)):  # Пропускаем заголовок
+            cell = grid[row_idx][col_idx].strip() if col_idx < len(grid[row_idx]) else ''
+            if not cell:
+                empty_count += 1
+        
+        # Если колонка пуста в >90% строк → удалить
+        if num_rows > 0 and (empty_count / num_rows) > 0.9:
+            # Защита: не удалять колонку, если в заголовке есть значимый текст
+            header_cell = grid[0][col_idx].strip() if col_idx < len(grid[0]) else ''
+            if not header_cell or header_cell in ['', '-', '—', '–']:
+                cols_to_remove_90.add(col_idx)
+                print(f"[clean_and_merge] Removing 90% empty column {col_idx} ({empty_count}/{num_rows} empty)")
+    
+    # Удаляем колонки (в обратном порядке, чтобы не сбить индексы)
+    if cols_to_remove_90:
+        for col_idx in sorted(cols_to_remove_90, reverse=True):
+            for row in grid:
+                if col_idx < len(row):
+                    del row[col_idx]
+        print(f"[clean_and_merge] Removed {len(cols_to_remove_90)} columns with >90% empty cells")
+        
+        # Обновляем num_cols после удаления
+        if grid:
+            num_cols = len(grid[0])
+    
+    # ========== Шаг 1: Удаляем колонки с >30% пустых ячеек (существующая логика) ==========
     cols_to_keep = []
     
     for col_idx in range(num_cols):
         non_empty_count = sum(1 for row in grid if col_idx < len(row) and row[col_idx].strip())
-        # Колонка должна быть заполнена хотя бы наполовину
-        if non_empty_count >= len(grid) * 0.5:
+        
+        # Проверяем, содержит ли колонка числовые данные (цены, количество)
+        has_numeric_data = False
+        for row in grid:
+            if col_idx < len(row):
+                cell = row[col_idx].strip()
+                # Проверяем наличие чисел с разделителями (цены, количество)
+                if cell and re.search(r'\d+[,\.]\d+|\d+\s*(шт|м|кг|л|упак)', cell):
+                    has_numeric_data = True
+                    break
+        
+        # Колонка сохраняется если:
+        # 1. Заполнена хотя бы на 30% (снижен порог с 50%)
+        # 2. ИЛИ содержит числовые данные (цены, количество)
+        if non_empty_count >= len(grid) * 0.3 or has_numeric_data:
             cols_to_keep.append(col_idx)
     
     # Применяем фильтр колонок
@@ -1538,19 +1774,246 @@ def is_subtotal_line(lines: list, current_idx: int, words: list = None) -> bool:
     return False  # Финальный итог
 
 
-def extract_pdf_table_region(pages_data: list) -> str:
+def is_multipage_table(pages_data: list) -> bool:
     """
-    Извлекает только табличную часть из цифрового PDF.
+    Определяет, является ли таблица многостраничной.
+    
+    Критерии:
+    1. Документ содержит более 1 страницы
+    2. На первой странице найдены маркеры таблицы (≥2)
+    3. На второй странице найдены маркеры таблицы (≥2) ИЛИ "Итого:"
+    
+    Args:
+        pages_data: Список страниц с извлеченными словами
+    
+    Returns:
+        True если таблица многостраничная, False иначе
+    """
+    if len(pages_data) < 2:
+        return False
+    
+    table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
+    
+    # Проверяем первую страницу на наличие маркеров таблицы
+    first_page_lines = group_words_into_lines(pages_data[0], y_threshold=5)
+    has_table_on_first = False
+    
+    for _, line_text in first_page_lines:
+        line_lower = line_text.lower()
+        matches = sum(1 for marker in table_markers if marker in line_lower)
+        if matches >= 2:
+            has_table_on_first = True
+            break
+    
+    if not has_table_on_first:
+        return False
+    
+    # Проверяем вторую страницу на наличие маркеров таблицы ИЛИ "Итого:"
+    second_page_lines = group_words_into_lines(pages_data[1], y_threshold=5)
+    
+    for _, line_text in second_page_lines[:15]:  # Проверяем первые 15 строк
+        line_lower = line_text.lower()
+        
+        # Проверка 1: Есть ли маркеры таблицы?
+        matches = sum(1 for marker in table_markers if marker in line_lower)
+        if matches >= 2:
+            return True  # Многостраничная таблица
+        
+        # Проверка 2: Есть ли "Итого:"?
+        if 'итого' in line_lower:
+            return True  # Многостраничная таблица
+    
+    return False
+
+
+def extract_multipage_table(pages_data: list) -> str:
+    """
+    Извлекает многостраничную таблицу с фильтрацией по паттернам строк.
     
     Алгоритм:
-    1. Ищет начало таблицы по маркерам (наименование, кол-во, цена, сумма)
-    2. Ищет конец таблицы по стоп-словам (итого, всего к оплате) с Peak-ahead
-    3. Извлекает слова из найденного региона
-    4. Конвертирует в Markdown-таблицу
+    1. Находит начало таблицы на странице 1
+    2. Извлекает строки до "Итого:" (включительно)
+    3. Находит продолжение таблицы на странице 2 (по маркерам)
+    4. Извлекает строки таблицы со страницы 2
+    5. Фильтрует только строки, соответствующие паттерну таблицы
+    6. Объединяет строки и конвертирует в markdown
+    
+    Args:
+        pages_data: Список страниц с извлеченными словами
+    
+    Returns:
+        Markdown-таблица в виде строки
+    """
+    if not pages_data or len(pages_data) < 2:
+        return ""
+    
+    table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
+    
+    # 1. НАЙТИ НАЧАЛО ТАБЛИЦЫ НА СТРАНИЦЕ 1
+    table_start_y = None
+    first_page_lines = group_words_into_lines(pages_data[0], y_threshold=5)
+    
+    for line_y, line_text in first_page_lines:
+        line_lower = line_text.lower()
+        matches = sum(1 for marker in table_markers if marker in line_lower)
+        
+        if matches >= 2:
+            table_start_y = line_y
+            break
+    
+    if table_start_y is None:
+        return ""  # Таблица не найдена
+    
+    # 2. ИЗВЛЕЧЬ СТРОКИ ДО "ИТОГО:" НА СТРАНИЦЕ 1
+    itogo_y = None
+    for line_y, line_text in first_page_lines:
+        if line_y >= table_start_y and 'итого' in line_text.lower():
+            itogo_y = line_y
+            break
+    
+    if itogo_y is None:
+        itogo_y = float('inf')  # Если не найдено, берем до конца страницы
+    
+    # Извлекаем слова из первой части таблицы
+    page1_words = [w for w in pages_data[0] if table_start_y <= w['y'] <= itogo_y]
+    
+    # 3. НАЙТИ ПРОДОЛЖЕНИЕ ТАБЛИЦЫ НА СТРАНИЦЕ 2
+    # Ищем первую строку данных (не заголовок!)
+    continuation_start_y = None
+    second_page_lines = group_words_into_lines(pages_data[1], y_threshold=5)
+    
+    # Сначала пропускаем заголовок таблицы (если есть)
+    header_found = False
+    for line_y, line_text in second_page_lines:
+        line_lower = line_text.lower()
+        matches = sum(1 for marker in table_markers if marker in line_lower)
+        
+        # Если нашли заголовок, отмечаем и продолжаем
+        if matches >= 2 and not header_found:
+            header_found = True
+            continue
+        
+        # После заголовка ищем первую строку данных
+        if header_found:
+            tokens = line_text.strip().split()
+            if tokens and (tokens[0].isdigit() or 'нс-' in tokens[0].lower()):
+                continuation_start_y = line_y
+                break
+    
+    # Если заголовок не найден, ищем первую строку с данными напрямую
+    if continuation_start_y is None:
+        for line_y, line_text in second_page_lines:
+            tokens = line_text.strip().split()
+            if tokens and (tokens[0].isdigit() or 'нс-' in tokens[0].lower()):
+                continuation_start_y = line_y
+                break
+    
+    if continuation_start_y is None:
+        # Если ничего не найдено, возвращаем только первую часть
+        return words_to_markdown_grid(page1_words, y_threshold=5, x_threshold=35)
+    
+    # 4. НАЙТИ КОНЕЦ ТАБЛИЦЫ НА СТРАНИЦЕ 2
+    table_end_y = None
+    stop_words = ['итого', 'всего к оплате', 'всего наименований', 'руководитель', 'м.п.', 'главный бухгалтер']
+    
+    for line_y, line_text in second_page_lines:
+        if line_y >= continuation_start_y:
+            line_lower = line_text.lower()
+            if any(stop in line_lower for stop in stop_words):
+                table_end_y = line_y
+                break
+    
+    if table_end_y is None:
+        table_end_y = float('inf')  # До конца страницы
+    
+    # Извлекаем слова из второй части таблицы
+    page2_words = [w for w in pages_data[1] if continuation_start_y <= w['y'] <= table_end_y]
+    
+    # 5. ОБЪЕДИНЯЕМ СЛОВА И КОНВЕРТИРУЕМ В MARKDOWN
+    # ВАЖНО: Корректируем Y-координаты слов из page2, чтобы они шли ПОСЛЕ page1
+    # Создаем копии словарей, чтобы не модифицировать исходные данные
+    if page1_words:
+        max_y_page1 = max(w['y'] for w in page1_words)
+        # Создаем копии слов из page2 с скорректированными Y-координатами
+        page2_words_adjusted = []
+        for word in page2_words:
+            word_copy = word.copy()
+            word_copy['y'] = word['y'] + max_y_page1 + 50  # +50 для отступа между страницами
+            page2_words_adjusted.append(word_copy)
+        
+        all_table_words = page1_words + page2_words_adjusted
+    else:
+        all_table_words = page1_words + page2_words
+    
+    markdown_table = words_to_markdown_grid(all_table_words, y_threshold=5, x_threshold=35)
+    
+    return markdown_table
+
+
+def extract_table_with_pdfplumber(pdf_path: str) -> str:
+    """
+    Fallback-метод извлечения таблицы с использованием pdfplumber.extract_tables().
+    Используется когда координатный метод не может разделить таблицу на колонки.
+    
+    Args:
+        pdf_path: Путь к PDF-файлу
+    
+    Returns:
+        Markdown-таблица в виде строки
+    """
+    import pdfplumber
+    
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            all_tables = []
+            
+            # Настройки для извлечения таблиц с компактной структурой
+            table_settings = {
+                "vertical_strategy": "lines",  # Используем линии для определения колонок
+                "horizontal_strategy": "lines",  # Используем линии для определения строк
+                "intersection_tolerance": 3,
+            }
+            
+            for page in pdf.pages:
+                # Пробуем с настройками
+                tables = page.extract_tables(table_settings)
+                if tables:
+                    all_tables.extend(tables)
+            
+            if not all_tables:
+                return ""
+            
+            # Берем первую таблицу (обычно это основная таблица товаров)
+            table = all_tables[0]
+            
+            # Конвертируем в markdown
+            md_lines = []
+            for row in table:
+                # Очищаем None и пустые значения
+                cleaned_row = [str(cell).strip() if cell else '' for cell in row]
+                md_lines.append('| ' + ' | '.join(cleaned_row) + ' |')
+            
+            return '\n'.join(md_lines)
+    
+    except Exception as e:
+        print(f"Error in extract_table_with_pdfplumber: {e}")
+        return ""
+
+
+def extract_pdf_table_region(pages_data: list, pdf_path: str = "") -> str:
+    """
+    Извлекает только табличную часть из цифрового PDF с поддержкой 3-х веток обработки.
+    
+    Алгоритм:
+    1. Проверяет, является ли таблица многостраничной -> ВЕТКА 1: extract_multipage_table()
+    2. Если нет, извлекает слова табличного региона
+    3. Проверяет, является ли таблица компактной -> ВЕТКА 2: улучшенная кластеризация
+    4. Если нет -> ВЕТКА 3: стандартная обработка
     
     Args:
         pages_data: Список страниц, каждая страница - список словарей слов
                    [{'text': str, 'x': float, 'y': float, 'w': float, 'h': float}, ...]
+        pdf_path: Путь к PDF-файлу (для диагностики)
     
     Returns:
         Markdown-таблица в виде строки
@@ -1567,6 +2030,11 @@ def extract_pdf_table_region(pages_data: list) -> str:
     """
     if not pages_data:
         return ""
+    
+    # ВЕТКА 1: Многостраничная таблица?
+    if is_multipage_table(pages_data):
+        print("Branch 1: Multipage table detected")
+        return extract_multipage_table(pages_data)
     
     # Маркеры начала и конца таблицы
     table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
@@ -1600,6 +2068,7 @@ def extract_pdf_table_region(pages_data: list) -> str:
     # 2. ПОИСК КОНЦА ТАБЛИЦЫ
     table_end_y = None
     table_end_page = len(pages_data) - 1
+    has_continuation = False
     
     for page_idx in range(table_start_page, len(pages_data)):
         if not pages_data[page_idx]:
@@ -1627,6 +2096,7 @@ def extract_pdf_table_region(pages_data: list) -> str:
                         # Если нашли маркеры таблицы - это промежуточный итог
                         if matches >= 2:
                             is_subtotal = True
+                            has_continuation = True
                             break
                 
                 if not is_subtotal:
@@ -1642,7 +2112,7 @@ def extract_pdf_table_region(pages_data: list) -> str:
         table_end_y = float('inf')
         table_end_page = len(pages_data) - 1
     
-    # 3. ИЗВЛЕЧЕНИЕ СЛОВ ИЗ РЕГИОНА
+    # 2. ИЗВЛЕЧЕНИЕ СЛОВ ИЗ РЕГИОНА
     table_words = []
     
     for page_idx in range(table_start_page, table_end_page + 1):
@@ -1655,8 +2125,20 @@ def extract_pdf_table_region(pages_data: list) -> str:
             
             table_words.append(word)
     
-    # 4. КОНВЕРТАЦИЯ В MARKDOWN
-    markdown_table = words_to_markdown_grid(table_words, y_threshold=5, x_threshold=35)
+    if not table_words:
+        return ""
+    
+    # 3. ОПРЕДЕЛЕНИЕ ТИПА ТАБЛИЦЫ И ВЫБОР ВЕТКИ
+    is_compact = detect_compact_table(table_words)
+    
+    if is_compact:
+        # ВЕТКА 2: Компактная таблица - используем улучшенную кластеризацию
+        print("Branch 2: Compact table detected - using line-starts algorithm")
+        markdown_table = words_to_markdown_grid(table_words, y_threshold=5, x_threshold=35, use_compact_mode=True)
+    else:
+        # ВЕТКА 3: Стандартная таблица - используем обычную кластеризацию
+        print("Branch 3: Standard table - using standard algorithm")
+        markdown_table = words_to_markdown_grid(table_words, y_threshold=5, x_threshold=35, use_compact_mode=False)
     
     return markdown_table
 

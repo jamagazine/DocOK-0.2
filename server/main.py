@@ -547,12 +547,33 @@ async def process_invoice(
                         has_low_confidence = False
                         
                         # НОВАЯ ЛОГИКА: Разделяем реквизиты и позиции
-                        # 1. Извлекаем табличный регион для позиций
-                        table_markdown = extract_pdf_table_region(pages_data)
+                        # 1. Извлекаем табличный регион для позиций (с fallback на pdfplumber)
+                        table_markdown = extract_pdf_table_region(pages_data, pdf_path=temp_path)
                         extracted_text = table_markdown if table_markdown else ""
                         
-                        # 2. Для реквизитов берем только ПЕРВУЮ страницу
-                        header_ai_data = pages_data[0] if pages_data else []
+                        # 2. Для реквизитов берем только ПЕРВУЮ страницу ДО начала таблицы
+                        from parser_utils import group_words_into_lines
+                        
+                        header_ai_data = []
+                        if pages_data:
+                            # Находим Y-координату начала таблицы
+                            table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
+                            table_start_y = None
+                            
+                            first_page_lines = group_words_into_lines(pages_data[0], y_threshold=5)
+                            for line_y, line_text in first_page_lines:
+                                line_lower = line_text.lower()
+                                matches = sum(1 for marker in table_markers if marker in line_lower)
+                                if matches >= 2:
+                                    table_start_y = line_y
+                                    break
+                            
+                            # Берем только слова ДО начала таблицы
+                            if table_start_y is not None:
+                                header_ai_data = [w for w in pages_data[0] if w['y'] < table_start_y]
+                            else:
+                                header_ai_data = pages_data[0]
+                        
                         full_header_text = clean_and_build_markdown(header_ai_data)
                         p_method = "pdf_text"
                         
