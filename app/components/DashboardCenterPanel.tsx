@@ -19,7 +19,9 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { motion, AnimatePresence } from 'motion/react';
 import { useData, Project } from '../context/DataContext';
+import { Checkbox } from './ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,20 +73,24 @@ interface ProjectCardProps {
 function ProjectCard({ project, onClick }: ProjectCardProps) {
   const { title, filesCount, lastModified, progress, status, id } = project;
   const { label, color } = STATUS_CONFIG[status] || { label: status, color: 'bg-slate-100' };
-  const { 
-    duplicateProject, 
-    renameProject, 
-    moveProject, 
-    deleteProject, 
+  const {
+    duplicateProject,
+    renameProject,
+    moveProject,
+    deleteProject,
     categories,
-    downloadProject 
+    downloadProject,
+    selectedProjectIds,
+    toggleProjectSelection
   } = useData();
 
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [newTitle, setNewTitle] = useState(title);
+  const [isHovered, setIsHovered] = useState(false);
 
   const isLive = id === 'live-main';
+  const isSelected = selectedProjectIds.has(id);
 
   return (
     <>
@@ -92,25 +98,62 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
         className={cn(
           'group relative flex flex-col bg-white rounded-2xl border border-slate-200 p-5 cursor-pointer',
           'transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 hover:border-slate-300',
-          isLive && 'ring-2 ring-indigo-200'
+          isLive && 'ring-2 ring-indigo-200',
+          isSelected && 'ring-2 ring-indigo-400 bg-indigo-50/20 border-indigo-300'
         )}
         onClick={onClick}
       >
         {/* Top */}
         <div className="flex items-start justify-between gap-3 mb-4">
-          <div className={cn(
-            'w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors',
-            isLive ? 'bg-indigo-100 group-hover:bg-indigo-200' : 'bg-slate-100 group-hover:bg-slate-200'
-          )}>
-            <Building2 className={cn('w-6 h-6', isLive ? 'text-indigo-600' : 'text-slate-500')} />
+          <div
+            className={cn(
+              'relative w-12 h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors cursor-pointer',
+              isLive ? 'bg-indigo-100 group-hover:bg-indigo-200' : 'bg-slate-100 group-hover:bg-slate-200',
+              isSelected && 'bg-indigo-100'
+            )}
+            onMouseEnter={() => !isLive && setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+            onClick={(e) => {
+              if (isLive) return;
+              e.stopPropagation();
+              toggleProjectSelection(id);
+            }}
+          >
+            <AnimatePresence mode="wait">
+              {(isHovered || isSelected) && !isLive ? (
+                <motion.div
+                  key="checkbox"
+                  initial={{ scale: 0.7, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.7, opacity: 0 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                  className="absolute inset-0 flex items-center justify-center"
+                >
+                  <Checkbox
+                    checked={isSelected}
+                    className="w-6 h-6 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="icon"
+                  initial={{ scale: 0.7, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.7, opacity: 0 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                >
+                  <Building2 className={cn('w-6 h-6', isLive ? 'text-indigo-600' : 'text-slate-500')} />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-          
+
           <div className="flex flex-col items-end gap-1.5 shrink-0">
             <div className="flex items-center gap-2">
               <span className={cn('text-[11px] font-semibold px-2.5 py-0.5 rounded-full border', color)}>
                 {label}
               </span>
-              
+
               {/* Context Menu Button */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -125,15 +168,15 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
                   <DropdownMenuItem onClick={(e) => { e.stopPropagation(); duplicateProject(id); }} className="gap-2">
                     <Copy className="size-3.5" /> Сделать копию
                   </DropdownMenuItem>
-                  
+
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger className="gap-2">
                       <FolderOpen className="size-3.5" /> Переместить в...
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent className="w-48">
                       {categories.map(cat => (
-                        <DropdownMenuItem 
-                          key={cat.id} 
+                        <DropdownMenuItem
+                          key={cat.id}
                           onClick={(e) => { e.stopPropagation(); moveProject(id, cat.id); }}
                           className={cn(project.categoryId === cat.id && "bg-slate-100 font-bold")}
                         >
@@ -147,8 +190,8 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
                     <Download className="size-3.5" /> Скачать проект (.zip)
                   </DropdownMenuItem>
 
-                  <DropdownMenuItem 
-                    variant="destructive" 
+                  <DropdownMenuItem
+                    variant="destructive"
                     onClick={(e) => { e.stopPropagation(); setIsDeleteOpen(true); }}
                     className="gap-2"
                   >
@@ -229,7 +272,7 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setIsRenameOpen(false)}>Отмена</Button>
-            <Button 
+            <Button
               disabled={!newTitle.trim()}
               onClick={() => {
                 renameProject(id, newTitle.trim());
@@ -253,8 +296,8 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setIsDeleteOpen(false)}>Отмена</AlertDialogCancel>
-            <AlertDialogAction 
-              className="bg-rose-600 hover:bg-rose-700" 
+            <AlertDialogAction
+              className="bg-rose-600 hover:bg-rose-700"
               onClick={() => deleteProject(id)}
             >
               Удалить навсегда
@@ -269,13 +312,13 @@ function ProjectCard({ project, onClick }: ProjectCardProps) {
 // ─── Hybrid Action Card ────────────────────────────────────────────────────────
 
 function HybridActionCard() {
-  const { 
-    addProject, 
-    activeCategory, 
-    setViewContext, 
-    setProjectName, 
+  const {
+    addProject,
+    activeCategory,
+    setViewContext,
+    setProjectName,
     setActiveProjectId,
-    importProject 
+    importProject
   } = useData();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -313,7 +356,7 @@ function HybridActionCard() {
   return (
     <div className="group flex flex-col h-[200px] bg-white rounded-2xl border border-slate-200 overflow-hidden transition-all duration-200 hover:shadow-[0_8px_30px_rgba(0,0,0,0.08)] hover:-translate-y-0.5 hover:border-indigo-200">
       {/* Top (70%): Create New Project */}
-      <div 
+      <div
         onClick={(e) => { e.stopPropagation(); handleCreate(); }}
         className="flex-[7] flex flex-col items-center justify-center gap-3 bg-slate-50/50 hover:bg-indigo-50/50 cursor-pointer transition-colors border-b border-slate-100"
       >
@@ -327,15 +370,15 @@ function HybridActionCard() {
       </div>
 
       {/* Bottom (30%): Import Project */}
-      <div 
+      <div
         className="flex-[3] flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 cursor-pointer transition-colors relative"
-        onClick={(e) => { 
-          e.stopPropagation(); 
+        onClick={(e) => {
+          e.stopPropagation();
           fileInputRef.current?.click();
         }}
       >
-        <input 
-          type="file" 
+        <input
+          type="file"
           ref={fileInputRef}
           onChange={handleFileChange}
           accept=".zip"
@@ -362,14 +405,14 @@ function DashboardFooter({ count }: { count: number }) {
 // ─── Main Dashboard Center Panel ────────────────────────────────────────────
 
 export function DashboardCenterPanel() {
-  const { 
-    projects, 
-    activeCategory, 
+  const {
+    projects,
+    activeCategory,
     setViewContext,
     setActiveProjectId,
     setProjectName
   } = useData();
-  
+
   const [searchQuery, setSearchQuery] = React.useState('');
   const [sortOrder, setSortOrder] = React.useState<'newest' | 'oldest'>(() => {
     try {
@@ -385,13 +428,13 @@ export function DashboardCenterPanel() {
   const filteredProjects = projects.filter(p => {
     // Search
     if (searchQuery && !p.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    
+
     // Category mapping
     if (activeCategory === 'all') return true;
     if (activeCategory === 'active') return p.status === 'active' || p.status === 'current';
     if (activeCategory === 'archive') return p.status === 'archive';
     if (activeCategory === 'tender') return p.status === 'tender';
-    
+
     return p.categoryId === activeCategory;
   });
 
@@ -399,7 +442,7 @@ export function DashboardCenterPanel() {
     return [...filteredProjects].sort((a, b) => {
       const dateA = new Date(a.createdAt || 0).getTime();
       const dateB = new Date(b.createdAt || 0).getTime();
-      
+
       if (sortOrder === 'newest') return dateB - dateA;
       return dateA - dateB;
     });
@@ -451,7 +494,7 @@ export function DashboardCenterPanel() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56 p-1.5 backdrop-blur-xl bg-white/90 border-slate-200/50 shadow-2xl animate-in fade-in zoom-in duration-100">
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={() => setSortOrder('newest')}
                   className="flex items-center justify-between gap-2 px-3 py-2 rounded-md hover:bg-indigo-50/50 group transition-colors cursor-pointer"
                 >
@@ -461,7 +504,7 @@ export function DashboardCenterPanel() {
                   </div>
                   {sortOrder === 'newest' && <Check className="size-4 text-indigo-600" />}
                 </DropdownMenuItem>
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={() => setSortOrder('oldest')}
                   className="flex items-center justify-between gap-2 px-3 py-2 rounded-md hover:bg-indigo-50/50 group transition-colors cursor-pointer"
                 >
@@ -481,7 +524,7 @@ export function DashboardCenterPanel() {
             <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
               {/* Hybrid Action Card first - always visible */}
               <HybridActionCard />
-              
+
               {sortedProjects.map(p => (
                 <ProjectCard
                   key={p.id}

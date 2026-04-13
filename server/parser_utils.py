@@ -20,7 +20,7 @@ def clean_val(x):
     # Очистка .0 для числовых строк (устойчиво к пробелам)
     if s.endswith('.0') and s.replace('.0', '').replace(' ', '').isdigit():
         s = s.split('.')[0].strip()
-    
+
     # Удаляем лишние кавычки из начала и конца, если они есть
     if s.startswith('"') and s.endswith('"'):
         s = s[1:-1]
@@ -34,12 +34,12 @@ def deskew_image(pil_img):
     """
     # 1. Convert PIL to OpenCV (BGR)
     cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    
+
     # 2. To Grayscale and Binarize
     gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
     gray = cv2.bitwise_not(gray)
     thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    
+
     # 3. Find coordinates of all white pixels (text)
     coords = np.column_stack(np.where(thresh > 0))
     if len(coords) == 0: return pil_img
@@ -47,13 +47,13 @@ def deskew_image(pil_img):
     # 4. Find the minAreaRect for the points
     rect = cv2.minAreaRect(coords)
     angle = rect[-1]
-    
+
     # Normalize the angle (OpenCV returns -90 to 0)
     if angle < -45:
         angle = -(90 + angle)
     else:
         angle = -angle
-        
+
     # Rotate if tilt is significant (> 0.5 deg)
     if abs(angle) > 0.5:
         (h, w) = cv_img.shape[:2]
@@ -62,7 +62,7 @@ def deskew_image(pil_img):
         cv_img = cv2.warpAffine(cv_img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
         # Convert back to PIL
         return Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
-    
+
     return pil_img
 
 UNITS_MAP = {
@@ -112,6 +112,49 @@ def normalize_for_match(text: str) -> str:
     t = re.sub(r'\s+', ' ', t).strip()
     return t
 
+
+def abbreviate_legal_entity(text: str) -> str:
+    """
+    Сокращает юридические формы организаций для экономии токенов.
+
+    Оптимизация #1: Экономия ~567 токенов OUTPUT для 56 позиций.
+
+    Примеры:
+        "Общество с ограниченной ответственностью" -> "ООО"
+        "Открытое акционерное общество" -> "ОАО"
+        "Закрытое акционерное общество" -> "ЗАО"
+        "Публичное акционерное общество" -> "ПАО"
+        "Акционерное общество" -> "АО"
+        "Индивидуальный предприниматель" -> "ИП"
+
+    Args:
+        text: Исходный текст с полными названиями
+
+    Returns:
+        Текст с сокращенными юридическими формами
+    """
+    import re
+
+    # Словарь сокращений (от длинного к короткому для правильного порядка замены)
+    abbreviations = [
+        (r'\bОбщество\s+с\s+ограниченной\s+ответственностью\b', 'ООО'),
+        (r'\bОткрытое\s+акционерное\s+общество\b', 'ОАО'),
+        (r'\bЗакрытое\s+акционерное\s+общество\b', 'ЗАО'),
+        (r'\bПубличное\s+акционерное\s+общество\b', 'ПАО'),
+        (r'\bАкционерное\s+общество\b', 'АО'),
+        (r'\bИндивидуальный\s+предприниматель\b', 'ИП'),
+        (r'\bНекоммерческая\s+организация\b', 'НКО'),
+        (r'\bМуниципальное\s+унитарное\s+предприятие\b', 'МУП'),
+        (r'\bГосударственное\s+унитарное\s+предприятие\b', 'ГУП'),
+        (r'\bФедеральное\s+государственное\s+унитарное\s+предприятие\b', 'ФГУП'),
+    ]
+
+    result = text
+    for pattern, abbr in abbreviations:
+        result = re.sub(pattern, abbr, result, flags=re.IGNORECASE)
+
+    return result
+
 def to_float(val) -> float:
     if not val: return 0.0
     val_str = str(val).replace(' ', '').replace(',', '.')
@@ -125,13 +168,13 @@ def validate_and_clean_inn(text: str) -> str:
     """
     import re
     inn = re.sub(r'\D', '', str(text))
-    
+
     # 1. Handle OCR ghosts (11 digits)
     if len(inn) == 11:
         candidates = [inn[1:], inn[:-1]]
         for cand in candidates:
             if validate_inn_logic(cand): return cand
-    
+
     return inn if validate_inn_logic(inn) else ""
 
 def validate_inn_logic(s: str) -> bool:
@@ -140,21 +183,21 @@ def validate_inn_logic(s: str) -> bool:
     """
     if not s or not s.isdigit(): return False
     if len(s) not in [10, 12]: return False
-    
+
     if len(s) == 10:
         coeffs = [2, 4, 10, 3, 5, 9, 4, 6, 8]
         s_sum = sum(int(s[i]) * coeffs[i] for i in range(9))
         return (s_sum % 11) % 10 == int(s[9])
-        
+
     if len(s) == 12:
         coeffs1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
         s_sum1 = sum(int(s[i]) * coeffs1[i] for i in range(10))
         n11 = (s_sum1 % 11) % 10
-        
+
         coeffs2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
         s_sum2 = sum(int(s[i]) * coeffs2[i] for i in range(11))
         n12 = (s_sum2 % 11) % 10
-        
+
         return n11 == int(s[10]) and n12 == int(s[11])
     return False
 
@@ -175,7 +218,7 @@ def validate_bank_details(bik: str, acc_settlement: str = "", acc_corr: str = ""
     res_s = acc_s if len(acc_s) == 20 else ""
     res_c = acc_c if len(acc_c) == 20 and acc_c.startswith('301') else ""
     is_valid = is_bik_ok and res_c and bik[-3:] == res_c[-3:]
-    return {"bik": bik if is_bik_ok else "", "settlement_account": res_s, 
+    return {"bik": bik if is_bik_ok else "", "settlement_account": res_s,
             "correspondent_account": res_c, "is_valid": is_valid}
 
 def calculate_uncertainty(struct: dict, global_low_conf: bool):
@@ -187,20 +230,23 @@ def calculate_uncertainty(struct: dict, global_low_conf: bool):
         if match_qty and match_qty.group(2).strip():
             item["quantity"] = match_qty.group(1).strip()
             if not item.get("unit"): item["unit"] = match_qty.group(2).strip()
-                
+
         if item.get("unit"): item["unit"] = normalize_unit(str(item.get("unit")))
 
         qty = to_float(item.get("quantity"))
         price = to_float(item.get("price"))
         total = to_float(item.get("total"))
-        
+
         if qty > 0 and price > 0 and total > 0:
             if abs(qty * price - total) > (0.05 * total): is_uncertain = True
             if abs(qty * price - total) >= 0.1: item["math_error"] = True
-                
+
         if not item.get("name"): is_uncertain = True
-        item["isUncertain"] = is_uncertain
-        
+
+        # Оптимизация #3: Инвертированная логика - добавляем поле только если есть неопределенность
+        if is_uncertain:
+            item["isUncertain"] = True
+
     return struct
 
 def transliterate(text: str) -> str:
@@ -217,7 +263,7 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Fix Column Mapping: Added break to fix first match
     for i, c in enumerate(df.columns):
         cl = str(c).lower()
-        if any(x in cl for x in ["поз", "№", "unnamed: 0"]): 
+        if any(x in cl for x in ["поз", "№", "unnamed: 0"]):
             c_p = i
             break
     for i, c in enumerate(df.columns):
@@ -229,23 +275,23 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     last = ""
     for i in range(len(df)):
         p, n = df.iloc[i, c_p].strip(), df.iloc[i, c_n].strip()
-        
+
         # Merged Cells Support: Check neighbor column if c_n is empty
         if not n and c_n != 1:
             n_alt = df.iloc[i, 1].strip()
             if n_alt:
                 n = n_alt
                 df.iloc[i, c_n] = n
-        
+
         if (not p or p=="nan") and n:
             # Regex Update: Use \s* instead of \s+ for missing spaces
             m = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(.*)', n)
             if m:
                 df.iloc[i, c_p], df.iloc[i, c_n], p = m.group(1), m.group(2), m.group(1)
-        
+
         if p.endswith(".1") and last.endswith(".9") and p[:-2]==last[:-2]: df.iloc[i, c_p] = p + "0"
         if re.match(r'^\d+(\.\d+)+$', p): last = p
-        
+
     # Append technical ID column for AI patching
     df['__ID__'] = [f"idx_{i}" for i in range(len(df))]
     return df
@@ -429,7 +475,7 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
         if "поставщик" in cl or "изготовитель" in cl:
             c_s = i
             break
-    
+
     if c_s == -1 and 4 < len(df.columns):
         c_s = 4 # Fallback to column 4 if not found but exists
 
@@ -632,21 +678,21 @@ def extract_specification_summary(df: pd.DataFrame, parsed_rows: list, file_path
                 # We use the row where the Cipher or Stamp Anchor was found
                 stamp_top = -1
                 stamp_bot = -1
-                
+
                 for r in range(target_sheet.nrows):
                     row_vals = [str(target_sheet.cell_value(r, c)).strip().lower() for c in range(target_sheet.ncols)]
                     row_str = " ".join(row_vals)
-                    
+
                     # Top boundary: The Project Cipher or Name usually starts the stamp
                     if cipher and cipher.lower() in row_str:
                         if stamp_top == -1: stamp_top = r
-                    
+
                     # Bottom boundary: Anchor "Листов" usually signals the end
                     if "листов" in row_str:
                         stamp_bot = r
                         if stamp_top == -1: stamp_top = max(0, r - 6) # Fallback if cipher not found
                         break
-                
+
                 if stamp_top != -1 and stamp_bot != -1:
                     extraction_log = f"Stamp range: R{stamp_top} to R{stamp_bot}"
                     # 2. Collect everything to the LEFT of signatures ONLY inside this envelope
@@ -701,18 +747,18 @@ def pdf_to_grid_markdown(file_path: str) -> str:
     """
     try:
         pages_data = extract_digital_words_as_ocr(file_path)
-        
+
         # 1. Заголовок (Зональный) - берем только первую страницу, чтобы избежать наслоения координат
         header_md = clean_and_build_markdown(pages_data[0] if pages_data else [])
-        
+
         # 2. Табличная часть (Grid) - по каждой странице отдельно (тут всё корректно)
         all_ocr_text = ""
         for page_tokens in pages_data:
             h, t = ocr_to_grid_markdown(page_tokens, y_threshold=5)
             if t: all_ocr_text += f"\n\n{t}"
-            
+
         return f"{header_md}\n\n{all_ocr_text.strip()}"
-            
+
     except Exception as e:
         return f"Error building PDF markdown: {e}"
 
@@ -734,14 +780,14 @@ def excel_to_grid_markdown(file_path: str) -> str:
     # Drop fully empty cols and rows
     df = df.dropna(axis=1, how='all')
     df = df.dropna(axis=0, how='all')
-    
+
     # Очищаем данные через карту (безопасно для имен колонок)
     df = df.map(clean_val)
-    
+
     # Даем пустые имена колонкам (т.к. мы читали без заголовков, имена будут 0, 1, 2...)
     # Или заменяем Unnamed, если pandas все же их создал
     df.columns = ["" if (isinstance(c, int) or "Unnamed" in str(c)) else c for c in df.columns]
-    
+
     return df.to_markdown(index=False)
 
 
@@ -882,11 +928,11 @@ def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
         if state == "HEADER" and any(k in l_line for k in ["наименование", "кол-во", "цена"]):
             state = "TABLE"
             continue
-        
+
         if state == "HEADER":
             for w in row:
                 header_words_set.add(id(w))
-            
+
     all_header_words = [w for w in words if id(w) in header_words_set]
 
     # ── Phase 2: find_header_start_y (Universal Anchor) ─────────────────────
@@ -897,9 +943,9 @@ def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
         """
         # Tags for Invoice
         tags = {"ИНН", "КПП", "БИК", "Сч. №", "Банк", "получателя"}
-        
+
         words_sorted_y = sorted(h_words, key=lambda w: w['y'])
-        
+
         # Priority 1: Tag Cloud (Invoice)
         for i, w in enumerate(words_sorted_y):
             if any(t in w['text'] for t in tags):
@@ -918,16 +964,16 @@ def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
             t = w['text'].lower()
             if "коммерческое" in t or "предложение" in t or t == "от:":
                 return w['y'], "KP / Date Marker"
-                
+
         return 0.0, "None (Default)"
 
     # Identify Y_start
     y_start, anchor_type = find_header_start_y(all_header_words)
-    
+
     # ── Phase 3: Slicing & Partitioning ──────────────────────────────────────
     # Crop words below anchor
     clean_words = sorted([w for w in all_header_words if w['y'] >= (y_start - 10)], key=lambda x: (x['y'], x['x']))
-    
+
     # Group into lines (Y-Snapping)
     current_lines_data = [] # List of (y, text)
     if clean_words:
@@ -949,7 +995,7 @@ def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
         if title_pattern.search(line):
             y_title = y
             break
-            
+
     # Default Y_title if not found
     if y_title == -1:
         # Fallback to the middle of the header lines if title not found
@@ -958,7 +1004,7 @@ def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
     # Partition into zones
     bank_lines = [l for y, l in current_lines_data if y < y_title]
     entities_lines = [l for y, l in current_lines_data if y >= y_title]
-    
+
     bank_data_text = "\n".join(bank_lines)
     entities_data_text = "\n".join(entities_lines)
 
@@ -1006,7 +1052,7 @@ def extract_flat_tokens_from_yandex(ocr_json):
                     tokens.append({'text': w['text'], 'y_start': y, 'x_start': x})
                 return tokens
             pages = []
-            
+
         for page in pages:
             for block in page.get('blocks', []):
                 for line in block.get('lines', []):
@@ -1064,7 +1110,7 @@ def build_zonal_markdown(words, is_digital=False):
                         line_text_parts.append("    " + cw['text'])
                     else:
                         line_text_parts.append(cw['text'])
-                
+
                 line_text = " ".join(line_text_parts).replace("     ", "    ").strip()
                 lines_data.append({"text": line_text, "y": last_y})
 
@@ -1093,18 +1139,18 @@ def build_zonal_markdown(words, is_digital=False):
         for l in lines_data:
             if l['y'] >= 650:
                 break
-            
+
             txt_lower = l['text'].lower()
-            
+
             # Ищем признаки заголовка таблицы (пересечение сущностей и метрик)
             # Мы ищем И номер/название И одновременно количество/цену/сумму
             has_identity = any(m in txt_lower for m in ["№", "наименование", "товар", "услуги", "артикул"])
             has_metrics = any(m in txt_lower for m in ["кол-во", "количество", "цена", "сумма", "ед.изм", "ед. изм"])
-            
+
             if has_identity and has_metrics:
                 # Мы дошли до шапки таблицы — прекращаем сбор реквизитов
                 break
-                
+
             header_lines.append(l['text'])
 
         output = "### [ZONE_ENTITIES_RAW] ###\n"
@@ -1133,7 +1179,7 @@ def build_zonal_markdown(words, is_digital=False):
 
 def clean_and_build_markdown(ocr_json_or_words):
     """Единый адаптер (маршрутизатор) для сканов и PDF."""
-    
+
     # Если это список словарей с ключом 'text' (из PDF pdfplumber) -> ЭТО ЦИФРОВОЙ PDF
     if isinstance(ocr_json_or_words, list) and len(ocr_json_or_words) > 0 and isinstance(ocr_json_or_words[0], dict) and 'text' in ocr_json_or_words[0]:
         # Передаем is_digital=True и нормализуем под стандартный размер A4 в пунктах
@@ -1142,7 +1188,7 @@ def clean_and_build_markdown(ocr_json_or_words):
     # Иначе парсим как ответ Yandex Vision -> ЭТО СКАН
     tokens = extract_flat_tokens_from_yandex(ocr_json_or_words)
     if not tokens: return "NO_TEXT_FOUND"
-    
+
     # Передаем is_digital=False
     return build_zonal_markdown(normalize_to_standard_grid(tokens, 1650, 2330), is_digital=False)
 
@@ -1152,7 +1198,7 @@ def generate_invoice_summary(data: dict) -> str:
     Извлекает ключевые поля из структуры документа LLM.
     """
     doc = data.get("document", {})
-    
+
     # Извлекаем основные поля
     inv_no = doc.get("invoice_number", "---")
     inv_date = doc.get("invoice_date", "---")
@@ -1160,7 +1206,7 @@ def generate_invoice_summary(data: dict) -> str:
     inn = doc.get("inn", "---")
     total = doc.get("total_amount", "---")
     currency = doc.get("currency", "RUB")
-    
+
     # Формируем Markdown таблицу
     lines = [
         "### 🧾 Сводка по документу",
@@ -1176,7 +1222,7 @@ def generate_invoice_summary(data: dict) -> str:
         "> [!NOTE]",
         "> Результаты извлечены нейросетью. Пожалуйста, проверьте точность данных в панели ниже."
     ]
-    
+
     return "\n".join(lines)
 
 
@@ -1191,35 +1237,35 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
     import pdfplumber
 
     pages_data = []
-    
+
     with pdfplumber.open(pdf_path) as pdf:
         for pg in pdf.pages:
             words = pg.extract_words(x_tolerance=2, y_tolerance=3, keep_blank_chars=False, use_text_flow=True)
-            
+
             p_width = pg.width or 595
             p_height = pg.height or 842
-            
+
             page_words = []
             seen_tokens = set() # To prevent duplicates like (123, 123)
-            
+
             for w in words:
                 text = w["text"].strip()
                 if not text: continue
-                
+
                 x0, top, x1, bottom = w["x0"], w["top"], w["x1"], w["bottom"]
-                
+
                 # Возвращаем ПРЯМЫЕ координаты (points), нормализация будет в clean_and_build_markdown
                 nx = x0
                 ny = top
                 nw = (x1 - x0)
                 nh = (bottom - top)
-                
+
                 # Fingerprint to ignore duplicates (используем округление до целых пунктов)
-                fpr = (text, round(nx), round(ny)) 
+                fpr = (text, round(nx), round(ny))
                 if fpr in seen_tokens:
                     continue
                 seen_tokens.add(fpr)
-                
+
                 page_words.append({
                     "text": text,
                     "x": nx,
@@ -1228,7 +1274,7 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
                     "h": nh
                 })
             pages_data.append(page_words)
-            
+
     return pages_data
 
 
@@ -1239,14 +1285,14 @@ def extract_digital_words_as_ocr(pdf_path: str) -> list:
 def group_words_into_lines(words: list, y_threshold: int = 5) -> list:
     """
     Группирует слова в строки по Y-координате.
-    
+
     Args:
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
         y_threshold: Порог для объединения в одну строку (по умолчанию 5)
-    
+
     Returns:
         Список кортежей (y_coordinate, line_text)
-    
+
     Example:
         >>> words = [
         ...     {"text": "ООО", "x": 50, "y": 100, "w": 30, "h": 12},
@@ -1258,11 +1304,11 @@ def group_words_into_lines(words: list, y_threshold: int = 5) -> list:
     """
     if not words:
         return []
-    
+
     words_sorted = sorted(words, key=lambda w: w['y'])
     lines = []
     current_line = [words_sorted[0]]
-    
+
     for word in words_sorted[1:]:
         if abs(word['y'] - current_line[0]['y']) < y_threshold:
             current_line.append(word)
@@ -1272,47 +1318,47 @@ def group_words_into_lines(words: list, y_threshold: int = 5) -> list:
             line_text = ' '.join(w['text'] for w in current_line)
             lines.append((current_line[0]['y'], line_text))
             current_line = [word]
-    
+
     # Последняя строка
     if current_line:
         current_line.sort(key=lambda w: w['x'])
         line_text = ' '.join(w['text'] for w in current_line)
         lines.append((current_line[0]['y'], line_text))
-    
+
     return lines
 
 
 def detect_compact_table(words: list) -> bool:
     """
     Определяет, является ли таблица "компактной" (колонки очень близко друг к другу).
-    
+
     Признаки компактной таблицы:
     - Медианное расстояние между X-координатами < 10px
     - Большое количество уникальных X-координат (> 80)
     - Высокая плотность слов
-    
+
     Args:
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
-    
+
     Returns:
         True если таблица компактная, False иначе
     """
     if not words or len(words) < 20:
         return False
-    
+
     x_coords = sorted(set(w['x'] for w in words))
-    
+
     if len(x_coords) < 80:
         return False
-    
+
     gaps = [x_coords[i+1] - x_coords[i] for i in range(len(x_coords)-1)]
-    
+
     if not gaps:
         return False
-    
+
     sorted_gaps = sorted(gaps)
     median_gap = sorted_gaps[len(sorted_gaps) // 2]
-    
+
     # Компактная таблица: медианный зазор < 10px
     return median_gap < 10
 
@@ -1320,30 +1366,30 @@ def detect_compact_table(words: list) -> bool:
 def detect_columns_by_line_starts(words: list, y_threshold: int = 5) -> list:
     """
     Определяет колонки таблицы, анализируя ТОЛЬКО строку заголовка.
-    
+
     ИСПРАВЛЕНИЕ (Вариант A): Анализируется только строка заголовка, а не все строки таблицы.
     Это предотвращает создание лишних колонок из-за зазоров внутри ячеек данных.
-    
+
     Алгоритм:
     1. Группируем слова по строкам (Y-координата)
     2. Находим строку заголовка таблицы (содержит "№" и "Артикул" или "Товары")
     3. Извлекаем слова ТОЛЬКО из строки заголовка
     4. Находим "начала колонок" - X-координаты первых слов после больших зазоров
     5. Кластеризуем эти координаты
-    
+
     Args:
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
         y_threshold: Порог для группировки слов в строки
-    
+
     Returns:
         Список X-координат колонок
     """
     if not words:
         return []
-    
+
     # 1. Группируем слова по строкам
     lines = group_words_into_lines(words, y_threshold)
-    
+
     # 2. Находим строку заголовка таблицы
     header_line_y = None
     for line_y, line_text in lines:
@@ -1351,70 +1397,70 @@ def detect_columns_by_line_starts(words: list, y_threshold: int = 5) -> list:
         if '№' in line_text and ('Артикул' in line_text or 'Товары' in line_text or 'Товар' in line_text or 'Наименование' in line_text):
             header_line_y = line_y
             break
-    
+
     if header_line_y is None:
         return []
-    
+
     # 3. ✅ ИСПРАВЛЕНИЕ: Извлекаем слова ТОЛЬКО из строки заголовка
     header_words = sorted(
         [w for w in words if abs(w['y'] - header_line_y) <= y_threshold],
         key=lambda w: w['x']
     )
-    
+
     if not header_words:
         return []
-    
+
     # 4. Находим начала колонок в заголовке
     column_starts = [header_words[0]['x']]
-    
+
     for i in range(1, len(header_words)):
         prev_word = header_words[i-1]
         curr_word = header_words[i]
-        
+
         # Вычисляем зазор между словами
         gap = curr_word['x'] - (prev_word['x'] + prev_word.get('w', 0))
-        
+
         # Большой зазор (>15px) = начало новой колонки
         if gap > 15:
             column_starts.append(curr_word['x'])
-    
+
     if not column_starts:
         return []
-    
+
     # 5. Кластеризуем координаты (DBSCAN-подобный алгоритм)
     x_coords = sorted(set(column_starts))
-    
+
     if not x_coords:
         return []
-    
+
     # Используем фиксированный порог 10px для кластеризации
     columns = []
     current_col = [x_coords[0]]
-    
+
     for x in x_coords[1:]:
         if x - current_col[-1] < 10:
             current_col.append(x)
         else:
             columns.append(sum(current_col) / len(current_col))
             current_col = [x]
-    
+
     if current_col:
         columns.append(sum(current_col) / len(current_col))
-    
+
     return columns
 
 
 def detect_table_columns(words: list, x_threshold: int = 20) -> list:
     """
     Определяет границы колонок таблицы по X-координатам слов с адаптивным порогом.
-    
+
     Args:
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
         x_threshold: Максимальный порог для объединения в одну колонку (по умолчанию 20)
-    
+
     Returns:
         Список средних X-координат колонок (отсортированный)
-    
+
     Example:
         >>> words = [
         ...     {"text": "№", "x": 50, "y": 100, ...},
@@ -1426,54 +1472,54 @@ def detect_table_columns(words: list, x_threshold: int = 20) -> list:
     """
     if not words:
         return []
-    
+
     x_coords = sorted(set(w['x'] for w in words))
-    
+
     if not x_coords:
         return []
-    
+
     # Вычисляем распределение расстояний между соседними X-координатами
     gaps = [x_coords[i+1] - x_coords[i] for i in range(len(x_coords)-1)]
-    
+
     if not gaps:
         return [x_coords[0]]
-    
+
     # Адаптивный порог: используем медиану расстояний * 2.5, но не больше x_threshold
     sorted_gaps = sorted(gaps)
     median_gap = sorted_gaps[len(sorted_gaps) // 2]
     adaptive_threshold = min(x_threshold, max(10, median_gap * 2.5))
-    
+
     # Кластеризация с адаптивным порогом
     columns = []
     current_col = [x_coords[0]]
-    
+
     for x in x_coords[1:]:
         if x - current_col[-1] < adaptive_threshold:
             current_col.append(x)
         else:
             columns.append(sum(current_col) / len(current_col))
             current_col = [x]
-    
+
     if current_col:
         columns.append(sum(current_col) / len(current_col))
-    
+
     return columns
 
 
 def assign_word_to_column_range(word_x: float, columns: list) -> int:
     """
     Определяет индекс колонки на основе диапазонов, а не ближайшей точки.
-    
+
     Каждая колонка "владеет" диапазоном от середины до предыдущей колонки
     до середины до следующей колонки.
-    
+
     Args:
         word_x: X-координата слова
         columns: Список X-координат колонок (отсортированный)
-    
+
     Returns:
         Индекс колонки (0-based)
-    
+
     Example:
         >>> columns = [50, 100, 200, 300]
         >>> assign_word_to_column_range(75, columns)  # Между 50 и 100
@@ -1483,10 +1529,10 @@ def assign_word_to_column_range(word_x: float, columns: list) -> int:
     """
     if not columns:
         return 0
-    
+
     if len(columns) == 1:
         return 0
-    
+
     # Для каждой колонки вычисляем её диапазон
     for i in range(len(columns)):
         # Левая граница диапазона
@@ -1494,17 +1540,17 @@ def assign_word_to_column_range(word_x: float, columns: list) -> int:
             left_bound = 0  # Первая колонка начинается от 0
         else:
             left_bound = (columns[i-1] + columns[i]) / 2
-        
+
         # Правая граница диапазона
         if i == len(columns) - 1:
             right_bound = float('inf')  # Последняя колонка до бесконечности
         else:
             right_bound = (columns[i] + columns[i+1]) / 2
-        
+
         # Проверяем попадание в диапазон
         if left_bound <= word_x < right_bound:
             return i
-    
+
     # Если не попали ни в один диапазон (не должно происходить), возвращаем ближайшую
     return min(range(len(columns)), key=lambda i: abs(columns[i] - word_x))
 
@@ -1512,16 +1558,16 @@ def assign_word_to_column_range(word_x: float, columns: list) -> int:
 def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int = 20, use_compact_mode: bool = False) -> str:
     """
     Конвертирует координатные слова в Markdown-таблицу.
-    
+
     Args:
         words: Список словарей с ключами 'text', 'x', 'y', 'w', 'h'
         y_threshold: Порог для группировки строк
         x_threshold: Порог для определения колонок
         use_compact_mode: Использовать режим для компактных таблиц
-    
+
     Returns:
         Markdown-таблица в виде строки
-    
+
     Example:
         >>> words = [
         ...     {"text": "№", "x": 50, "y": 100, ...},
@@ -1534,87 +1580,87 @@ def words_to_markdown_grid(words: list, y_threshold: int = 5, x_threshold: int =
     """
     if not words:
         return ""
-    
+
     # 1. Определяем колонки (используем улучшенный алгоритм для компактных таблиц)
     if use_compact_mode:
         columns = detect_columns_by_line_starts(words, y_threshold)
         print(f"Compact mode: detected {len(columns)} columns using line-starts algorithm")
     else:
         columns = detect_table_columns(words, x_threshold)
-    
+
     if not columns:
         return ""
-    
+
     # 2. Группируем в строки
     lines = group_words_into_lines(words, y_threshold)
-    
+
     # 3. Распределяем слова по колонкам
     grid = []
-    
+
     for line_y, _ in lines:
         line_words = [w for w in words if abs(w['y'] - line_y) < y_threshold]
         line_words.sort(key=lambda w: w['x'])
-        
+
         row = [''] * len(columns)
-        
+
         for word in line_words:
             # Определяем колонку на основе диапазонов (не ближайшей точки)
             col_idx = assign_word_to_column_range(word['x'], columns)
-            
+
             # Добавляем текст в ячейку
             if row[col_idx]:
                 row[col_idx] += ' ' + word['text']
             else:
                 row[col_idx] = word['text']
-        
+
         grid.append(row)
-    
+
     # 4. Очищаем и объединяем колонки
     if not grid:
         return ""
-    
+
     cleaned_grid = clean_and_merge_table_columns(grid)
-    
+
     # 5. Конвертируем в Markdown
     md_lines = []
     for row in cleaned_grid:
         md_lines.append('| ' + ' | '.join(row) + ' |')
-    
+
     return '\n'.join(md_lines)
 
 
 def clean_and_merge_table_columns(grid: list) -> list:
     """
     Очищает и объединяет колонки таблицы для улучшения парсинга GPT.
-    
+
     Выполняет:
     1. Удаление пустых колонок (>90% пустых ячеек) - ВАРИАНТ D
     2. Удаление пустых колонок (>30% пустых ячеек) - существующая логика
     3. Объединение соседних колонок с короткими значениями (только единицы измерения)
     4. Упрощение заголовка (удаление дублирующих строк)
-    
+
     Args:
         grid: Двумерный массив строк таблицы
-    
+
     Returns:
         Очищенный grid
     """
     if not grid or len(grid) < 2:
         return grid
-    
+
     num_cols = len(grid[0])
     num_rows = len(grid) - 1  # Без заголовка
-    
+
     # ========== НОВОЕ (Вариант D): Удаление колонок с >90% пустых ячеек ==========
     cols_to_remove_90 = set()
-    
+
     for col_idx in range(num_cols):
         empty_count = 0
         for row_idx in range(1, len(grid)):  # Пропускаем заголовок
             cell = grid[row_idx][col_idx].strip() if col_idx < len(grid[row_idx]) else ''
             if not cell:
                 empty_count += 1
-        
+
         # Если колонка пуста в >90% строк → удалить
         if num_rows > 0 and (empty_count / num_rows) > 0.9:
             # Защита: не удалять колонку, если в заголовке есть значимый текст
@@ -1622,7 +1668,7 @@ def clean_and_merge_table_columns(grid: list) -> list:
             if not header_cell or header_cell in ['', '-', '—', '–']:
                 cols_to_remove_90.add(col_idx)
                 print(f"[clean_and_merge] Removing 90% empty column {col_idx} ({empty_count}/{num_rows} empty)")
-    
+
     # Удаляем колонки (в обратном порядке, чтобы не сбить индексы)
     if cols_to_remove_90:
         for col_idx in sorted(cols_to_remove_90, reverse=True):
@@ -1630,17 +1676,17 @@ def clean_and_merge_table_columns(grid: list) -> list:
                 if col_idx < len(row):
                     del row[col_idx]
         print(f"[clean_and_merge] Removed {len(cols_to_remove_90)} columns with >90% empty cells")
-        
+
         # Обновляем num_cols после удаления
         if grid:
             num_cols = len(grid[0])
-    
+
     # ========== Шаг 1: Удаляем колонки с >30% пустых ячеек (существующая логика) ==========
     cols_to_keep = []
-    
+
     for col_idx in range(num_cols):
         non_empty_count = sum(1 for row in grid if col_idx < len(row) and row[col_idx].strip())
-        
+
         # Проверяем, содержит ли колонка числовые данные (цены, количество)
         has_numeric_data = False
         for row in grid:
@@ -1650,63 +1696,63 @@ def clean_and_merge_table_columns(grid: list) -> list:
                 if cell and re.search(r'\d+[,\.]\d+|\d+\s*(шт|м|кг|л|упак)', cell):
                     has_numeric_data = True
                     break
-        
+
         # Колонка сохраняется если:
         # 1. Заполнена хотя бы на 30% (снижен порог с 50%)
         # 2. ИЛИ содержит числовые данные (цены, количество)
         if non_empty_count >= len(grid) * 0.3 or has_numeric_data:
             cols_to_keep.append(col_idx)
-    
+
     # Применяем фильтр колонок
     filtered_grid = []
     for row in grid:
         filtered_row = [row[i] if i < len(row) else '' for i in cols_to_keep]
         filtered_grid.append(filtered_row)
-    
+
     if not filtered_grid:
         return grid
-    
+
     # Шаг 2: Объединяем ТОЛЬКО единицы измерения с количеством
     # Например: "1" + "шт" → "1 шт", "46" + "шт" → "46 шт"
     # НЕ объединяем другие колонки!
     merged_grid = []
-    
+
     for row in filtered_grid:
         merged_row = []
         i = 0
         while i < len(row):
             cell = row[i].strip()
-            
+
             # Проверяем, нужно ли объединить со следующей ячейкой
             if i + 1 < len(row):
                 next_cell = row[i + 1].strip()
-                
+
                 # ТОЛЬКО случай: Число + единица измерения (шт, м, кг и т.д.)
                 # Единица измерения должна быть короткой (< 10 символов) и не содержать цифр
                 should_merge = False
-                
+
                 if cell and next_cell:
                     # Текущая ячейка - число, следующая - единица измерения
                     if (cell.replace(',', '').replace('.', '').replace(' ', '').isdigit() and
                         len(next_cell) < 10 and
                         not any(c.isdigit() for c in next_cell)):
                         should_merge = True
-                
+
                 if should_merge:
                     merged_row.append(f"{cell} {next_cell}")
                     i += 2  # Пропускаем следующую ячейку
                     continue
-            
+
             merged_row.append(cell)
             i += 1
-        
+
         merged_grid.append(merged_row)
-    
+
     # Шаг 3: Упрощаем заголовок (удаляем вторую строку, если она дублирует первую)
     if len(merged_grid) >= 2:
         header1 = merged_grid[0]
         header2 = merged_grid[1]
-        
+
         # Проверяем, является ли вторая строка продолжением заголовка
         is_header_continuation = True
         for cell in header2:
@@ -1715,7 +1761,7 @@ def clean_and_merge_table_columns(grid: list) -> list:
             if cell_lower and (any(c.isdigit() for c in cell) or len(cell) > 20):
                 is_header_continuation = False
                 break
-        
+
         # Если вторая строка - продолжение заголовка, объединяем или удаляем
         if is_header_continuation:
             # Объединяем заголовки
@@ -1723,33 +1769,33 @@ def clean_and_merge_table_columns(grid: list) -> list:
             for i in range(max(len(header1), len(header2))):
                 h1 = header1[i] if i < len(header1) else ''
                 h2 = header2[i] if i < len(header2) else ''
-                
+
                 if h1 and h2:
                     combined_header.append(f"{h1} {h2}".strip())
                 else:
                     combined_header.append((h1 or h2).strip())
-            
+
             merged_grid[0] = combined_header
             merged_grid.pop(1)  # Удаляем вторую строку заголовка
-    
+
     return merged_grid
 
 
 def is_subtotal_line(lines: list, current_idx: int, words: list = None) -> bool:
     """
     Проверяет, является ли строка промежуточным итогом (Peak-ahead).
-    
+
     Логика: Если после строки с "итого" есть строки с якорями (короткие значения
     в начале строки, например номера позиций), то это промежуточный итог.
-    
+
     Args:
         lines: Список кортежей (y_coordinate, line_text)
         current_idx: Индекс текущей строки
         words: Опциональный список слов для более точной проверки
-    
+
     Returns:
         True если это промежуточный итог, False если финальный
-    
+
     Example:
         >>> lines = [
         ...     (100, "1 Товар А 10 100"),
@@ -1762,7 +1808,7 @@ def is_subtotal_line(lines: list, current_idx: int, words: list = None) -> bool:
     # Проверяем следующие 3 строки
     for look_idx in range(current_idx + 1, min(current_idx + 4, len(lines))):
         _, line_text = lines[look_idx]
-        
+
         # Ищем якорь: короткое значение в начале строки
         tokens = line_text.strip().split()
         if tokens:
@@ -1770,66 +1816,66 @@ def is_subtotal_line(lines: list, current_idx: int, words: list = None) -> bool:
             # Якорь: короткое значение (< 15 символов) и не "итого"
             if len(first_token) < 15 and first_token.lower() != 'итого':
                 return True  # Промежуточный итог
-    
+
     return False  # Финальный итог
 
 
 def is_multipage_table(pages_data: list) -> bool:
     """
     Определяет, является ли таблица многостраничной.
-    
+
     Критерии:
     1. Документ содержит более 1 страницы
     2. На первой странице найдены маркеры таблицы (≥2)
     3. На второй странице найдены маркеры таблицы (≥2) ИЛИ "Итого:"
-    
+
     Args:
         pages_data: Список страниц с извлеченными словами
-    
+
     Returns:
         True если таблица многостраничная, False иначе
     """
     if len(pages_data) < 2:
         return False
-    
+
     table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
-    
+
     # Проверяем первую страницу на наличие маркеров таблицы
     first_page_lines = group_words_into_lines(pages_data[0], y_threshold=5)
     has_table_on_first = False
-    
+
     for _, line_text in first_page_lines:
         line_lower = line_text.lower()
         matches = sum(1 for marker in table_markers if marker in line_lower)
         if matches >= 2:
             has_table_on_first = True
             break
-    
+
     if not has_table_on_first:
         return False
-    
+
     # Проверяем вторую страницу на наличие маркеров таблицы ИЛИ "Итого:"
     second_page_lines = group_words_into_lines(pages_data[1], y_threshold=5)
-    
+
     for _, line_text in second_page_lines[:15]:  # Проверяем первые 15 строк
         line_lower = line_text.lower()
-        
+
         # Проверка 1: Есть ли маркеры таблицы?
         matches = sum(1 for marker in table_markers if marker in line_lower)
         if matches >= 2:
             return True  # Многостраничная таблица
-        
+
         # Проверка 2: Есть ли "Итого:"?
         if 'итого' in line_lower:
             return True  # Многостраничная таблица
-    
+
     return False
 
 
 def extract_multipage_table(pages_data: list) -> str:
     """
     Извлекает многостраничную таблицу с фильтрацией по паттернам строк.
-    
+
     Алгоритм:
     1. Находит начало таблицы на странице 1
     2. Извлекает строки до "Итого:" (включительно)
@@ -1837,69 +1883,69 @@ def extract_multipage_table(pages_data: list) -> str:
     4. Извлекает строки таблицы со страницы 2
     5. Фильтрует только строки, соответствующие паттерну таблицы
     6. Объединяет строки и конвертирует в markdown
-    
+
     Args:
         pages_data: Список страниц с извлеченными словами
-    
+
     Returns:
         Markdown-таблица в виде строки
     """
     if not pages_data or len(pages_data) < 2:
         return ""
-    
+
     table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
-    
+
     # 1. НАЙТИ НАЧАЛО ТАБЛИЦЫ НА СТРАНИЦЕ 1
     table_start_y = None
     first_page_lines = group_words_into_lines(pages_data[0], y_threshold=5)
-    
+
     for line_y, line_text in first_page_lines:
         line_lower = line_text.lower()
         matches = sum(1 for marker in table_markers if marker in line_lower)
-        
+
         if matches >= 2:
             table_start_y = line_y
             break
-    
+
     if table_start_y is None:
         return ""  # Таблица не найдена
-    
+
     # 2. ИЗВЛЕЧЬ СТРОКИ ДО "ИТОГО:" НА СТРАНИЦЕ 1
     itogo_y = None
     for line_y, line_text in first_page_lines:
         if line_y >= table_start_y and 'итого' in line_text.lower():
             itogo_y = line_y
             break
-    
+
     if itogo_y is None:
         itogo_y = float('inf')  # Если не найдено, берем до конца страницы
-    
+
     # Извлекаем слова из первой части таблицы
     page1_words = [w for w in pages_data[0] if table_start_y <= w['y'] <= itogo_y]
-    
+
     # 3. НАЙТИ ПРОДОЛЖЕНИЕ ТАБЛИЦЫ НА СТРАНИЦЕ 2
     # Ищем первую строку данных (не заголовок!)
     continuation_start_y = None
     second_page_lines = group_words_into_lines(pages_data[1], y_threshold=5)
-    
+
     # Сначала пропускаем заголовок таблицы (если есть)
     header_found = False
     for line_y, line_text in second_page_lines:
         line_lower = line_text.lower()
         matches = sum(1 for marker in table_markers if marker in line_lower)
-        
+
         # Если нашли заголовок, отмечаем и продолжаем
         if matches >= 2 and not header_found:
             header_found = True
             continue
-        
+
         # После заголовка ищем первую строку данных
         if header_found:
             tokens = line_text.strip().split()
             if tokens and (tokens[0].isdigit() or 'нс-' in tokens[0].lower()):
                 continuation_start_y = line_y
                 break
-    
+
     # Если заголовок не найден, ищем первую строку с данными напрямую
     if continuation_start_y is None:
         for line_y, line_text in second_page_lines:
@@ -1907,28 +1953,28 @@ def extract_multipage_table(pages_data: list) -> str:
             if tokens and (tokens[0].isdigit() or 'нс-' in tokens[0].lower()):
                 continuation_start_y = line_y
                 break
-    
+
     if continuation_start_y is None:
         # Если ничего не найдено, возвращаем только первую часть
         return words_to_markdown_grid(page1_words, y_threshold=5, x_threshold=35)
-    
+
     # 4. НАЙТИ КОНЕЦ ТАБЛИЦЫ НА СТРАНИЦЕ 2
     table_end_y = None
     stop_words = ['итого', 'всего к оплате', 'всего наименований', 'руководитель', 'м.п.', 'главный бухгалтер']
-    
+
     for line_y, line_text in second_page_lines:
         if line_y >= continuation_start_y:
             line_lower = line_text.lower()
             if any(stop in line_lower for stop in stop_words):
                 table_end_y = line_y
                 break
-    
+
     if table_end_y is None:
         table_end_y = float('inf')  # До конца страницы
-    
+
     # Извлекаем слова из второй части таблицы
     page2_words = [w for w in pages_data[1] if continuation_start_y <= w['y'] <= table_end_y]
-    
+
     # 5. ОБЪЕДИНЯЕМ СЛОВА И КОНВЕРТИРУЕМ В MARKDOWN
     # ВАЖНО: Корректируем Y-координаты слов из page2, чтобы они шли ПОСЛЕ page1
     # Создаем копии словарей, чтобы не модифицировать исходные данные
@@ -1940,13 +1986,13 @@ def extract_multipage_table(pages_data: list) -> str:
             word_copy = word.copy()
             word_copy['y'] = word['y'] + max_y_page1 + 50  # +50 для отступа между страницами
             page2_words_adjusted.append(word_copy)
-        
+
         all_table_words = page1_words + page2_words_adjusted
     else:
         all_table_words = page1_words + page2_words
-    
+
     markdown_table = words_to_markdown_grid(all_table_words, y_threshold=5, x_threshold=35)
-    
+
     return markdown_table
 
 
@@ -1954,47 +2000,47 @@ def extract_table_with_pdfplumber(pdf_path: str) -> str:
     """
     Fallback-метод извлечения таблицы с использованием pdfplumber.extract_tables().
     Используется когда координатный метод не может разделить таблицу на колонки.
-    
+
     Args:
         pdf_path: Путь к PDF-файлу
-    
+
     Returns:
         Markdown-таблица в виде строки
     """
     import pdfplumber
-    
+
     try:
         with pdfplumber.open(pdf_path) as pdf:
             all_tables = []
-            
+
             # Настройки для извлечения таблиц с компактной структурой
             table_settings = {
                 "vertical_strategy": "lines",  # Используем линии для определения колонок
                 "horizontal_strategy": "lines",  # Используем линии для определения строк
                 "intersection_tolerance": 3,
             }
-            
+
             for page in pdf.pages:
                 # Пробуем с настройками
                 tables = page.extract_tables(table_settings)
                 if tables:
                     all_tables.extend(tables)
-            
+
             if not all_tables:
                 return ""
-            
+
             # Берем первую таблицу (обычно это основная таблица товаров)
             table = all_tables[0]
-            
+
             # Конвертируем в markdown
             md_lines = []
             for row in table:
                 # Очищаем None и пустые значения
                 cleaned_row = [str(cell).strip() if cell else '' for cell in row]
                 md_lines.append('| ' + ' | '.join(cleaned_row) + ' |')
-            
+
             return '\n'.join(md_lines)
-    
+
     except Exception as e:
         print(f"Error in extract_table_with_pdfplumber: {e}")
         return ""
@@ -2003,21 +2049,21 @@ def extract_table_with_pdfplumber(pdf_path: str) -> str:
 def extract_pdf_table_region(pages_data: list, pdf_path: str = "") -> str:
     """
     Извлекает только табличную часть из цифрового PDF с поддержкой 3-х веток обработки.
-    
+
     Алгоритм:
     1. Проверяет, является ли таблица многостраничной -> ВЕТКА 1: extract_multipage_table()
     2. Если нет, извлекает слова табличного региона
     3. Проверяет, является ли таблица компактной -> ВЕТКА 2: улучшенная кластеризация
     4. Если нет -> ВЕТКА 3: стандартная обработка
-    
+
     Args:
         pages_data: Список страниц, каждая страница - список словарей слов
                    [{'text': str, 'x': float, 'y': float, 'w': float, 'h': float}, ...]
         pdf_path: Путь к PDF-файлу (для диагностики)
-    
+
     Returns:
         Markdown-таблица в виде строки
-    
+
     Example:
         >>> pages_data = [[
         ...     {"text": "Наименование", "x": 100, "y": 300, ...},
@@ -2030,91 +2076,91 @@ def extract_pdf_table_region(pages_data: list, pdf_path: str = "") -> str:
     """
     if not pages_data:
         return ""
-    
+
     # ВЕТКА 1: Многостраничная таблица?
     if is_multipage_table(pages_data):
         print("Branch 1: Multipage table detected")
         return extract_multipage_table(pages_data)
-    
+
     # Маркеры начала и конца таблицы
     table_markers = ['наименование', 'кол-во', 'цена', 'сумма', 'количество', 'товар', 'артикул']
     stop_words = ['итого', 'всего к оплате', 'всего наименований', 'руководитель', 'м.п.', 'главный бухгалтер']
-    
+
     # 1. ПОИСК НАЧАЛА ТАБЛИЦЫ
     table_start_y = None
     table_start_page = 0
-    
+
     for page_idx, page_words in enumerate(pages_data):
         if not page_words:
             continue
-            
+
         lines = group_words_into_lines(page_words, y_threshold=5)
-        
+
         for line_y, line_text in lines:
             line_lower = line_text.lower()
             matches = sum(1 for marker in table_markers if marker in line_lower)
-            
+
             if matches >= 2:
                 table_start_y = line_y
                 table_start_page = page_idx
                 break
-        
+
         if table_start_y is not None:
             break
-    
+
     if table_start_y is None:
         return ""  # Таблица не найдена
-    
+
     # 2. ПОИСК КОНЦА ТАБЛИЦЫ
     table_end_y = None
     table_end_page = len(pages_data) - 1
     has_continuation = False
-    
+
     for page_idx in range(table_start_page, len(pages_data)):
         if not pages_data[page_idx]:
             continue
-            
+
         lines = group_words_into_lines(pages_data[page_idx], y_threshold=5)
-        
+
         for idx, (line_y, line_text) in enumerate(lines):
             line_lower = line_text.lower()
-            
+
             if any(stop in line_lower for stop in stop_words):
                 # Peak-ahead: проверяем промежуточный итог
                 is_subtotal = is_subtotal_line(lines, idx, pages_data[page_idx])
-                
+
                 # Дополнительная проверка: если на текущей странице нет якорей,
                 # проверяем следующую страницу на наличие маркеров таблицы
                 if not is_subtotal and page_idx + 1 < len(pages_data):
                     next_page_lines = group_words_into_lines(pages_data[page_idx + 1], y_threshold=5)
-                    
+
                     # Ищем маркеры таблицы на следующей странице
                     for next_line_y, next_line_text in next_page_lines[:10]:  # Проверяем первые 10 строк
                         next_line_lower = next_line_text.lower()
                         matches = sum(1 for marker in table_markers if marker in next_line_lower)
-                        
+
                         # Если нашли маркеры таблицы - это промежуточный итог
                         if matches >= 2:
                             is_subtotal = True
                             has_continuation = True
                             break
-                
+
                 if not is_subtotal:
                     table_end_y = line_y
                     table_end_page = page_idx
                     break
-        
+
         if table_end_y is not None:
             break
-    
+
     # Если конец не найден, берем до конца документа
     if table_end_y is None:
         table_end_y = float('inf')
         table_end_page = len(pages_data) - 1
-    
+
     # 2. ИЗВЛЕЧЕНИЕ СЛОВ ИЗ РЕГИОНА
     table_words = []
-    
+
     for page_idx in range(table_start_page, table_end_page + 1):
         for word in pages_data[page_idx]:
             # Фильтруем по Y-координатам
@@ -2122,15 +2168,15 @@ def extract_pdf_table_region(pages_data: list, pdf_path: str = "") -> str:
                 continue
             if page_idx == table_end_page and word['y'] > table_end_y:
                 continue
-            
+
             table_words.append(word)
-    
+
     if not table_words:
         return ""
-    
+
     # 3. ОПРЕДЕЛЕНИЕ ТИПА ТАБЛИЦЫ И ВЫБОР ВЕТКИ
     is_compact = detect_compact_table(table_words)
-    
+
     if is_compact:
         # ВЕТКА 2: Компактная таблица - используем улучшенную кластеризацию
         print("Branch 2: Compact table detected - using line-starts algorithm")
@@ -2139,13 +2185,13 @@ def extract_pdf_table_region(pages_data: list, pdf_path: str = "") -> str:
         # ВЕТКА 3: Стандартная таблица - используем обычную кластеризацию
         print("Branch 3: Standard table - using standard algorithm")
         markdown_table = words_to_markdown_grid(table_words, y_threshold=5, x_threshold=35, use_compact_mode=False)
-    
+
     return markdown_table
 
 
 def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
     """
-    Универсальный препроцессор. Читает Excel/CSV строго как текст, 
+    Универсальный препроцессор. Читает Excel/CSV строго как текст,
     лечит кавычки, отрезает таблицу товаров и возвращает Markdown.
     """
     try:
@@ -2162,25 +2208,25 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
 
     # Primary cleanup
     df = df.dropna(axis=1, how='all')
-    
+
     # Bulk cleaning
     df = df.map(clean_val)
 
     # 3. Ищем начало таблицы товаров (Smart Cut-off)
     table_start_idx = len(df)
     target_words = {'кол-во', 'цена', 'количество', 'сумма', 'товар', 'наименование', 'артикул'}
-    
+
     for idx, row in df.iterrows():
         row_text = ' '.join(map(str, row.values)).lower()
         matches = sum(1 for word in target_words if word in row_text)
         if matches >= 2:
             table_start_idx = idx
             break
-            
+
     # Поиск конца таблицы для корректного отсечения подвала
     table_end_idx = table_start_idx
     stop_footer_words = {'итого', 'всего к оплате', 'всего наименований', 'сумма ндс', 'в т.ч. ндс', 'итого с ндс'}
-    
+
     if table_start_idx < len(df):
         for idx in range(table_start_idx + 1, len(df)):
             row_text = ' '.join(map(str, df.iloc[idx].values)).lower()
@@ -2190,11 +2236,11 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
         if table_end_idx == table_start_idx:
             # Если стоп-слова не найдены, считаем что таблица до конца (или была ошибка поиска)
             table_end_idx = len(df)
-            
+
     # Assembly
     header_df = df.iloc[:table_start_idx].head(60)
     header_df.columns = ["" if (isinstance(c, int) or "Unnamed" in str(c)) else c for c in header_df.columns]
-    
+
     footer_text = ""
     if table_end_idx < len(df):
         footer_df = df.iloc[table_end_idx:]
@@ -2205,10 +2251,10 @@ def excel_to_markdown_header(file_path: str, file_extension: str) -> str:
                 footer_text = footer_df.to_markdown(index=False)
 
     markdown_header = header_df.to_markdown(index=False) if not header_df.empty else ""
-    
+
     if not markdown_header:
         return ""
-        
+
     if footer_text:
         return f"{markdown_header}\n\n... [ТАБЛИЦА ТОВАРОВ СКРЫТА] ...\n\n### ПОДВАЛ ДОКУМЕНТА:\n{footer_text}"
     else:
@@ -2285,7 +2331,7 @@ def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
                 continue
 
             score = rows_count
-            
+
             # Бонус за слово «Спецификация» в шапке листа или имени листа
             header_text = " ".join(
                 " ".join(map(str, df.iloc[r].values))
@@ -2331,6 +2377,9 @@ def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
 
     # Срезка блоков лидера
     header_df = df.iloc[:table_start_idx].dropna(axis=1, how='all').dropna(axis=0, how='all')
+    # Агрессивная очистка header: удаляем колонки с менее чем 2 непустыми значениями
+    if not header_df.empty:
+        header_df = header_df.loc[:, header_df.count() >= 2]
     items_df = df.iloc[table_start_idx:table_end_idx + 1].dropna(axis=1, how='all').dropna(axis=0, how='all')
     footer_df = df.iloc[real_footer_idx:].dropna(axis=1, how='all').dropna(axis=0, how='all')
 
@@ -2343,6 +2392,7 @@ def split_excel_to_md_sections(file_path: str) -> tuple[str, str, str]:
     footer_md = footer_df.to_markdown(index=False) if not footer_df.empty else ""
 
     return header_md, items_md, footer_md
+
 
 
 

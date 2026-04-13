@@ -27,15 +27,15 @@ class UsageStats:
     def add(self, label: str, model_key: str, input_tok: int, output_tok: int):
         rates = pricing.PRICING_CONFIG.get(model_key, pricing.PRICING_CONFIG["yandexgpt-pro"])
         step_cost = (input_tok * rates["input_per_1k"] + output_tok * rates["output_per_1k"]) / 1000.0
-        
+
         self.total_input += input_tok
         self.total_output += output_tok
         self.total_cost += step_cost
-        
+
         # Если чанков несколько, они будут сохраняться под отдельными ключами (Items_Chunk_1, Items_Chunk_2)
         if label not in self.cost_breakdown:
             self.cost_breakdown[label] = {"input": 0, "output": 0, "cost": 0.0}
-        
+
         self.cost_breakdown[label]["input"] += input_tok
         self.cost_breakdown[label]["output"] += output_tok
         self.cost_breakdown[label]["cost"] += step_cost
@@ -44,7 +44,7 @@ class UsageStats:
         config = pricing.PRICING_CONFIG["ocr"]
         method_cost = config.get("table") if method == "ocr_table" else config.get("page")
         current_cost = round(pages * method_cost, 4)
-        
+
         self.total_cost += current_cost
         if label not in self.cost_breakdown:
             self.cost_breakdown[label] = {"input": 0, "output": 0, "cost": 0.0}
@@ -66,20 +66,29 @@ class UsageStats:
             if "pages" in v:
                 self.cost_breakdown[key]["pages"] = self.cost_breakdown[key].get("pages", 0) + v["pages"]
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_breakdown: bool = True):
+        """
+        Конвертирует статистику в словарь.
+
+        Args:
+            include_breakdown: Включать ли детальную разбивку по чанкам.
+                              False для production (экономия ~800 байт на файл).
+        """
+        result = {
             "tokens": self.total_input + self.total_output,
-            "cost": round(self.total_cost, 4),
-            "cost_breakdown": self.cost_breakdown
+            "cost": round(self.total_cost, 4)
         }
+        if include_breakdown:
+            result["cost_breakdown"] = self.cost_breakdown
+        return result
 
 
 async def estimate_cost_before_processing(text: str, num_positions: int = 0, **kwargs) -> dict:
     num_chunks = (num_positions // 15) + 1 if num_positions > 0 else 1
-    
+
     # Считаем базу: Lite + Setup Pro + Строки + Налог на лишние чанки
     base = BASE_LITE_FEE + PRO_SETUP_FEE + (num_positions * PRICE_PER_ROW) + ((num_chunks - 1) * CHUNK_TAX)
-    
+
     # Итоговый прогноз с микро-буфером
     final_cost = base * 1.05
     # Для красоты считаем токены (1 руб ≈ 3200 токенов в нашей модели)
@@ -108,7 +117,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
     """
     url_analyze = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
     url_operations = "https://operation.api.cloud.yandex.net/operations/"
-    
+
     headers = {
         "Authorization": f"Api-Key {api_key}",
         "x-folder-id": folder_id,
@@ -137,10 +146,10 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                 continue
             resp.raise_for_status()
             break
-        
+
         if not resp:
             raise Exception("Failed to submit OCR task after 3 attempts.")
-            
+
         data = resp.json()
 
         # Case A: Sync Results
@@ -165,7 +174,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                     print(f"Polling 429... waiting 2.5s extra. Operation: {op_id}")
                     await asyncio.sleep(2.5)
                     continue
-                
+
                 op_resp.raise_for_status()
                 op_status = op_resp.json()
 
@@ -173,7 +182,7 @@ async def ocr_yandex(b64_img: str, api_key: str, folder_id: str):
                     if "error" in op_status:
                         raise Exception(f"Yandex OCR error: {op_status['error']}")
                     return _extract_ocr_data(op_status.get("response"))
-                    
+
             except Exception as e:
                 print(f"Error polling Yandex Operation {op_id}: {e}. Retrying inner loop...")
                 await asyncio.sleep(2.0)
@@ -185,7 +194,7 @@ def _extract_ocr_data(data: dict):
     Unified parser for Yandex Vision JSON (extracts text, coordinates, and confidence).
     """
     if not data: return "", False, [], {}
-    
+
     text_parts = []
     all_words = []
     has_low_confidence = False
@@ -200,10 +209,10 @@ def _extract_ocr_data(data: dict):
                             conf = word.get('confidence', 1.0)
                             if conf < 0.8:
                                 has_low_confidence = True
-                            
+
                             w_text = word.get('text', '')
                             text_parts.append(w_text)
-                            
+
                             # Extract bounding box to coordinates
                             poly = word.get('boundingBox', {}).get('vertices', [])
                             if poly and len(poly) >= 4:
@@ -215,7 +224,7 @@ def _extract_ocr_data(data: dict):
                                     "text": w_text, "x": x, "y": y, "w": w, "h": h
                                 })
                         text_parts.append('\n')
-    
+
     return "".join(text_parts), has_low_confidence, all_words, data
 
 def load_prompt(name: str) -> str:
@@ -231,11 +240,11 @@ def load_prompt(name: str) -> str:
 
 async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "lite", label: str = "General"):
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-    
+
     # Логируем параметры для отладки
     logger.info(f"[{label}] API Key length: {len(api_key)}, Folder ID: {folder_id}")
     logger.info(f"[{label}] API Key first 10 chars: {api_key[:10]}...")
-    
+
     headers = {
         "Authorization": f"Api-Key {api_key}",
         "x-folder-id": folder_id,
@@ -243,16 +252,16 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
     }
 
     user_text = f"Текст документа:\n{text}"
-    
+
     # Official Yandex GPT model URIs (latest is standard)
     if model_type == "pro":
         model_uri = f"gpt://{folder_id}/yandexgpt/latest"
     else:
         model_uri = f"gpt://{folder_id}/yandexgpt-lite/latest"
-    
+
     payload = {
         "modelUri": model_uri,
-        "completionOptions": {"stream": False, "temperature": 0.0, "maxTokens": 2000},
+        "completionOptions": {"stream": False, "temperature": 0.0, "maxTokens": 3000},
         "messages": [
             {"role": "system", "text": system_prompt},
             {"role": "user", "text": user_text}
@@ -263,13 +272,13 @@ async def gpt_yandex(text: str, api_key: str, folder_id: str, system_prompt: str
         resp = await client.post(url, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
-        
+
     usage = data.get('result', {}).get('usage', {})
     in_tok = int(usage.get('inputTextTokens', 0))
     out_tok = int(usage.get('completionTokens', 0))
-    
+
     logger.info(f"LLM call [{label}] — input: {in_tok}, output: {out_tok}")
-    
+
     return data['result']['alternatives'][0]['message']['text'], in_tok, out_tok
 
 async def get_token_count(text: str, model_type: str, api_key: str, folder_id: str) -> int:
@@ -313,54 +322,54 @@ def normalize_invoice_table(md_text: str) -> str:
     if not md_text: return ""
     lines = md_text.split('\n')
     output_lines = []
-    
+
     # Find headers (look for piped header with --- separator)
     start_idx = -1
     for i, line in enumerate(lines):
         if "|" in line and i + 1 < len(lines) and "| ---" in lines[i+1]:
             start_idx = i
             break
-    
+
     if start_idx == -1: return md_text # No table found, return as is
-            
+
     header_part = lines[start_idx:start_idx+2]
     data_rows = lines[start_idx+2:]
     output_lines.extend(header_part)
-    
+
     current_row = None
-    
+
     for line in data_rows:
         line = line.strip()
         if not line.startswith("|") or not line.endswith("|"): continue
-        
+
         parts = [p.strip() for p in line.split("|")]
         # Expected Grid: | Group | No | Name | Qty | Unit | Price | Disc | Sum |
         # Parts will be ['', Group, No, Name, Qty, Unit, Price, Disc, Sum, ''] -> len 10
         if len(parts) < 9: continue
-        
+
         # Shift to data indices (1 to 8)
         name_val = parts[3] if len(parts) > 3 else ""
         price_val = parts[6] if len(parts) > 6 else ""
         sum_val = parts[8] if len(parts) > 8 else ""
         qty_val = parts[4] if len(parts) > 4 else ""
-        
+
         # Check if row has numeric anchors (Price, Sum or Qty)
         has_data = any(c.isdigit() for c in price_val) or \
                    any(c.isdigit() for c in sum_val) or \
                    any(c.isdigit() for c in qty_val)
-        
+
         if has_data:
-            if current_row: 
+            if current_row:
                 output_lines.append("| " + " | ".join(current_row) + " |")
             current_row = parts[1:9]
         else:
             # Orphan row (description wrap)
             if current_row and name_val:
                 current_row[2] += " " + name_val
-    
+
     if current_row:
         output_lines.append("| " + " | ".join(current_row) + " |")
-        
+
     return "\n".join(output_lines)
 
 def apply_math_arbitrage(json_data: dict) -> dict:
@@ -372,15 +381,15 @@ def apply_math_arbitrage(json_data: dict) -> dict:
     4. Calculates VAT if not provided.
     """
     if not json_data: return {}
-    
+
     # Extract sections from DocOK schema
     footer = json_data.get("footer", {})
     items = json_data.get("items", [])
-    
+
     total_accumulated = 0.0
     global_notes = []
-    
-    def to_f(v): 
+
+    def to_f(v):
         if v is None: return 0.0
         import re
         s = str(v).replace(" ", "").replace(",", ".")
@@ -394,18 +403,18 @@ def apply_math_arbitrage(json_data: dict) -> dict:
         qty = to_f(item.get("quantity", 1))
         price = to_f(item.get("price", 0))
         total_doc = to_f(item.get("total", 0))
-        
+
         calc_total = round(qty * price, 2)
         item["calculated_total"] = calc_total
         item["unit_price_raw"] = price
-        
+
         notes = []
         if abs(calc_total - total_doc) > 0.05:
             notes.append(f"Ошибка расчета: {qty} * {price} = {calc_total}, в доке {total_doc}")
             item["math_error"] = True
         else:
             notes.append("OK: Математика сходится")
-            
+
         item["validation_notes"] = "; ".join(notes)
         total_accumulated += total_doc
 
@@ -417,28 +426,28 @@ def apply_math_arbitrage(json_data: dict) -> dict:
         if footer.get(k):
             grant_total_doc = to_f(footer[k])
             if grant_total_doc > 0: break
-            
+
     if grant_total_doc > 0:
         diff = abs(total_accumulated - grant_total_doc)
         if diff > 0.5:
             global_notes.append(f"⚠ Несовпадение итогов: Сумма строк ({total_accumulated:.2f}) != Итого в доке ({grant_total_doc:.2f})")
         else:
             global_notes.append("Общий итог документа подтвержден")
-    
+
     if global_notes:
         footer["validation_notes"] = "; ".join(global_notes)
-        
+
     return json_data
 
 async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "pro"):
     """Extracts only the metadata (inn, date, number) from raw header text."""
     lines = text.split('\n')
     header_slice = "\n".join(lines[:100])
-    
+
     # Strip MD table markers for meta extraction
     clean_text = header_slice.replace("|", " ").replace("---", " ")
     clean_text = re.sub(r' +', ' ', clean_text)
-    
+
     try:
         logger.info("Attempting single API call for whole raw document...")
         raw_res, stats = await gpt_yandex(clean_text, api_key, folder_id, system_prompt, model_type, label="Header_Single")
@@ -450,20 +459,20 @@ async def extract_invoice_metadata(text: str, api_key: str, folder_id: str, syst
 
 async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, system_prompt: str, model_type: str = "pro", context: dict = None):
     """Processes cleaned-up MD tables with Yandex GPT."""
-    
+
     # 1. Normalize the MD table before processing
     full_text = normalize_invoice_table(full_text)
-    
+
     lines = full_text.split('\n')
     header_block = "\n".join(lines[:2]) if len(lines) >= 2 else (lines[0] if lines else "")
     data_lines = lines[2:] if len(lines) >= 2 else []
-    
+
     # 2. Inject context (Supplier Name) into prompt
     if context and "{supplier_name}" in system_prompt:
         system_prompt = system_prompt.replace("{supplier_name}", context.get("supplier_name", "Не указан"))
 
     # 3. Use unified large chunk for invoices (avoid fragmentation)
-    CHUNK_SIZE = 9999 
+    CHUNK_SIZE = 9999
     from parser_utils import clean_and_build_markdown
     total_stats = UsageStats()
     all_items = []
@@ -473,7 +482,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
 
     chunks = [data_lines[i:i + CHUNK_SIZE] for i in range(0, len(data_lines), CHUNK_SIZE)]
     sem = asyncio.Semaphore(5)
-    
+
     async def process_single_chunk(i, chunk):
         async with sem:
             chunk_text = header_block + "\n" + "\n".join(chunk)
@@ -482,7 +491,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
                 chunk_stats = UsageStats()
                 model_key = "yandexgpt-pro" if model_type == "pro" else "yandexgpt-lite"
                 chunk_stats.add(f"Header_Chunk_{i+1}", model_key, in_tok, out_tok)
-                
+
                 parsed = parse_gpt_json(raw_res)
                 if parsed:
                     return i, True, parsed, chunk_stats, None
@@ -496,9 +505,9 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
         res = await coro
         results.append(res)
         yield {"type": "progress", "index": res[0]+1, "total": len(chunks)}
-    
+
     results.sort(key=lambda x: x[0])
-    
+
     for i, ok, parsed, chunk_stats, err_msg in results:
         total_stats.merge(chunk_stats)
         if ok and parsed:
@@ -514,7 +523,7 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
                     main_doc = parsed.get('header', parsed.get('document', {}))
                 if not footer_data:
                     footer_data = parsed.get('footer', {})
-            
+
             all_fixes.extend(fixes_to_add)
             all_items.extend(items_to_add)
         else:
@@ -528,11 +537,11 @@ async def process_chunks_with_gpt(full_text: str, api_key: str, folder_id: str, 
     }
     final_json = apply_math_arbitrage(final_json)
     yield {
-        "type": "result", 
-        "items": final_json["items"], 
-        "fixes": all_fixes, 
+        "type": "result",
+        "items": final_json["items"],
+        "fixes": all_fixes,
         "tokens": getattr(total_stats, "cost", 0.0), # Temporary placeholder if caller assumes it's cost/stats. Unused anyway.
-        "main_doc": final_json["header"], 
+        "main_doc": final_json["header"],
         "footer": final_json["footer"],
         "chunks_report": []
     }
@@ -546,7 +555,7 @@ def normalize_phone(phone_str: str) -> str:
         d10 = digits[-10:]
         return f"+7 ({d10[:3]}) {d10[3:6]}-{d10[6:8]}-{d10[8:10]}"
     return phone_str
-    
+
 def get_address_tokens(addr_str: str) -> dict:
     if not addr_str: return {"index": None, "house": None, "office": None}
     addr_str = addr_str.lower()
@@ -564,19 +573,19 @@ def get_address_tokens(addr_str: str) -> dict:
 def check_address_anchor(addr_str: str, anchor_tokens: dict) -> str:
     if not addr_str or not anchor_tokens:
         return "OK"
-    
+
     tokens = get_address_tokens(addr_str)
-    
+
     # Если не нашли индекс или дом, пропускаем проверку (недостаточно данных)
     if not tokens["index"] or not tokens["house"]:
         return "OK"
-        
+
     if tokens["index"] == anchor_tokens.get("index") and tokens["house"] == anchor_tokens.get("house"):
         if tokens["office"] == anchor_tokens.get("office"):
             return "ERROR" # Полное совпадение (это адрес клиента)
         else:
             return "WARNING" # Сосед по зданию (разные офисы)
-            
+
     return "OK"
 
 def extract_field(field_data):
@@ -587,7 +596,7 @@ def extract_field(field_data):
             conf = float(raw_conf)
         except (ValueError, TypeError):
             conf = 1.0
-            
+
         return {
             "value": field_data.get("value"),
             "confidence": conf,
@@ -610,7 +619,7 @@ def safe_parse_llm_json(response_text: str) -> dict:
             raw_dict = json.loads(clean_json_str)
         else:
             raw_dict = json.loads(response_text)
-            
+
         # Wrap for HITL Sprint 3.3 - Updated for Sprint 4 confidence passing
         wrapped_data = {
             "document_type": extract_field(raw_dict.get("document_type")),
@@ -625,7 +634,7 @@ def safe_parse_llm_json(response_text: str) -> dict:
             "bank_account": extract_field(raw_dict.get("bank_account")),
             "corr_account": extract_field(raw_dict.get("corr_account")),
             "phone": extract_field(raw_dict.get("phone")),
-            
+
             # Additional metadata (non-wrapped for now or handled separately)
             "invoice_number": raw_dict.get("invoice_number", "---"),
             "invoice_date": raw_dict.get("invoice_date", "---"),
@@ -652,39 +661,39 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     3. Вызывает LLM и возвращает плоский JSON.
     """
     from parser_utils import clean_and_build_markdown
-    
+
     # Если на вход уже пришел готовый Markdown-текст (например, из Excel/CSV)
     if isinstance(ocr_json, str):
         markdown_payload = ocr_json
     else:
         # Единый подход: собираем Markdown из координатных блоков
         markdown_payload = clean_and_build_markdown(ocr_json)
-    
+
     if not markdown_payload or markdown_payload == "NO_TEXT_FOUND":
         return safe_parse_llm_json(""), UsageStats()
 
     # 2. Читаем промпт
     with open(os.path.join(os.path.dirname(__file__), "prompts", "invoice_header_prompt.md"), "r", encoding="utf-8") as f:
         prompt_template = f.read()
-        
+
     parts = prompt_template.split("[INSTRUCTION]")
     system_prompt = parts[0].replace("[SYSTEM PROMPT]", "").strip()
     instruction = "[INSTRUCTION]" + parts[1].replace("{markdown_payload}", markdown_payload).strip()
-    
+
     # 3. Вызываем LLM
     try:
         llm_response, in_tok, out_tok = await gpt_yandex(
-            text=instruction, 
-            api_key=api_key, 
-            folder_id=folder_id, 
+            text=instruction,
+            api_key=api_key,
+            folder_id=folder_id,
             system_prompt=system_prompt,
             model_type="lite",
             label="Header_Final"
         )
-        
+
         stats = UsageStats()
         stats.add("Header_Final", "yandexgpt-lite", in_tok, out_tok)
-        
+
         parsed = parse_gpt_json(llm_response)
         if isinstance(parsed, dict):
             return parsed, stats
@@ -692,17 +701,17 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     except Exception as e:
         logger.error(f"Error calling LLM for prompt: {e}")
         return safe_parse_llm_json(""), UsageStats()
-    
+
     # 4. Безопасно парсим
     wrapped_data = safe_parse_llm_json(llm_response)
-    
+
     # ДАННЫЕ КЛИЕНТА (ММК)
     CLIENT_INN = "5905271743"
     CLIENT_ANCHOR = {"index": "614022", "house": "1", "office": "3"}
 
     # 1. Проверка по ИНН (Если ИИ притащил ИНН покупателя)
     if wrapped_data.get("inn") and wrapped_data["inn"].get("value") == CLIENT_INN:
-        for key in wrapped_data: 
+        for key in wrapped_data:
             if isinstance(wrapped_data[key], dict) and "value" in wrapped_data[key]:
                 wrapped_data[key]["value"] = None # Стираем всё, это не поставщик
         return wrapped_data, stats
@@ -715,12 +724,12 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     for f_name in ["legal_address", "postal_address"]:
         val = wrapped_data.get(f_name, {}).get("value")
         if not val: continue
-        
+
         t = get_address_tokens(val)
         # Если совпал Индекс+Дом ИЛИ Дом+Офис - это 100% клиент
         is_leak = (t["index"] == CLIENT_ANCHOR["index"] and t["house"] == CLIENT_ANCHOR["house"]) or \
                   (t["house"] == CLIENT_ANCHOR["house"] and t["office"] == CLIENT_ANCHOR["office"])
-        
+
         if is_leak:
             wrapped_data[f_name]["value"] = None
             wrapped_data[f_name]["note"] = "Данные покупателя удалены автоматически"
@@ -763,7 +772,7 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     # ------------------------------------------
 
     from validators import validate_inn, validate_kpp, validate_bank_requisites
-    
+
     doc_type = wrapped_data.get("document_type", {}).get("value", "Счет на оплату")
 
     # 5. Математический арбитраж (ИНН/КПП)
@@ -778,17 +787,17 @@ async def process_header_with_llm(ocr_json, api_key: str, folder_id: str) -> dic
     # 6. Валидация банковских реквизитов с прощением для КП
     bik_field = wrapped_data.get("bank_bik", {})
     bik_val = bik_field.get("value")
-    
+
     # Гарантированный zfill(9) для БИК перед валидацией
     if bik_val and bik_val not in ["---", "", "null"]:
         cleaned_bik_digits = re.sub(r'\D', '', str(bik_val))
         if 0 < len(cleaned_bik_digits) < 9:
             bik_val = cleaned_bik_digits.zfill(9)
-    
+
     # Валидация БИК
     wrapped_data["bank_bik"] = validate_bank_requisites(bik_val, "bank_bik", doc_type)
     new_bik_val = wrapped_data.get("bank_bik", {}).get("value")
-    
+
     # Валидация Расчетного счета (р/с)
     rs_field = wrapped_data.get("bank_account", {})
     wrapped_data["bank_account"] = validate_bank_requisites(rs_field.get("value"), "bank_account", doc_type, is_corr=False, bik=new_bik_val)

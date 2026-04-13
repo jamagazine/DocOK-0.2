@@ -138,7 +138,7 @@ export const applySortAndFilter = <T extends { id: string }>(rows: T[], config: 
     // Handle strings with priority: Digital -> RU -> EN
     const strA = String(valA || '');
     const strB = String(valB || '');
-    
+
     const pA = getSortPriority(strA);
     const pB = getSortPriority(strB);
 
@@ -336,6 +336,13 @@ interface DataContextType {
   deleteProject: (id: string) => void;
   importProject: (file: File) => Promise<Project | null>;
 
+  // Bulk project operations
+  selectedProjectIds: Set<string>;
+  toggleProjectSelection: (projectId: string) => void;
+  clearProjectSelection: () => void;
+  selectAllProjects: () => void;
+  deleteSelectedProjects: () => Promise<void>;
+
   // Active category for filtering
   activeCategory: string;
   setActiveCategory: (id: string) => void;
@@ -373,7 +380,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const isInitializing = useRef(false);
-  
+
+  // Bulk project selection state
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+
   const activeProject = projects.find(p => p.id === activeProjectId);
   const projectName = activeProject?.title || 'Новый проект';
   const setProjectName = (name: string) => {
@@ -429,7 +439,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const params = new URLSearchParams(window.location.search);
       const urlStage = params.get('stage') as Stage;
       if (['spec', 'invoice', 'estimate'].includes(urlStage)) return urlStage;
-      
+
       const saved = localStorage.getItem('docok_currentStage');
       if (saved && ['spec', 'invoice', 'estimate'].includes(saved)) return saved as Stage;
     }
@@ -528,9 +538,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // --- URL & State Synchronization ---
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    
+
     const params = new URLSearchParams(window.location.search);
-    
+
     if (viewContext === 'dashboard') {
       params.delete('project');
       params.delete('stage');
@@ -538,7 +548,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (activeProjectId) params.set('project', activeProjectId);
       if (currentStage) params.set('stage', currentStage);
     }
-    
+
     const newRelativePathQuery = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
     window.history.replaceState(null, '', newRelativePathQuery);
   }, [viewContext, activeProjectId, currentStage]);
@@ -571,7 +581,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const duplicateProject = useCallback(async (id: string) => {
     const project = projects.find(p => p.id === id);
     if (!project) return;
-    
+
     try {
       const res = await fetch('http://localhost:8000/api/projects/duplicate', {
         method: 'POST',
@@ -620,10 +630,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     const category = categories.find(c => c.id === categoryId);
     const isSystem = categoryId === 'active' || categoryId === 'archive' || categoryId === 'tender';
-    const updated = { 
-      ...project, 
-      categoryId, 
-      status: isSystem ? (categoryId as ProjectStatus) : project.status 
+    const updated = {
+      ...project,
+      categoryId,
+      status: isSystem ? (categoryId as ProjectStatus) : project.status
     };
 
     try {
@@ -681,6 +691,57 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return null;
   }, []);
 
+  // Bulk project operations
+  const toggleProjectSelection = useCallback((projectId: string) => {
+    // Защита от выбора live-main
+    if (projectId === 'live-main') return;
+
+    setSelectedProjectIds(prev => {
+      const next = new Set(prev);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearProjectSelection = useCallback(() => {
+    setSelectedProjectIds(new Set());
+  }, []);
+
+  const selectAllProjects = useCallback(() => {
+    // Выбрать все проекты кроме live-main
+    const allIds = projects
+      .filter(p => p.id !== 'live-main')
+      .map(p => p.id);
+    setSelectedProjectIds(new Set(allIds));
+  }, [projects]);
+
+  const deleteSelectedProjects = useCallback(async () => {
+    const ids = Array.from(selectedProjectIds).filter(id => id !== 'live-main');
+
+    if (ids.length === 0) {
+      toast.error('Нет проектов для удаления');
+      return;
+    }
+
+    const toastId = toast.loading(`Удаление ${ids.length} ${ids.length === 1 ? 'проекта' : 'проектов'}...`);
+
+    try {
+      // Последовательное удаление через существующий API
+      for (const id of ids) {
+        await deleteProject(id);
+      }
+
+      clearProjectSelection();
+      toast.success(`Удалено проектов: ${ids.length}`, { id: toastId });
+    } catch (err) {
+      toast.error('Ошибка при удалении проектов', { id: toastId });
+    }
+  }, [selectedProjectIds, deleteProject]);
+
   // Dynamic counts for categories
   const categoriesWithCounts = React.useMemo(() => {
     return categories.map(cat => {
@@ -719,8 +780,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } catch (e) { return []; }
   });
 
-  useEffect(() => { 
-    localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages)); 
+  useEffect(() => {
+    localStorage.setItem('docok_completed_stages', JSON.stringify(completedStages));
   }, [completedStages]);
 
   // Store previous project ID to avoid clearing rows on every list update
@@ -772,12 +833,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       prevProjectIdRef.current = null;
       return;
     }
-    
+
     const projectChanged = prevProjectIdRef.current !== activeProjectId;
     prevProjectIdRef.current = activeProjectId;
 
     isInitializing.current = true;
-    
+
     // ONLY clear rows if we actually switched projects
     if (projectChanged) {
       setSpecRows([]);
@@ -821,7 +882,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const fetchHistory = useCallback((type: 'text' | 'xlsx') => {
     if (!activeProjectId) return;
-    const url = type === 'xlsx' 
+    const url = type === 'xlsx'
       ? `http://localhost:8000/api/storage/history/export_xlsx?projectId=${activeProjectId}`
       : `http://localhost:8000/api/storage/history/export?projectId=${activeProjectId}`;
     window.open(url, '_blank');
@@ -829,7 +890,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const saveTableData = useCallback(async () => {
     if (!activeProjectId || isInitializing.current) return;
-    
+
     // Local persistence
     localStorage.setItem(`docok_p_${activeProjectId}_specRows`, JSON.stringify(specRows));
     localStorage.setItem(`docok_p_${activeProjectId}_invoiceRows`, JSON.stringify(invoiceRows));
@@ -838,7 +899,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // Server-side project state sync
     const project = projects.find(p => p.id === activeProjectId);
     if (!project) return;
-    
+
     const updated: Project = {
       ...project,
       lastModified: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + ' | ' + new Date().toLocaleDateString('ru-RU'),
@@ -848,7 +909,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       completedStages,
       progress: Math.min(100, Math.round((completedStages.length / 3) * 100))
     };
-    
+
     try {
       // Quiet save (No loading toast/spinner)
       await fetch('http://localhost:8000/api/projects/save', {
@@ -864,11 +925,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [activeProjectId, specRows, invoiceRows, estimateRows, projects]);
 
   // --- Hybrid Saving UX ---
-  
+
   // 1. Debounced Auto-Save (5s)
   useEffect(() => {
     if (!activeProjectId || viewContext !== 'workspace') return;
-    
+
     const timer = setTimeout(() => {
       saveTableData();
     }, 5000);
@@ -980,7 +1041,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setSelectedIds([]); // Сбрасываем выборку для чистоты ID
     setIsOnlySelectedView(false); // Отключаем фильтр фокуса
   }, []);
-  
+
   const isMerged = viewMode === 'merged';
   const toggleMerge = useCallback(() => {
     setViewMode(viewMode === 'merged' ? 'original' : 'merged');
@@ -1060,7 +1121,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const saveYandexConfig = useCallback(async (config: YandexConfig) => {
     setYandexConfig(config);
     localStorage.setItem('docok_yandex_config', JSON.stringify(config));
-    
+
     // Отправляем ключи на бэкенд для сохранения в config.json
     try {
       await fetch('http://localhost:8000/api/config', {
@@ -1086,7 +1147,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (stage === 'spec') {
       return dataLines.map(line => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
-        
+
         // Фильтр технической строки 1 | 2 | 3...
         if (cols[0] === '1' && cols[1] === '2' && (cols[2] === '3' || cols[3] === '4')) {
           return null;
@@ -1096,7 +1157,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const pos = cols[0] || '';
         const unit = cols[5] || '';
         const quantity = cols[6] || '';
-        
+
         // ТЗ №2: Очистка технических «призраков» и мусора
         if (!name.trim() || name.includes('---') || name.includes('===')) {
           return null;
@@ -1165,7 +1226,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       return dataLines.map((line, idx) => {
         const cols = line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
-        
+
         // Skip markdown separator lines
         if (cols.some(c => c.includes('---'))) return null;
         // Skip technical index lines like 1 | 2 | 3
@@ -1175,7 +1236,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         r.id = genId();
         r.fileId = fileName;
         r.documentName = fileName;
-        
+
         // If we are before the header, or couldn't find one, just put everything in name
         if (actualHeaderIdx === -1 || idx < actualHeaderIdx) {
           r.name = cols.filter(c => c.length > 0).join(' ') || '';
@@ -1191,7 +1252,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           r.price_unit = c_price !== -1 ? parseFloat((cols[c_price] || '0').replace(/\s/g, '').replace(/,/g, '.')) || 0 : 0;
           r.price_final = r.price_unit;
           r.total = c_total !== -1 ? parseFloat((cols[c_total] || '0').replace(/\s/g, '').replace(/,/g, '.')) || 0 : 0;
-          
+
           // If name is empty but there's a sum/price, try to take from other columns
           if (!r.name && (r.total || r.price_unit)) {
               r.name = cols.find(c => c.length > 3) || '';
@@ -1210,21 +1271,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const syncProjectFilesCount = useCallback(async () => {
     if (!activeProjectId) return;
-    
+
     try {
       // 1. Get real file list from server
       const res = await fetch(`http://localhost:8000/api/storage/files?projectId=${activeProjectId}`);
       if (!res.ok) return;
       const files = await res.json();
-      const count = files.filter((f: any) => 
-        !f.name.toLowerCase().endsWith('.json') && 
+      const count = files.filter((f: any) =>
+        !f.name.toLowerCase().endsWith('.json') &&
         !f.name.toLowerCase().endsWith('.md')
       ).length;
-      
+
       // 2. Find current project state
       const project = projects.find(p => p.id === activeProjectId);
       if (!project) return;
-      
+
       // 3. Update server-side project state
       const updated = { ...project, filesCount: count };
       await fetch('http://localhost:8000/api/projects/save', {
@@ -1234,7 +1295,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       });
       // 4. Update local projects list
       setProjects(prev => prev.map(p => p.id === activeProjectId ? updated : p));
-      
+
     } catch (e) {
       console.error('Failed to sync files count:', e);
     }
@@ -1407,7 +1468,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             try {
               const dataStr = line.substring(6);
               const data = JSON.parse(dataStr);
-              
+
               setUploadStatuses((prev: any) => {
                 const prevData = prev[fileName] || {};
                 const incomingDoc = data.data?.document || data.supplierData || {};
@@ -1425,8 +1486,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
                  return {
                   ...prev,
-                  [fileName]: { 
-                     ...prevData, 
+                  [fileName]: {
+                     ...prevData,
                      status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
                      method: newMethod,
                      progress: newProgress,
@@ -1451,7 +1512,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
                     });
                     setInvoiceRows(prev => [...prev.filter(r => r.fileId !== fileName), ...parsedItems]);
                  }
-                 await fetchStorageFiles(); 
+                 await fetchStorageFiles();
                  await fetchSuppliers();
               }
             } catch (e) {
@@ -1509,7 +1570,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       const response = await fetch(`http://localhost:8000/api/storage/projects/${activeProjectId}/files/${encodeURIComponent(fileName)}/json`);
       if (!response.ok) throw new Error("Кэш не найден");
-      
+
       const originalData = await response.json();
 
       if (originalData.items && Array.isArray(originalData.items)) {
@@ -1520,7 +1581,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }));
 
           const isSpec = (originalData.document?.doc_type || originalData.doc_type) === 'spec' || currentStage === 'spec';
-          
+
           if (isSpec) {
               setSpecRows(prev => {
                   const otherFilesRows = prev.filter(row => row.fileId !== fileName);
@@ -1540,16 +1601,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } else if (originalData.method === 'excel_rules' || originalData.method === 'rules') {
         newStatus = 'READY_MD';
       }
-      
+
       setUploadStatuses(prev => ({
           ...prev,
-          [fileName]: { 
-              ...prev[fileName], 
+          [fileName]: {
+              ...prev[fileName],
               status: newStatus,
               method: originalData.method || prev[fileName]?.method
           }
       }));
-      
+
       await updateFileStatusOnServer(fileName, newStatus as FileStatus);
       toast.success(`Данные файла ${fileName} восстановлены из памяти`);
 
@@ -1746,7 +1807,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const base = { ...group[0] };
         base.id = stableId;
         base.children = [];
-        
+
         let sumQ = 0;
         let sumW = 0;
         const notes = new Set<string>();
@@ -1772,10 +1833,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         if (sumW > 0) base.mass = sumW.toFixed(2);
         base.note = Array.from(notes).join('; ');
-        
+
         // Очистка имени от возможных старых счетчиков
         base.name = base.name.replace(/\s*\(\d+\s*шт\.\)\s*$/, '').replace(/\s*\[\d+\]\s*$/, '').trim();
-        
+
         rawResult.push(base);
       }
     }
@@ -1785,17 +1846,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (!config.key || !config.direction) {
          return priorityCompare(a.name, b.name, 'asc');
       }
-      
+
       const valA = a[config.key!];
       const valB = b[config.key!];
-      
+
       // Numbers
       const nA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
       const nB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
       if (!isNaN(nA) && !isNaN(nB) && config.key !== 'name') {
          return (nA - nB) * (config.direction === 'asc' ? 1 : -1);
       }
-      
+
       // Strings
       return priorityCompare(String(valA), String(valB), config.direction);
     });
@@ -1819,26 +1880,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const getSupplierRows = useCallback((items: SpecRow[], config: SortConfig) => {
     const onlyItems = items.filter(r => !r.is_header);
     // map: supplierKey -> { id, name, is_header, row_type, quantity, itemsMap: fingerprint -> mergedItem, names[] }
-    const supplierMap = new Map<string, { 
-      id: string; 
-      name: string; 
-      is_header: boolean; 
-      row_type: string; 
-      quantity: string; 
-      itemsMap: Map<string, any>; 
-      names: string[] 
+    const supplierMap = new Map<string, {
+      id: string;
+      name: string;
+      is_header: boolean;
+      row_type: string;
+      quantity: string;
+      itemsMap: Map<string, any>;
+      names: string[]
     }>();
 
     onlyItems.forEach(item => {
       const rawSupplier = (item.supplier || '').trim();
       const sKey = rawSupplier.toLowerCase() || 'без поставщика';
-      
+
       if (!supplierMap.has(sKey)) {
         const safeId = `supplier_header_${sKey}`;
-        supplierMap.set(sKey, { 
-          id: safeId, 
-          name: rawSupplier || 'БЕЗ ПОСТАВЩИКА', 
-          is_header: true, 
+        supplierMap.set(sKey, {
+          id: safeId,
+          name: rawSupplier || 'БЕЗ ПОСТАВЩИКА',
+          is_header: true,
           row_type: 'LOCATION',
           quantity: '0',
           itemsMap: new Map<string, any>(),
@@ -1851,7 +1912,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       // Local merge within supplier: fingerprint by name, brand, code, unit
       const fingerprint = `${String(item.name || '').trim()}|${String(item.brand || '').trim()}|${String(item.code || '').trim()}|${String(item.unit || '').trim()}`.toLowerCase();
-      
+
       const q = parseFloat(String(item.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
       const m = parseFloat(String(item.mass || item.weight || 0).replace(/\s/g, '').replace(/,/g, '.')) || 0;
 
@@ -1859,18 +1920,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const existing = group.itemsMap.get(fingerprint)!;
         const oldQ = parseFloat(String(existing.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
         const oldM = parseFloat(String(existing.mass).replace(/\s/g, '').replace(/,/g, '.')) || 0;
-        
+
         existing.quantity = String(oldQ + q);
         existing.mass = String(oldM + m);
-        
+
         if (item.note && !existing.note.includes(item.note)) {
           existing.note = existing.note ? `${existing.note}; ${item.note}` : item.note;
         }
-        
+
         // Track original rows for drill-down (pivot behavior)
         if (!existing.children) existing.children = [];
         existing.children.push({ ...item });
-        
+
         if (item.id) {
            if (!existing.originalRowsIds) existing.originalRowsIds = [existing.id];
            existing.originalRowsIds.push(item.id);
@@ -1878,8 +1939,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } else {
         // Create a stable ID for the merged item within this supplier
         const itemSafeId = `s_item_${sKey}_${fingerprint.replace(/[^a-z0-9]/g, '_')}`;
-        group.itemsMap.set(fingerprint, { 
-          ...item, 
+        group.itemsMap.set(fingerprint, {
+          ...item,
           id: itemSafeId,
           quantity: String(q),
           mass: String(m),
@@ -1890,7 +1951,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      
+
       // Update total quantity for supplier header
       const totalQ = parseFloat(String(group.quantity).replace(/\s/g, '').replace(/,/g, '.')) || 0;
       group.quantity = String(totalQ + q);
@@ -1902,7 +1963,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const niceName = group.names.find(n => /^[A-ZА-ЯЁ]/.test(n)) || group.names[0];
         group.name = niceName;
       }
-      
+
       // Flatten merged items and assign sequential positions
       let posCounter = 1;
       const children = Array.from(group.itemsMap.values())
@@ -1912,20 +1973,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
           const valA = a[config.key!];
           const valB = b[config.key!];
-          
+
           // Numbers
           const nA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
           const nB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
           if (!isNaN(nA) && !isNaN(nB) && config.key !== 'name') {
             return (nA - nB) * (config.direction === 'asc' ? 1 : -1);
           }
-          
+
           return priorityCompare(String(valA), String(valB), config.direction);
         })
         .map(child => {
           let qStr = String(child.quantity);
           if (Number(qStr) % 1 !== 0) qStr = Number(qStr).toFixed(2);
-          
+
           let mStr = String(child.mass);
           if (Number(mStr) > 0) mStr = Number(mStr).toFixed(2);
 
@@ -2065,10 +2126,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (r.is_header && (!r.name || !r.name.trim())) return true;
 
     const fieldsToCheck = [
-      'pos', 'name', 'brand', 'model', 'type', 'code', 'article', 
+      'pos', 'name', 'brand', 'model', 'type', 'code', 'article',
       'supplier', 'unit', 'quantity', 'mass', 'weight', 'note', 'comment'
     ];
-    
+
     // Значения, которые не считаются «контентом», если в строке нет ничего другого
     const weakValues = new Set([
       '1', 'шт', '0', '0.00', '0,00', 'шт.', 'ед.', '0.0', '0,0',
@@ -2171,7 +2232,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         result = result.map(group => {
           const isGroupSelected = selectedIds.includes(group.id);
           const selectedChildren = group.children?.filter((c: any) => selectedIds.includes(c.id)) || [];
-          
+
           if (isGroupSelected || selectedChildren.length > 0) {
             return {
               ...group,
@@ -2190,12 +2251,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         for (const r of result) {
           const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
-          
+
           // Отслеживаем текущие "родительские" заголовки по мере обхода
           if (type === 'WORK_TYPE') { activeL0Id = r.id; activeL1Id = null; activeL2Id = null; }
           else if (type === 'LOCATION') { activeL1Id = r.id; activeL2Id = null; }
           else if (type === 'GROUP') { activeL2Id = r.id; }
-          
+
           // Если строка выбрана ОШИБОЧНО или ПРЯМО
           if (selectedIds.includes(r.id)) {
             keepIds.add(r.id);
@@ -2207,7 +2268,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
             }
           }
         }
-        
+
         result = result.filter(r => keepIds.has(r.id));
       }
     }
@@ -2245,7 +2306,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // ШАГ 6: Вычисляем количество ВЫБРАННЫХ ПОЗИЦИЙ (без учета заголовков)
   const selectedItemsCount = React.useMemo(() => {
     if (selectedIds.length === 0) return 0;
-    
+
     // Собираем все текущие ряды (оригинальные) для быстрой проверки типа через ID
     const allBaseRows = [...specRows, ...invoiceRows, ...estimateRows];
     const headerIds = new Set(allBaseRows.filter(r => r.is_header).map(r => r.id));
@@ -2266,16 +2327,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setCompletedStages((prev: string[]) => {
       if (prev.includes(stageId)) return prev;
       const next = [...prev, stageId];
-      
+
       // Sync progress immediately to the project card
       if (activeProjectId) {
         setProjects(all => all.map(p => {
           if (p.id !== activeProjectId) return p;
           const newProgress = Math.min(100, Math.round((next.length / 3) * 100));
           const isFinished = stageId === 'estimate';
-          return { 
-            ...p, 
-            completedStages: next, 
+          return {
+            ...p,
+            completedStages: next,
             progress: newProgress,
             status: isFinished ? 'archive' : p.status
           };
@@ -2294,9 +2355,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setProjects(all => all.map(p => {
           if (p.id !== activeProjectId) return p;
           const newProgress = Math.min(100, Math.round((next.length / 3) * 100));
-          return { 
-            ...p, 
-            completedStages: next, 
+          return {
+            ...p,
+            completedStages: next,
             progress: newProgress,
             status: p.status === 'archive' && stageId === 'estimate' ? 'active' : p.status
           };
@@ -2315,8 +2376,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     // 1. Delete from physical storage on server (Waiting for real deletion)
     try {
-      const res = await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}?projectId=${activeProjectId}&nuclear=${nuclear}`, { 
-        method: 'DELETE' 
+      const res = await fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileName)}?projectId=${activeProjectId}&nuclear=${nuclear}`, {
+        method: 'DELETE'
       });
       if (!res.ok) {
         toast.error(`Файл ${fileName} не был удален на сервере`);
@@ -2378,7 +2439,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const resetFileData = useCallback((fileName: string) => {
     // 1. Убираем сроки только из активной вкладки, нормализуем название этапа
     const stageBase = currentStage.replace('_ai', '');
-    
+
     switch (stageBase) {
       case 'spec':
         setSpecRows(prev => {
@@ -2551,14 +2612,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const deleteSelectedRows = useCallback(() => {
     if (selectedIds.length === 0) return;
-    
+
     let baseRows: any[] = [];
     if (currentStage === 'spec') baseRows = specRows;
     else if (currentStage === 'invoice') baseRows = invoiceRows;
     else if (currentStage === 'estimate') baseRows = estimateRows;
-    
+
     pushHistory(currentStage, baseRows);
-    
+
     // ШАГ 4: Разрешение реальных ID из сводных строк
     const idsToDelete = new Set<string>();
     selectedIds.forEach(id => {
@@ -2607,7 +2668,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const keepSelectedRows = useCallback(() => {
     if (selectedIds.length === 0) return;
-    
+
     let baseRows: any[] = [];
     if (currentStage === 'spec') baseRows = specRows;
     else if (currentStage === 'invoice') baseRows = invoiceRows;
@@ -2650,10 +2711,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
          activeL2 = r.id;
          keepL2 = idsToKeep.has(r.id);
       }
-      
+
       const explicitlySelected = idsToKeep.has(r.id);
       const implicitlySelected = keepL0 || keepL1 || keepL2;
-      
+
       if (explicitlySelected || implicitlySelected) {
          keepStatus.set(r.id, true);
          if (activeL0) keepStatus.set(activeL0, true);
@@ -2684,12 +2745,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     if (viewMode === 'supplier') {
       const grouped = getSupplierRows(baseRows, sortConfig);
-      return grouped.map((r: any) => ({ 
-        id: r.id, 
-        name: r.name, 
-        row_type: 'SUPPLIER', 
+      return grouped.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        row_type: 'SUPPLIER',
         children: [] as any[],
-        count: r.children?.length || 0 
+        count: r.children?.length || 0
       }));
     }
 
@@ -2705,14 +2766,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (!row.name || !row.name.trim()) return;
       const level = typeof row.level === 'number' ? row.level : (row.is_header ? 1 : 0);
       if (level > 0 || row.is_header) {
-        nodes[row.id] = { 
-          id: row.id, 
-          name: row.name.trim(), 
-          row_type: row.row_type, 
+        nodes[row.id] = {
+          id: row.id,
+          name: row.name.trim(),
+          row_type: row.row_type,
           level: level,
-          parentId: row.parentId, 
-          children: [] as any[], 
-          count: 0 
+          parentId: row.parentId,
+          children: [] as any[],
+          count: 0
         };
       }
     });
@@ -2720,7 +2781,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     processedBaseRows.forEach(row => {
       if (!row.name || !row.name.trim()) return;
       const level = typeof row.level === 'number' ? row.level : (row.is_header ? 1 : 0);
-      
+
       if (level === 0 && !row.is_header) {
         let currId = row.parentId;
         while(currId && nodes[currId]) {
@@ -2745,7 +2806,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setUploadStatuses((prev) => {
       const file = prev[fileId];
       if (!file) return prev;
-      
+
       const newDocs = {
         ...(file.verifiedFields || {}),
         [fieldName]: true
@@ -2772,10 +2833,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setUploadStatuses((prev) => {
       const file = prev[fileId];
       if (!file) return prev;
-      
+
       const currentSupplierData = (file.supplierData as any) || {};
       const data = currentSupplierData.document || currentSupplierData;
-      
+
       const updatedField = {
         value: newValue,
         confidence: 1.0,
@@ -2803,7 +2864,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       fetch(`http://localhost:8000/api/storage/files/${encodeURIComponent(fileId)}?projectId=${activeProjectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           supplierData: newSupplierData,
           verifiedFields: newVerifiedFields
         })
@@ -2919,6 +2980,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         moveProject,
         deleteProject,
         importProject,
+        selectedProjectIds,
+        toggleProjectSelection,
+        clearProjectSelection,
+        selectAllProjects,
+        deleteSelectedProjects,
         activeCategory,
         setActiveCategory,
         verifyField,

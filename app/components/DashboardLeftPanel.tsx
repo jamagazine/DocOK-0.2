@@ -11,17 +11,19 @@ import {
   FolderPlus,
   MoreHorizontal,
   Folder,
-  Trash2
+  Trash2,
+  CheckSquare,
+  XSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useData } from '../context/DataContext';
-import { 
-  Tooltip, 
-  TooltipContent, 
-  TooltipProvider, 
-  TooltipTrigger 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
 } from './ui/tooltip';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -40,6 +42,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -59,10 +71,10 @@ const ICON_MAP: Record<string, any> = {
 };
 
 export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelProps) {
-  const { 
-    yandexConfig, 
+  const {
+    yandexConfig,
     saveYandexConfig,
-    viewContext, 
+    viewContext,
     setViewContext,
     categories,
     addCategory,
@@ -70,12 +82,17 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
     activeCategory,
     setActiveCategory,
     activeProjectId,
-    projects
+    projects,
+    selectedProjectIds,
+    selectAllProjects,
+    clearProjectSelection,
+    deleteSelectedProjects
   } = useData();
   const [showSettings, setShowSettings] = useState(false);
   const [isServerAvailable, setIsServerAvailable] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newCatName, setNewCatName] = useState('');
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   const isApiConfigured = !!yandexConfig.apiKey && !!yandexConfig.catalogId;
 
@@ -88,9 +105,9 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
         setIsServerAvailable(false);
       }
     };
-    
+
     checkServer();
-    const interval = setInterval(checkServer, 30000); 
+    const interval = setInterval(checkServer, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -127,13 +144,13 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button 
+              <button
                 onClick={() => setViewContext('dashboard')}
                 className={cn(
                   "rounded-lg transition-all flex items-center justify-center",
                   expanded ? "w-9 h-9" : "w-12 h-12",
-                  viewContext === 'dashboard' 
-                    ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
+                  viewContext === 'dashboard'
+                    ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm"
                     : "text-slate-600 hover:bg-slate-100"
                 )}
               >
@@ -149,7 +166,7 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button 
+              <button
                 onClick={() => {
                   if (activeProjectId && projects.some(p => p.id === activeProjectId)) {
                     setViewContext('workspace');
@@ -159,8 +176,8 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
                 className={cn(
                   "rounded-lg transition-all flex items-center justify-center",
                   expanded ? "w-9 h-9" : "w-12 h-12",
-                  viewContext === 'workspace' 
-                    ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm" 
+                  viewContext === 'workspace'
+                    ? "border-2 border-emerald-400 bg-emerald-50 text-emerald-600 shadow-sm"
                     : "text-slate-600 hover:bg-slate-100",
                   (!activeProjectId || !projects.some(p => p.id === activeProjectId)) && "opacity-50 cursor-not-allowed"
                 )}
@@ -232,7 +249,7 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         variant="destructive"
                         onClick={() => deleteCategory(cat.id)}
                         className="gap-2"
@@ -287,7 +304,7 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
               </div>
               <DialogFooter>
                 <Button variant="ghost" onClick={() => setIsDialogOpen(false)}>Отмена</Button>
-                <Button 
+                <Button
                   disabled={!newCatName.trim()}
                   onClick={() => {
                     addCategory(newCatName.trim());
@@ -303,6 +320,118 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
         </div>
       </div>
 
+      {/* Bulk Actions Buttons */}
+      <AnimatePresence>
+        {selectedProjectIds.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="px-4 py-2 border-t border-slate-200"
+          >
+            {expanded ? (
+              <div className="flex flex-col gap-2">
+                {/* Первая строка: Выбрать все и Снять выбор */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={selectAllProjects}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-colors border",
+                      "bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border-indigo-200"
+                    )}
+                  >
+                    <CheckSquare className="size-4" />
+                    <span className="text-xs font-semibold">Выбрать все</span>
+                  </button>
+                  <button
+                    onClick={clearProjectSelection}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-colors border",
+                      "bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200"
+                    )}
+                  >
+                    <XSquare className="size-4" />
+                    <span className="text-xs font-semibold">Снять выбор</span>
+                  </button>
+                </div>
+                {/* Вторая строка: Удалить выбранные */}
+                <button
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition-colors border",
+                    "bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200"
+                  )}
+                >
+                  <Trash2 className="size-4" />
+                  <span className="text-sm font-semibold">
+                    Удалить выбранные ({selectedProjectIds.size})
+                  </span>
+                </button>
+              </div>
+            ) : (
+              /* Свернутый режим: 3 квадратные кнопки с иконками */
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={selectAllProjects}
+                  className={cn(
+                    "w-full aspect-square flex items-center justify-center rounded-lg transition-colors border",
+                    "bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border-indigo-200"
+                  )}
+                  title="Выбрать все"
+                >
+                  <CheckSquare className="size-4" />
+                </button>
+                <button
+                  onClick={clearProjectSelection}
+                  className={cn(
+                    "w-full aspect-square flex items-center justify-center rounded-lg transition-colors border",
+                    "bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200"
+                  )}
+                  title="Снять выбор"
+                >
+                  <XSquare className="size-4" />
+                </button>
+                <button
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  className={cn(
+                    "w-full aspect-square flex items-center justify-center rounded-lg transition-colors border",
+                    "bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200"
+                  )}
+                  title={`Удалить выбранные (${selectedProjectIds.size})`}
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить выбранные проекты?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы собираетесь удалить {selectedProjectIds.size} {selectedProjectIds.size === 1 ? 'проект' : selectedProjectIds.size < 5 ? 'проекта' : 'проектов'}.
+              Это действие нельзя отменить. Все файлы проектов будут удалены навсегда.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 hover:bg-rose-700"
+              onClick={async () => {
+                await deleteSelectedProjects();
+                setIsDeleteDialogOpen(false);
+              }}
+            >
+              Удалить навсегда
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Settings Panel (Unified with LeftPanel) */}
       <AnimatePresence>
@@ -317,9 +446,9 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
             <div className={cn("p-3 flex flex-col gap-2", !expanded && "items-center px-2")}>
               <div className="flex flex-col w-full">
                 {expanded && <Label htmlFor="api-key" className="text-[9px] text-slate-500 uppercase font-bold px-1 mb-1">API Ключ</Label>}
-                <Input 
+                <Input
                   id="api-key"
-                  type="password" 
+                  type="password"
                   placeholder={expanded ? "Введите ключ..." : "Ключ"}
                   value={yandexConfig.apiKey}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleConfigChange('apiKey', e.target.value)}
@@ -329,7 +458,7 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
               </div>
               <div className="flex flex-col w-full">
                 {expanded && <Label htmlFor="catalog-id" className="text-[9px] text-slate-500 uppercase font-bold px-1 mb-1">ID каталога</Label>}
-                <Input 
+                <Input
                   id="catalog-id"
                   placeholder={expanded ? "Введите ID..." : "ID"}
                   value={yandexConfig.catalogId}
@@ -353,9 +482,9 @@ export function DashboardLeftPanel({ expanded, onToggle }: DashboardLeftPanelPro
             DocOK
           </div>
         )}
-        
+
         {/* API Settings Button */}
-        <button 
+        <button
           onClick={() => {
             if (!expanded) {
               onToggle();
