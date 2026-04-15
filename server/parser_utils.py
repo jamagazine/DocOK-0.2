@@ -887,6 +887,348 @@ def _discover_supplier(words: list, client_inn: str) -> dict:
     return {"inn": supplier_inn, "name": supplier_name}
 
 
+def discover_supplier_by_anchor(text: str, client_inn: str) -> dict:
+    """
+    Ищет поставщика по якорным словам в тексте (для цифровых PDF).
+    Приоритет: Получатель > Поставщик > Продавец > Исполнитель
+
+    Args:
+        text: Полный текст документа
+        client_inn: ИНН клиента для исключения
+
+    Returns:
+        {"inn": str, "name": str} или {"inn": None, "name": None}
+    """
+    import re
+
+    # Якоря для поставщика (в порядке приоритета)
+    # Формат: (паттерн, размер окна поиска после якоря)
+    supplier_anchors = [
+        (r'Получател[ья]', 300),  # Ищем в следующих 300 символах
+        (r'Поставщик', 300),
+        (r'Продавец', 300),
+        (r'Исполнитель', 300)
+    ]
+
+    for anchor_pattern, window_size in supplier_anchors:
+        # Ищем якорь
+        anchor_match = re.search(anchor_pattern, text, re.IGNORECASE)
+        if not anchor_match:
+            continue
+
+        # Берём текст после якоря (окно поиска)
+        start_pos = anchor_match.end()
+        window_text = text[start_pos:start_pos + window_size]
+
+        # Ищем ИНН в окне
+        inn_match = re.search(r'ИНН\s*(\d{10}|\d{12})', window_text)
+        if not inn_match:
+            continue
+
+        inn = inn_match.group(1)
+
+        # Проверяем что это не client_inn
+        if inn == client_inn:
+            continue
+
+        # Валидируем ИНН
+        if not validate_and_clean_inn(inn):
+            continue
+
+        # Ищем название организации перед ИНН
+        # Паттерн: ООО/ИП/АО + название (до ИНН)
+        text_before_inn = window_text[:inn_match.start()]
+
+        # Пробуем найти полное название с "Общество с ограниченной ответственностью"
+        # Паттерн: Общество ... ответственностью "НАЗВАНИЕ"
+        org_pattern_full = r'Общество\s+с\s+ограниченной\s+ответственностью\s+[«"\']([^«"\'»]+)[»"\'"]'
+        match_full = re.search(org_pattern_full, text_before_inn, re.IGNORECASE)
+
+        if match_full:
+            org_name_part = match_full.group(1).strip()
+            return {"inn": inn, "name": f'ООО "{org_name_part}"'}
+
+        # Пробуем найти короткое название: ООО "НАЗВАНИЕ"
+        # Паттерн: ООО/ИП/АО + пробелы + кавычка + название + кавычка
+        org_pattern_short = r'(ООО|ИП|АО|ПАО|ЗАО)\s+[«"\']([^«"\'»,]+)[»"\'"]'
+        match_short = re.search(org_pattern_short, text_before_inn, re.IGNORECASE)
+
+        if match_short:
+            legal_form = match_short.group(1)
+            org_name_part = match_short.group(2).strip()
+            return {"inn": inn, "name": f'{legal_form} "{org_name_part}"'}
+
+        # Пробуем найти название БЕЗ кавычек: ООО НАЗВАНИЕ
+        # Паттерн: ООО + пробелы + слова (до запятой/ИНН)
+        org_pattern_no_quotes = r'(ООО|ИП|АО|ПАО|ЗАО)\s+([А-ЯЁа-яёA-Za-z0-9\s\-]+?)(?=\s*,|\s*ИНН|\s*$)'
+        match_no_quotes = re.search(org_pattern_no_quotes, text_before_inn, re.IGNORECASE)
+
+        if match_no_quotes:
+            legal_form = match_no_quotes.group(1)
+            org_name_part = match_no_quotes.group(2).strip()
+            # Убираем лишние пробелы
+            org_name_part = re.sub(r'\s+', ' ', org_name_part)
+            return {"inn": inn, "name": f'{legal_form} "{org_name_part}"'}
+
+        # Если название не найдено, возвращаем хотя бы ИНН
+        return {"inn": inn, "name": None}
+
+    return {"inn": None, "name": None}
+
+
+def discover_supplier_by_exclusion(text: str, client_inn: str) -> dict:
+    """
+    Ищет поставщика методом исключения (для цифровых PDF).
+    Любой ИНН != client_inn считается поставщиком.
+
+    Args:
+        text: Полный текст документа
+        client_inn: ИНН клиента для исключения
+
+    Returns:
+        {"inn": str, "name": str} или {"inn": None, "name": None}
+    """
+    import re
+
+    # Находим все ИНН в тексте
+    inn_pattern = r'ИНН\s*(\d{10}|\d{12})'
+    all_inn_matches = re.finditer(inn_pattern, text)
+
+    # Ищем первый ИНН != client_inn
+    for match in all_inn_matches:
+        inn = match.group(1)
+
+        # Валидируем ИНН
+        if not validate_and_clean_inn(inn):
+            continue
+
+        # Проверяем что это не client_inn
+        if inn == client_inn:
+            continue
+
+        # Нашли ИНН поставщика! Теперь ищем название
+        # Берём текст перед ИНН (окно 200 символов)
+        start_pos = max(0, match.start() - 200)
+        text_before_inn = text[start_pos:match.start()]
+
+        # Пробуем найти полное название с "Общество с ограниченной ответственностью"
+        org_pattern_full = r'Общество\s+с\s+ограниченной\s+ответственностью\s+[«"\']([^«"\'»]+)[»"\'"]'
+        match_full = re.search(org_pattern_full, text_before_inn, re.IGNORECASE)
+
+        if match_full:
+            org_name_part = match_full.group(1).strip()
+            return {"inn": inn, "name": f'ООО "{org_name_part}"'}
+
+        # Пробуем найти короткое название: ООО "НАЗВАНИЕ"
+        org_pattern_short = r'(ООО|ИП|АО|ПАО|ЗАО)\s+[«"\']([^«"\'»,]+)[»"\'"]'
+        match_short = re.search(org_pattern_short, text_before_inn, re.IGNORECASE)
+
+        if match_short:
+            legal_form = match_short.group(1)
+            org_name_part = match_short.group(2).strip()
+            return {"inn": inn, "name": f'{legal_form} "{org_name_part}"'}
+
+        # Пробуем найти название БЕЗ кавычек: ООО НАЗВАНИЕ
+        org_pattern_no_quotes = r'(ООО|ИП|АО|ПАО|ЗАО)\s+([А-ЯЁа-яёA-Za-z0-9\s\-]+?)(?=\s*,|\s*ИНН|\s*$)'
+        match_no_quotes = re.search(org_pattern_no_quotes, text_before_inn, re.IGNORECASE)
+
+        if match_no_quotes:
+            legal_form = match_no_quotes.group(1)
+            org_name_part = match_no_quotes.group(2).strip()
+            # Убираем лишние пробелы
+            org_name_part = re.sub(r'\s+', ' ', org_name_part)
+            return {"inn": inn, "name": f'{legal_form} "{org_name_part}"'}
+
+        # Если название не найдено, возвращаем хотя бы ИНН
+        return {"inn": inn, "name": None}
+
+    return {"inn": None, "name": None}
+
+
+def extract_supplier_details_by_inn(text: str, supplier_inn: str) -> dict:
+    """
+    Извлекает все реквизиты поставщика по его ИНН.
+    Ищет блок текста вокруг ИНН и парсит реквизиты.
+
+    Args:
+        text: Полный текст документа
+        supplier_inn: ИНН поставщика
+
+    Returns:
+        dict с реквизитами: {
+            "kpp": str,
+            "legal_address": str,
+            "postal_address": str,
+            "phone": str,
+            "bank_name": str,
+            "bank_bik": str,
+            "bank_account": str,
+            "corr_account": str
+        }
+    """
+    import re
+
+    # Находим позицию ИНН в тексте
+    inn_pattern = rf'ИНН\s*{supplier_inn}'
+    match = re.search(inn_pattern, text)
+
+    if not match:
+        print(f"[DETAILS EXTRACTION] ИНН {supplier_inn} не найден в тексте")
+        return {}
+
+    # Берём окно 500 символов до и 500 после ИНН
+    start = max(0, match.start() - 500)
+    end = min(len(text), match.end() + 500)
+    window = text[start:end]
+
+    details = {}
+
+    # Извлекаем КПП
+    kpp_match = re.search(r'КПП\s*(\d{9})', window)
+    if kpp_match:
+        details["kpp"] = kpp_match.group(1)
+        print(f"[DETAILS EXTRACTION] КПП: {details['kpp']}")
+
+    # Извлекаем юридический адрес (индекс 6 цифр + текст)
+    # ВАЖНО: Ищем адрес ПОСЛЕ КПП, останавливаемся перед ключевыми словами
+    # Паттерн: КПП + 6 цифр (индекс) + текст до "Поставщик:" или "тел:"
+    address_pattern = r'КПП\s*\d{9}[,\s]+(\d{6},\s*[^,]+(?:,\s*[^,]+){0,6}?)(?=\s*[,\s]*(?:Поставщик|тел|Почтовый))'
+    address_match = re.search(address_pattern, window, re.IGNORECASE)
+
+    if address_match:
+        addr = address_match.group(1).strip()
+        # Убираем завершающую запятую если есть
+        addr = addr.rstrip(',').strip()
+        address_matches = [addr]
+    else:
+        address_matches = []
+
+    if address_matches:
+        # Берём первый адрес (обычно юридический)
+        legal_addr = address_matches[0].strip()
+        # Убираем лишние пробелы
+        legal_addr = re.sub(r'\s+', ' ', legal_addr)
+        details["legal_address"] = legal_addr
+        print(f"[DETAILS EXTRACTION] Юридический адрес: {legal_addr[:50]}...")
+
+        # Если есть второй адрес, это почтовый
+        if len(address_matches) > 1:
+            postal_addr = address_matches[1].strip()
+            postal_addr = re.sub(r'\s+', ' ', postal_addr)
+            details["postal_address"] = postal_addr
+            print(f"[DETAILS EXTRACTION] Почтовый адрес: {postal_addr[:50]}...")
+
+    # Извлекаем телефон
+    phone_pattern = r'тел\.?:\s*([\d\s\(\)\-]+)'
+    phone_match = re.search(phone_pattern, window, re.IGNORECASE)
+    if phone_match:
+        phone = phone_match.group(1).strip()
+        details["phone"] = phone
+        print(f"[DETAILS EXTRACTION] Телефон: {phone}")
+
+    # Извлекаем название банка
+    bank_pattern = r'Банк[^:]*:\s*([^\n]+?)(?=\s*(?:БИК|Сч\.|$))'
+    bank_match = re.search(bank_pattern, window, re.IGNORECASE)
+    if bank_match:
+        bank_name = bank_match.group(1).strip()
+        # Убираем лишние пробелы
+        bank_name = re.sub(r'\s+', ' ', bank_name)
+        details["bank_name"] = bank_name
+        print(f"[DETAILS EXTRACTION] Банк: {bank_name}")
+
+    # Извлекаем БИК
+    bik_pattern = r'БИК\s*(\d{9})'
+    bik_match = re.search(bik_pattern, window)
+    if bik_match:
+        details["bank_bik"] = bik_match.group(1)
+        print(f"[DETAILS EXTRACTION] БИК: {details['bank_bik']}")
+
+    # Извлекаем счета (расчётный и корреспондентский)
+    # Паттерн: Сч. № + 20 цифр
+    account_pattern = r'Сч\.\s*№?\s*(\d{20})'
+    account_matches = re.findall(account_pattern, window)
+
+    if account_matches:
+        # Первый счёт - расчётный
+        details["bank_account"] = account_matches[0]
+        print(f"[DETAILS EXTRACTION] Расчётный счёт: {details['bank_account']}")
+
+        # Второй счёт - корреспондентский
+        if len(account_matches) > 1:
+            details["corr_account"] = account_matches[1]
+            print(f"[DETAILS EXTRACTION] Корр. счёт: {details['corr_account']}")
+
+    return details
+
+
+def discover_supplier_smart(text: str, client_inn: str) -> dict:
+    """
+    Умный поиск поставщика с приоритетами (для цифровых PDF).
+    1. По якорным словам (Получатель, Поставщик)
+    2. По методу исключения (любой ИНН != client_inn)
+    3. Fallback на None (LLM сам разберётся)
+
+    Извлекает ВСЕ реквизиты поставщика, не только название и ИНН.
+
+    Args:
+        text: Полный текст документа
+        client_inn: ИНН клиента
+
+    Returns:
+        dict с полными реквизитами: {
+            "inn": str,
+            "name": str,
+            "kpp": str,
+            "legal_address": str,
+            "postal_address": str,
+            "phone": str,
+            "bank_name": str,
+            "bank_bik": str,
+            "bank_account": str,
+            "corr_account": str
+        }
+        или {"inn": None, "name": None} если не найден
+    """
+
+    # Шаг 1: Пробуем якорные слова
+    result = discover_supplier_by_anchor(text, client_inn)
+    if result["inn"]:
+        print(f"[SUPPLIER DISCOVERY] Найден по якорю: {result['name']} (ИНН: {result['inn']})")
+
+        # Извлекаем остальные реквизиты по найденному ИНН
+        details = extract_supplier_details_by_inn(text, result["inn"])
+
+        # Объединяем результаты
+        full_result = {
+            "inn": result["inn"],
+            "name": result["name"]
+        }
+        full_result.update(details)
+
+        return full_result
+
+    # Шаг 2: Метод исключения
+    result = discover_supplier_by_exclusion(text, client_inn)
+    if result["inn"]:
+        print(f"[SUPPLIER DISCOVERY] Найден методом исключения: {result['name']} (ИНН: {result['inn']})")
+
+        # Извлекаем остальные реквизиты по найденному ИНН
+        details = extract_supplier_details_by_inn(text, result["inn"])
+
+        # Объединяем результаты
+        full_result = {
+            "inn": result["inn"],
+            "name": result["name"]
+        }
+        full_result.update(details)
+
+        return full_result
+
+    # Шаг 3: Fallback
+    print("[SUPPLIER DISCOVERY] Не найден, полагаемся на LLM")
+    return {"inn": None, "name": None}
+
+
 def ocr_to_grid_markdown(words: list, y_threshold=15) -> tuple:
     """
     STAGE 3.2 — Spatial Baskets & Component Tokens (Basket Parsing).
@@ -1652,9 +1994,37 @@ def clean_and_merge_table_columns(grid: list) -> list:
     num_rows = len(grid) - 1  # Без заголовка
 
     # ========== НОВОЕ (Вариант D): Удаление колонок с >90% пустых ячеек ==========
+    # С ЗАЩИТОЙ критичной зоны между "№" и "Наименование"
+
+    # 1. Находим индексы критичных колонок в заголовке
+    pos_col_idx = None
+    name_col_idx = None
+
+    if grid and grid[0]:
+        header = grid[0]
+        for idx, cell in enumerate(header):
+            cell_lower = cell.lower().strip()
+            # Ищем колонку с номером позиции
+            if any(marker in cell_lower for marker in ['№', 'п/п', 'позиция', 'поз']):
+                pos_col_idx = idx
+            # Ищем колонку с наименованием
+            if any(marker in cell_lower for marker in ['наименование', 'товар', 'название', 'продукция']):
+                name_col_idx = idx
+
+    # 2. Определяем защищённую зону (между № и Наименование)
+    protected_zone = set()
+    if pos_col_idx is not None and name_col_idx is not None and pos_col_idx < name_col_idx:
+        # Защищаем все колонки между № и Наименование (включительно)
+        protected_zone = set(range(pos_col_idx, name_col_idx + 1))
+        print(f"[clean_and_merge] Protected zone: columns {pos_col_idx} to {name_col_idx} (№ → Наименование)")
+
     cols_to_remove_90 = set()
 
     for col_idx in range(num_cols):
+        # Пропускаем защищённую зону
+        if col_idx in protected_zone:
+            continue
+
         empty_count = 0
         for row_idx in range(1, len(grid)):  # Пропускаем заголовок
             cell = grid[row_idx][col_idx].strip() if col_idx < len(grid[row_idx]) else ''
@@ -1668,6 +2038,15 @@ def clean_and_merge_table_columns(grid: list) -> list:
             if not header_cell or header_cell in ['', '-', '—', '–']:
                 cols_to_remove_90.add(col_idx)
                 print(f"[clean_and_merge] Removing 90% empty column {col_idx} ({empty_count}/{num_rows} empty)")
+
+    # 3. Заполняем пустые ячейки в защищённой зоне маркером "---"
+    if protected_zone:
+        for row in grid:
+            for col_idx in protected_zone:
+                if col_idx < len(row):
+                    if not row[col_idx].strip():
+                        row[col_idx] = '---'
+        print(f"[clean_and_merge] Filled empty cells in protected zone with '---'")
 
     # Удаляем колонки (в обратном порядке, чтобы не сбить индексы)
     if cols_to_remove_90:

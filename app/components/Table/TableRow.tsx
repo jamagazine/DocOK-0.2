@@ -1,20 +1,21 @@
 import React, { Fragment } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { 
-  ChevronDown, 
-  ChevronRight, 
-  AlertTriangle, 
+import {
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
   GripVertical,
   ListTree,
   Folders,
   Folder,
   Library,
-  UserCheck, 
+  UserCheck,
   Layers,
   Edit2
 } from 'lucide-react';
 import { EditableCell } from './EditableCell';
+import { VatRateCell } from './VatRateCell';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -85,7 +86,7 @@ export const TableRow = React.memo(({
   const isWorkType = row.row_type === 'WORK_TYPE' || (!row.pos && row.is_header && !isSummaryRow && row.name === String(row.name).toUpperCase() && String(row.name).length > 3);
   const isLocation = !isSummaryRow && (row.row_type === 'LOCATION' || row.pos === '§');
   const isGroup = !isSummaryRow && (row.row_type === 'GROUP' || (row.is_header && !isLocation && !isWorkType));
-  
+
   // Ribbon Row — это любая строка, которая рендерится «на всю ширину» (заголовок или группа)
   const isRibbonRow = isWorkType || isLocation || isGroup || isSupplierRow;
   const isHeader = isWorkType || isLocation || isGroup;
@@ -102,7 +103,7 @@ export const TableRow = React.memo(({
     stage === 'spec' && (row.level || 0) >= 3 && "bg-indigo-950 text-slate-50 font-black border-l-4 border-l-amber-500 border-b border-indigo-900 shadow-md transition-all hover:bg-indigo-900",
     stage === 'spec' && row.level === 2 && "bg-indigo-700 text-indigo-50 font-bold border-l-4 border-l-indigo-400 border-b border-indigo-600 transition-all hover:bg-indigo-600",
     stage === 'spec' && row.level === 1 && "bg-indigo-100/80 text-indigo-950 font-semibold border-l-4 border-l-indigo-300 border-b border-indigo-200 hover:bg-indigo-200/90 transition-all",
-    
+
     // 4. Поставщики - Голубой Индиго с бортом
     stage === 'spec' && isSupplierRow && "bg-blue-50/40 text-blue-900 border-l-4 border-l-blue-400 hover:bg-blue-100/50 transition-all",
     // 5. Сводные - Обычный фон, но с зеленым бортом
@@ -136,7 +137,7 @@ export const TableRow = React.memo(({
           // Ribbon Row Rendering (Full Width)
           <div className="flex w-full items-center select-none group/ribbon relative">
             {/* Позиция и Иконка */}
-            <div 
+            <div
               className="px-4 py-3 flex-none w-[60px] shrink-0 flex items-center justify-center border-r border-transparent group/poscell"
               onClick={(e) => {
                 e.stopPropagation();
@@ -167,14 +168,14 @@ export const TableRow = React.memo(({
                         </div>
                       )}
                       {isSupplierRow && <UserCheck className="w-4 h-4 text-blue-500/70" />}
-                      
+
                       {/* Если есть номер — показываем номер */}
                       {((isWorkType || isLocation || isActuallyMerged || row.is_header) && row.pos) && (
                         <span className={cn(
                           "font-black tabular-nums whitespace-nowrap",
-                          (row.level || 0) >= 2 ? "text-amber-400 text-sm" : 
-                          isActuallyMerged ? "text-emerald-600 text-sm" :
-                          "text-slate-400 text-sm"
+                          (row.level || 0) >= 2 ? "text-amber-400 text-sm" :
+                            isActuallyMerged ? "text-emerald-600 text-sm" :
+                              "text-slate-400 text-sm"
                         )}>
                           {row.pos}
                         </span>
@@ -192,16 +193,16 @@ export const TableRow = React.memo(({
             </div>
             {/* Content Area */}
             <div className={cn(
-               "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
-               (row.level || 0) >= 3 ? "text-sm uppercase font-black tracking-widest text-slate-50" : 
-               row.level === 2 ? "text-sm font-bold text-indigo-50" : 
-               row.level === 1 ? "text-sm font-bold text-indigo-950" :
-               isActuallyMerged ? "text-slate-900" :
-               isSupplierRow ? "text-blue-900 font-bold" :
-               "text-sm font-bold text-indigo-900"
+              "flex-grow px-4 py-3 tracking-tight flex items-center min-w-0",
+              (row.level || 0) >= 3 ? "text-sm uppercase font-black tracking-widest text-slate-50" :
+                row.level === 2 ? "text-sm font-bold text-indigo-50" :
+                  row.level === 1 ? "text-sm font-bold text-indigo-950" :
+                    isActuallyMerged ? "text-slate-900" :
+                      isSupplierRow ? "text-blue-900 font-bold" :
+                        "text-sm font-bold text-indigo-900"
             )}>
               <span className="truncate flex-grow mr-4">{row.name}</span>
-              
+
               {(toggleCollapse || isActuallyMerged || (isSupplierRow && hasChildren)) && (
                 <button
                   onClick={(e) => {
@@ -211,13 +212,13 @@ export const TableRow = React.memo(({
                   }}
                   className={cn(
                     "p-1 rounded transition-colors flex-shrink-0 ml-auto flex items-center justify-center",
-                    (row.level || 0) >= 2 ? "text-indigo-200 hover:bg-white/10 hover:text-white" : 
-                    isActuallyMerged ? "text-emerald-500 hover:bg-emerald-200/50" :
-                    isSupplierRow ? "text-blue-500 hover:bg-blue-200/50" :
-                    "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
+                    (row.level || 0) >= 2 ? "text-indigo-200 hover:bg-white/10 hover:text-white" :
+                      isActuallyMerged ? "text-emerald-500 hover:bg-emerald-200/50" :
+                        isSupplierRow ? "text-blue-500 hover:bg-blue-200/50" :
+                          "text-indigo-500 hover:bg-indigo-200/50 hover:text-indigo-700"
                   )}
                 >
-                  {(( (isActuallyMerged || isSupplierRow) && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                  {(((isActuallyMerged || isSupplierRow) && !toggleCollapse) ? localExpanded : !isCollapsed) ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
                 </button>
               )}
             </div>
@@ -269,18 +270,18 @@ export const TableRow = React.memo(({
                     <span className="text-slate-500 font-bold text-xs italic">{row.pos || '§'}</span>
                   ) : (
                     <>
-                       {(isActuallyMerged || stage === 'spec') ? (
-                         <span className={cn(
-                           "group-hover:hidden tabular-nums font-bold",
-                           isActuallyMerged ? "text-emerald-600 text-sm" : "text-slate-400 text-sm"
-                         )}>
-                           {row.pos || ''}
-                         </span>
-                       ) : (
-                         <span className="group-hover:hidden text-slate-400 tabular-nums">
-                           {(actualIndex + 1).toString().padStart(2, '0')}
-                         </span>
-                       )}
+                      {(isActuallyMerged || stage === 'spec') ? (
+                        <span className={cn(
+                          "group-hover:hidden tabular-nums font-bold",
+                          isActuallyMerged ? "text-emerald-600 text-sm" : "text-slate-400 text-sm"
+                        )}>
+                          {row.pos || ''}
+                        </span>
+                      ) : (
+                        <span className="group-hover:hidden text-slate-400 tabular-nums">
+                          {(actualIndex + 1).toString().padStart(2, '0')}
+                        </span>
+                      )}
                       <input
                         type="checkbox"
                         className="hidden group-hover:block w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
@@ -296,7 +297,7 @@ export const TableRow = React.memo(({
                 </div>
               ) : col.key === 'name' && (stage === 'spec' && (isHeader || isActuallyMerged)) ? (
 
-                <div 
+                <div
                   className="flex justify-between items-center gap-2 w-full overflow-hidden"
                   onClick={(e) => {
                     if (isActuallyMerged && row.children?.length > 1) {
@@ -367,6 +368,85 @@ export const TableRow = React.memo(({
                     </div>
                   </div>
                 </div>
+              ) : stage === 'invoice' && col.key === 'price_before_discount' ? (
+                <span className="text-slate-700 font-medium tabular-nums">
+                  {new Intl.NumberFormat('ru-RU', {
+                    style: 'currency',
+                    currency: 'RUB',
+                    minimumFractionDigits: 2
+                  }).format((row.quantity || 0) * (row.price_unit || 0))}
+                </span>
+              ) : stage === 'invoice' && col.key === 'discount' ? (
+                (() => {
+                  const discountStr = String(row.discount || '').trim();
+                  const isPercentage = discountStr.includes('%');
+                  const discountAmount = (row.quantity || 0) * (row.price_unit || 0) - (row.total || 0);
+
+                  // Если нет скидки
+                  if (!discountStr && discountAmount < 0.01) {
+                    return <span className="text-slate-400 text-xs">—</span>;
+                  }
+
+                  // Если процент → показываем процент + вычисленную сумму
+                  if (isPercentage) {
+                    return (
+                      <div className="flex flex-col items-end">
+                        <span className="text-rose-600 font-medium text-sm">{discountStr}</span>
+                        {discountAmount > 0.01 && (
+                          <span className="text-xs text-slate-400">
+                            {new Intl.NumberFormat('ru-RU', {
+                              style: 'currency',
+                              currency: 'RUB',
+                              minimumFractionDigits: 2
+                            }).format(discountAmount)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  // Если сумма → показываем только сумму (без дублирования)
+                  const numericDiscount = parseFloat(discountStr.replace(/[^\d.,]/g, '').replace(',', '.'));
+                  if (!isNaN(numericDiscount) && numericDiscount > 0) {
+                    return (
+                      <span className="text-rose-600 font-medium text-sm">
+                        {new Intl.NumberFormat('ru-RU', {
+                          style: 'currency',
+                          currency: 'RUB',
+                          minimumFractionDigits: 2
+                        }).format(numericDiscount)}
+                      </span>
+                    );
+                  }
+
+                  // Fallback: показываем как есть
+                  return <span className="text-rose-600 font-medium text-sm">{discountStr}</span>;
+                })()
+              ) : stage === 'invoice' && col.key === 'vat_rate' ? (
+                <VatRateCell
+                  value={String(row.vat_rate || '')}
+                  rowId={row.id}
+                  isInvalid={row.vat_rate_invalid}
+                  isLegacy={row.vat_rate_legacy}
+                  onChange={(value) => onUpdate(row.id, 'vat_rate', value)}
+                  onKeyDown={onKeyDown}
+                />
+              ) : stage === 'invoice' && col.key === 'vat_amount' ? (
+                <span className="text-slate-700 font-medium tabular-nums">
+                  {row.vat_amount ? new Intl.NumberFormat('ru-RU', {
+                    style: 'currency',
+                    currency: 'RUB',
+                    minimumFractionDigits: 2
+                  }).format(row.vat_amount) : '—'}
+                </span>
+              ) : stage === 'invoice' && col.key === 'price_without_vat' ? (
+                <span className="text-slate-700 font-medium tabular-nums">
+                  {row.price_without_vat ? new Intl.NumberFormat('ru-RU', {
+                    style: 'currency',
+                    currency: 'RUB',
+                    minimumFractionDigits: 2
+                  }).format(row.price_without_vat) : '—'}
+                </span>
               ) : stage === 'estimate' && (col.key === 'costPrice' || col.key === 'clientPrice') ? (
                 <div className="flex flex-col items-end w-full">
                   <input

@@ -244,24 +244,32 @@ def update_supplier_profile(project_id: str, new_data: dict, file_name: str):
         except Exception as e:
             print(f"Error loading suppliers: {e}")
 
-    inn = new_data.get("inn", {}).get("value")
-    org_name = new_data.get("organization_name", {}).get(
-        "value", "Неизвестный поставщик"
-    )
+    # Безопасное извлечение значений с проверкой типа
+    def safe_extract(field_name, default=""):
+        """Безопасно извлекает значение из поля, которое может быть dict, str или None"""
+        field_data = new_data.get(field_name)
+        if isinstance(field_data, dict):
+            return field_data.get("value", default)
+        elif field_data and field_data != "---":
+            return str(field_data)
+        return default
+
+    inn = safe_extract("inn")
+    org_name = safe_extract("organization_name", "Неизвестный поставщик")
 
     # Если ИНН не найден ИИ - генерируем временный ключ из названия
     supplier_key = inn if inn else f"unknown_{org_name}"
 
     # 2. Формируем блок реквизитов из текущего документа
     current_requisites = {
-        "bank_name": new_data.get("bank_name", {}).get("value", ""),
-        "bank_bik": new_data.get("bank_bik", {}).get("value", ""),
-        "bank_account": new_data.get("bank_account", {}).get("value", ""),
-        "corr_account": new_data.get("corr_account", {}).get("value", ""),
-        "kpp": new_data.get("kpp", {}).get("value", ""),
-        "legal_address": new_data.get("legal_address", {}).get("value", ""),
-        "postal_address": new_data.get("postal_address", {}).get("value", ""),
-        "phone": new_data.get("phone", {}).get("value", ""),
+        "bank_name": safe_extract("bank_name"),
+        "bank_bik": safe_extract("bank_bik"),
+        "bank_account": safe_extract("bank_account"),
+        "corr_account": safe_extract("corr_account"),
+        "kpp": safe_extract("kpp"),
+        "legal_address": safe_extract("legal_address"),
+        "postal_address": safe_extract("postal_address"),
+        "phone": safe_extract("phone"),
     }
 
     # 3. Если поставщик новый
@@ -834,25 +842,360 @@ async def process_invoice(
                 main_doc["method"] = p_method
             # --------------------------------------
 
+            # --- ОБНАРУЖЕНИЕ ПОСТАВЩИКА (для цифровых PDF) ---
+            if p_method == "pdf_text" and isinstance(main_doc, dict):
+                from parser_utils import discover_supplier_smart, _load_client_settings
+
+                # Загружаем ИНН клиента из настроек
+                client_settings = _load_client_settings()
+                client_inn = client_settings.get("client_anchor", {}).get("inn", "5905271743")
+
+                # Пытаемся найти поставщика методом якорей и исключения
+                supplier_info = discover_supplier_smart(full_header_text, client_inn)
+
+                # Если нашли поставщика, переопределяем ВСЕ данные LLM
+                if supplier_info.get("inn"):
+                    logger.info(f"[SUPPLIER OVERRIDE] Найден поставщик: {supplier_info.get('name')} (ИНН: {supplier_info['inn']})")
+
+                    # Переопределяем основные поля (ТОЛЬКО если значение не пустое)
+                    if supplier_info.get("name"):
+                        main_doc["organization_name"] = supplier_info["name"]
+                    main_doc["inn"] = supplier_info["inn"]
+
+                    # Переопределяем дополнительные поля, если они найдены
+                    if supplier_info.get("kpp"):
+                        main_doc["kpp"] = supplier_info["kpp"]
+                        logger.info(f"[SUPPLIER OVERRIDE] КПП: {supplier_info['kpp']}")
+
+                    if supplier_info.get("legal_address"):
+                        main_doc["legal_address"] = supplier_info["legal_address"]
+                        logger.info(f"[SUPPLIER OVERRIDE] Юридический адрес: {supplier_info['legal_address'][:50]}...")
+
+                    if supplier_info.get("postal_address"):
+                        main_doc["postal_address"] = supplier_info["postal_address"]
+                        logger.info(f"[SUPPLIER OVERRIDE] Почтовый адрес: {supplier_info['postal_address'][:50]}...")
+
+                    if supplier_info.get("phone"):
+                        main_doc["phone"] = supplier_info["phone"]
+                        logger.info(f"[SUPPLIER OVERRIDE] Телефон: {supplier_info['phone']}")
+
+                    if supplier_info.get("bank_name"):
+                        main_doc["bank_name"] = supplier_info["bank_name"]
+                        logger.info(f"[SUPPLIER OVERRIDE] Банк: {supplier_info['bank_name']}")
+
+                    if supplier_info.get("bank_bik"):
+                        main_doc["bank_bik"] = supplier_info["bank_bik"]
+                        logger.info(f"[SUPPLIER OVERRIDE] БИК: {supplier_info['bank_bik']}")
+
+                    if supplier_info.get("bank_account"):
+                        main_doc["bank_account"] = supplier_info["bank_account"]
+                        logger.info(f"[SUPPLIER OVERRIDE] Расчётный счёт: {supplier_info['bank_account']}")
+
+                    if supplier_info.get("corr_account"):
+                        main_doc["corr_account"] = supplier_info["corr_account"]
+                        logger.info(f"[SUPPLIER OVERRIDE] Корр. счёт: {supplier_info['corr_account']}")
+                else:
+                    logger.info("[SUPPLIER DISCOVERY] Поставщик не найден, используем результат LLM")
+            # -----------------------------------------------------
+
             # Новая логика: Парсинг позиций (Items)
             yield f"data: {json.dumps({'status': 'chunk', 'index': 2, 'total': 2, 'msg': 'Разбор товарных позиций...'}, ensure_ascii=False)}\n\n"
-            supplier_name = (
-                main_doc.get("organization_name", {}).get("value", "")
-                if isinstance(main_doc, dict)
-                else ""
+            supplier_name = ""
+            default_vat = ""
+
+            # DEBUG: Проверка типа main_doc
+            logger.info(
+                f"[DEBUG] main_doc type: {type(main_doc)}, isinstance(dict): {isinstance(main_doc, dict)}"
             )
+
+            # DEBUG: Детальная проверка структуры main_doc
+            if isinstance(main_doc, dict):
+                logger.info(f"[DEBUG] main_doc keys: {list(main_doc.keys())}")
+                org_name_raw = main_doc.get("organization_name")
+                default_vat_raw = main_doc.get("default_vat_rate")
+                total_amount_raw = main_doc.get("total_amount")
+                vat_amount_raw = main_doc.get("vat_amount")
+
+                logger.info(
+                    f"[DEBUG] organization_name: type={type(org_name_raw)}, value={org_name_raw}"
+                )
+                logger.info(
+                    f"[DEBUG] default_vat_rate: type={type(default_vat_raw)}, value={default_vat_raw}"
+                )
+                logger.info(
+                    f"[DEBUG] total_amount: type={type(total_amount_raw)}, value={total_amount_raw}"
+                )
+                logger.info(
+                    f"[DEBUG] vat_amount: type={type(vat_amount_raw)}, value={vat_amount_raw}"
+                )
+
+                # Безопасное извлечение с проверкой типа
+                if isinstance(org_name_raw, dict):
+                    supplier_name = org_name_raw.get("value", "")
+                else:
+                    supplier_name = str(org_name_raw) if org_name_raw else ""
+                    logger.warning(
+                        f"[WARNING] organization_name is not dict, using as string: {supplier_name}"
+                    )
+
+                if isinstance(default_vat_raw, dict):
+                    default_vat = default_vat_raw.get("value", "")
+                else:
+                    default_vat = (
+                        str(default_vat_raw)
+                        if default_vat_raw and default_vat_raw != "---"
+                        else ""
+                    )
+                    logger.warning(
+                        f"[WARNING] default_vat_rate is not dict, using as string: {default_vat}"
+                    )
+            else:
+                logger.warning(
+                    f"[WARNING] main_doc is not dict, it's {type(main_doc)}: {str(main_doc)[:100]}"
+                )
+
+            # Если default_vat пустой, но есть суммы → вычисляем процент НДС
+            if not default_vat and isinstance(main_doc, dict):
+                # Безопасное извлечение total_amount и vat_amount
+                total_amount_data = main_doc.get("total_amount", 0)
+                vat_amount_data = main_doc.get("vat_amount", 0)
+
+                if isinstance(total_amount_data, dict):
+                    total_amount = total_amount_data.get("value", 0) or 0
+                else:
+                    total_amount = (
+                        total_amount_data
+                        if total_amount_data and total_amount_data != "---"
+                        else 0
+                    )
+
+                if isinstance(vat_amount_data, dict):
+                    vat_amount = vat_amount_data.get("value", 0) or 0
+                else:
+                    vat_amount = (
+                        vat_amount_data
+                        if vat_amount_data and vat_amount_data != "---"
+                        else 0
+                    )
+
+                logger.info(
+                    f"[DEBUG] Extracted for VAT calculation: total_amount={total_amount}, vat_amount={vat_amount}"
+                )
+
+                # REGEX FALLBACK: Если LLM не нашёл total_amount или vat_amount,
+                # пытаемся извлечь их из MD текста по ключевым фразам
+                # ВАЖНО: Используем full_header_text + extracted_text для поиска в полном документе
+                if not total_amount or not vat_amount:
+                    import re
+
+                    # Объединяем заголовок и таблицу для поиска итоговой строки
+                    full_md_text = (full_header_text or "") + "\n" + (extracted_text or "")
+
+                    # Паттерны для поиска НДС в итоговой строке
+                    patterns = [
+                        # "на сумму 70 705,97 RUB, в том числе НДС 12 750,26 RUB"
+                        r'на сумму ([\d\s,\.]+) RUB.*в том числе НДС ([\d\s,\.]+) RUB',
+                        # "на сумму 70 705,97 RUB, включая НДС 12 750,26 RUB"
+                        r'на сумму ([\d\s,\.]+) RUB.*включая НДС ([\d\s,\.]+) RUB',
+                        # "Итого: 70 705,97 RUB, НДС: 12 750,26 RUB"
+                        r'Итого.*?([\d\s,\.]+) RUB.*НДС.*?([\d\s,\.]+) RUB',
+                        # "Всего: 70 705,97 RUB, в т.ч. НДС 12 750,26 RUB"
+                        r'Всего.*?([\d\s,\.]+) RUB.*в т\.ч\. НДС ([\d\s,\.]+) RUB',
+                        # "Всего наименований N, на сумму X RUB, в том числе НДС Y RUB"
+                        r'Всего наименований.*на сумму ([\d\s,\.]+) RUB.*в том числе НДС ([\d\s,\.]+) RUB',
+                    ]
+
+                    for pattern in patterns:
+                        match = re.search(pattern, full_md_text, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            try:
+                                # Парсим числа (убираем пробелы включая \xa0, заменяем запятую на точку)
+                                total_str = match.group(1).replace(' ', '').replace('\xa0', '').replace(',', '.')
+                                vat_str = match.group(2).replace(' ', '').replace('\xa0', '').replace(',', '.')
+
+                                total_amount = float(total_str)
+                                vat_amount = float(vat_str)
+
+                                logger.info(
+                                    f"[REGEX FALLBACK] Извлечены суммы из MD текста: "
+                                    f"total_amount={total_amount}, vat_amount={vat_amount}"
+                                )
+                                break
+                            except (ValueError, AttributeError) as e:
+                                logger.warning(f"[REGEX FALLBACK] Ошибка парсинга чисел: {e}")
+                                continue
+
+                if total_amount and vat_amount:
+                    from items_parser import calculate_vat_rate_from_amounts
+
+                    default_vat = calculate_vat_rate_from_amounts(
+                        float(total_amount), float(vat_amount)
+                    )
+                    logger.info(
+                        f"Вычислен default_vat из сумм: {default_vat} (total={total_amount}, vat={vat_amount})"
+                    )
+
             if p_method == "excel_rules":
                 all_items, items_stats = await process_items(
-                    extracted_text, p_method, api_key, folder_id, supplier_name
+                    extracted_text,
+                    p_method,
+                    api_key,
+                    folder_id,
+                    supplier_name,
+                    default_vat,
                 )
             else:
                 all_items, items_stats = await process_items(
-                    extracted_text, p_method, api_key, folder_id, supplier_name
+                    extracted_text,
+                    p_method,
+                    api_key,
+                    folder_id,
+                    supplier_name,
+                    default_vat,
                 )
 
             accumulator.merge(items_stats)
             if p_method == "ocr_table":
                 accumulator.add_ocr(num_pages, "ocr_table", "vision_ocr")
+
+            # REGEX VAT CORRECTION для PDF: Проверяем НДС через regex и исправляем если LLM ошибся
+            if p_method == "pdf_text" and all_items:
+                import re
+
+                # Объединяем весь текст для поиска
+                full_md_text = (full_header_text or "") + "\n" + (extracted_text or "")
+
+                # НОВОЕ: Сначала ищем СТАВКУ НДС в скобках (например "НДС(22%)" или "НДС (22%)")
+                vat_rate_patterns = [
+                    r'НДС\s*\(\s*(\d+)\s*%\s*\)',  # НДС(22%) или НДС( 22% )
+                    r'НДС\s+\(\s*(\d+)\s*%\s*\)',  # НДС (22%)
+                    r'в том числе НДС\s*\(\s*(\d+)\s*%\s*\)',  # в том числе НДС(22%)
+                    r'включая НДС\s*\(\s*(\d+)\s*%\s*\)',  # включая НДС(22%)
+                ]
+
+                regex_vat_rate = None
+                regex_vat_amount = None  # Инициализируем заранее для использования вне блока else
+                for pattern in vat_rate_patterns:
+                    match = re.search(pattern, full_md_text, re.IGNORECASE)
+                    if match:
+                        try:
+                            rate_num = int(match.group(1))
+                            regex_vat_rate = f"{rate_num}%"
+                            logger.info(f"[REGEX VAT RATE] Найдена ставка НДС в тексте: {regex_vat_rate}")
+                            break
+                        except (ValueError, AttributeError) as e:
+                            logger.warning(f"[REGEX VAT RATE] Ошибка парсинга ставки НДС: {e}")
+                            continue
+
+                # Если нашли ставку НДС напрямую - применяем ко всем позициям И к документу
+                if regex_vat_rate:
+                    # Устанавливаем default_vat_rate в документе
+                    if isinstance(main_doc, dict):
+                        llm_default_vat = main_doc.get("default_vat_rate")
+                        if not llm_default_vat or llm_default_vat != regex_vat_rate:
+                            if llm_default_vat:
+                                logger.warning(
+                                    f"[REGEX VAT RATE] Исправление default_vat_rate в документе: "
+                                    f"{llm_default_vat} → {regex_vat_rate}"
+                                )
+                            main_doc["default_vat_rate"] = regex_vat_rate
+                            logger.info(f"[REGEX VAT RATE] Установлен default_vat_rate: {regex_vat_rate}")
+
+                    # Применяем к позициям
+                    items_corrected = 0
+                    for item in all_items:
+                        if item.get("is_header"):
+                            continue
+
+                        llm_vat = item.get("vat_rate", "")
+
+                        # Если LLM указал неправильный НДС или не указал - исправляем
+                        if not llm_vat or llm_vat != regex_vat_rate:
+                            if llm_vat:
+                                logger.warning(
+                                    f"[REGEX VAT RATE] Исправление НДС в позиции '{item.get('name', 'N/A')}': "
+                                    f"{llm_vat} → {regex_vat_rate}"
+                                )
+                            item["vat_rate"] = regex_vat_rate
+                            # Убираем флаг legacy если был
+                            if "vat_rate_legacy" in item:
+                                del item["vat_rate_legacy"]
+                            items_corrected += 1
+
+                    if items_corrected > 0:
+                        logger.info(f"[REGEX VAT RATE] Исправлено НДС в {items_corrected} позициях")
+
+                # Если ставку не нашли - пробуем вычислить из суммы НДС (старый подход)
+                else:
+                    # Ищем НДС в тексте (учитываем что может быть в таблице с разделителем |)
+                    vat_patterns = [
+                        r'В том числе НДС:?\s*\|?\s*([\d\s,\.]+)',  # С учётом таблицы
+                        r'включая НДС:?\s*\|?\s*([\d\s,\.]+)',
+                        r'НДС:?\s*\|?\s*([\d\s,\.]+)',
+                    ]
+
+                    regex_vat_amount = None
+                    for pattern in vat_patterns:
+                        match = re.search(pattern, full_md_text, re.IGNORECASE)
+                        if match:
+                            try:
+                                vat_str = match.group(1).replace(' ', '').replace('\xa0', '').replace(',', '.')
+                                regex_vat_amount = float(vat_str)
+                                logger.info(f"[REGEX VAT CHECK] Найден НДС в тексте: {regex_vat_amount}")
+                                break
+                            except (ValueError, AttributeError) as e:
+                                logger.warning(f"[REGEX VAT CHECK] Ошибка парсинга НДС: {e}")
+                                continue
+
+                # Если regex нашёл НДС, вычисляем ставку и проверяем позиции
+                if regex_vat_amount and all_items:
+                    # Находим total из позиций
+                    total_from_items = sum(item.get("total", 0) or 0 for item in all_items if not item.get("is_header"))
+
+                    if total_from_items > 0:
+                        # Вычисляем ставку НДС: vat_rate = vat_amount / (total - vat_amount) * 100
+                        base_amount = total_from_items - regex_vat_amount
+                        if base_amount > 0:
+                            calculated_vat_rate = (regex_vat_amount / base_amount) * 100
+
+                            # Округляем до ближайшей стандартной ставки
+                            if 21 <= calculated_vat_rate <= 23:
+                                correct_vat_rate = "22%"
+                            elif 9 <= calculated_vat_rate <= 11:
+                                correct_vat_rate = "10%"
+                            elif calculated_vat_rate < 1:
+                                correct_vat_rate = "0%"
+                            else:
+                                correct_vat_rate = f"{calculated_vat_rate:.1f}%"
+
+                            logger.info(f"[REGEX VAT CHECK] Вычислена ставка НДС: {correct_vat_rate} (из суммы {total_from_items} и НДС {regex_vat_amount})")
+
+                            # Проверяем НДС в позициях
+                            items_corrected = 0
+                            for item in all_items:
+                                if item.get("is_header"):
+                                    continue
+
+                                llm_vat = item.get("vat_rate", "")
+
+                                # Если LLM указал неправильный НДС - исправляем
+                                if llm_vat and llm_vat != correct_vat_rate:
+                                    logger.warning(
+                                        f"[REGEX VAT CHECK] Исправление НДС в позиции '{item.get('name', 'N/A')}': "
+                                        f"{llm_vat} → {correct_vat_rate}"
+                                    )
+                                    item["vat_rate"] = correct_vat_rate
+                                    # Убираем флаг legacy если был
+                                    if "vat_rate_legacy" in item:
+                                        del item["vat_rate_legacy"]
+                                    items_corrected += 1
+                                # Если LLM не указал НДС - добавляем
+                                elif not llm_vat:
+                                    item["vat_rate"] = correct_vat_rate
+                                    items_corrected += 1
+
+                            if items_corrected > 0:
+                                logger.info(f"[REGEX VAT CHECK] Исправлено НДС в {items_corrected} позициях")
 
             # Sprint 4: Diagnostics
             if all(
@@ -1587,10 +1930,14 @@ async def create_project(data: dict):
 
         # Count only directories that have project_state.json and are not live-main
         valid_projects = [
-            d for d in dirs
-            if d != "live-main" and os.path.exists(os.path.join(PROJECTS_DIR, d, "project_state.json"))
+            d
+            for d in dirs
+            if d != "live-main"
+            and os.path.exists(os.path.join(PROJECTS_DIR, d, "project_state.json"))
         ]
-        print(f"[DEBUG] Valid project directories (with project_state.json, excluding live-main): {valid_projects}")
+        print(
+            f"[DEBUG] Valid project directories (with project_state.json, excluding live-main): {valid_projects}"
+        )
 
         n = len(valid_projects)
         print(f"[DEBUG] Project count n = {n}, next project number will be: {n + 1}")

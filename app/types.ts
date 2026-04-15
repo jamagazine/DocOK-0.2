@@ -131,6 +131,8 @@ export interface SpecRow extends MaterialPosition {
 export interface InvoiceItem {
   pos: string;
   name: string;
+  tag: string;
+  model: string;
   article: string;
   supplier: string;
   quantity: number;
@@ -140,7 +142,12 @@ export interface InvoiceItem {
   price_final: number;
   total: number;
   vat_rate: string;
-  tag: string;
+  vat_amount?: number;           // Сумма НДС (извлечённая или вычисленная)
+  price_without_vat?: number;    // Цена без НДС (вычисляемая)
+  vat_rate_invalid?: boolean;    // Флаг: некорректная ставка НДС
+  vat_rate_legacy?: boolean;     // Флаг: старая ставка 20%
+  vat_math_error?: boolean;      // Флаг: ошибка в математике НДС
+  note: string;
   is_valid: boolean; // Для индикации математических ошибок
 }
 

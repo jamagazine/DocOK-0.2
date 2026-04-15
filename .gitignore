@@ -72,7 +72,9 @@ server/*.zip
 
 # --- Временные и промежуточные файлы ---
 temp_output/
-tmp/
+tmp/*.py
+tmp/*.json
+tmp/*.txt
 extracted_text.txt
 *_raw_ocr.json
 *_invoice.md
@@ -164,5 +166,9 @@ bower_components
 !.gitignore
 !.env.example
 !README.md
+!.cursorrules
+!.roorules
+!start_docok.ps1
+!tmp/*.md
 !БАЗА\ ЗНАНИЙ/**
 !ОТЧЁТЫ/**

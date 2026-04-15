@@ -46,6 +46,70 @@ export function genId(): string {
     : Math.random().toString(36).slice(2);
 }
 
+/**
+ * Вычисляет поля НДС для позиции счёта
+ * @param item - позиция счёта
+ * @param defaultVat - ставка НДС по умолчанию из document
+ * @returns обновлённая позиция с полями НДС
+ */
+export function calculateVatFields(item: any, defaultVat: string = ''): any {
+  // Если vat_rate пустой и есть defaultVat → используем его
+  const vatRate = item.vat_rate || defaultVat || '';
+
+  // DEBUG: Логирование для отладки
+  if (item.pos === "1") {
+    console.log('[calculateVatFields] Item:', {
+      pos: item.pos,
+      name: item.name,
+      vat_rate_original: item.vat_rate,
+      defaultVat,
+      vatRate_result: vatRate,
+      total: item.total
+    });
+  }
+
+  // Извлекаем числовое значение ставки НДС
+  const vatRateNum = parseFloat(vatRate.replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+
+  // Вычисляем поля НДС
+  let vatAmount = item.vat_amount;
+  let priceWithoutVat = item.price_without_vat;
+
+  // Если vat_amount не указана → вычисляем из total
+  if (!vatAmount && item.total && vatRateNum > 0) {
+    // Формула: НДС = total * (ставка / (100 + ставка))
+    vatAmount = item.total * (vatRateNum / (100 + vatRateNum));
+  }
+
+  // Если price_without_vat не указана → вычисляем из total
+  if (!priceWithoutVat && item.total) {
+    if (vatRateNum > 0) {
+      priceWithoutVat = item.total - (vatAmount || 0);
+    } else {
+      // Если НДС 0% или "Без НДС" → цена без НДС = total
+      priceWithoutVat = item.total;
+    }
+  }
+
+  const result = {
+    ...item,
+    vat_rate: vatRate,
+    vat_amount: vatAmount,
+    price_without_vat: priceWithoutVat
+  };
+
+  // DEBUG: Логирование результата
+  if (item.pos === "1") {
+    console.log('[calculateVatFields] Result:', {
+      vat_rate: result.vat_rate,
+      vat_amount: result.vat_amount,
+      price_without_vat: result.price_without_vat
+    });
+  }
+
+  return result;
+}
+
 export function naturalSort(a: any, b: any): number {
   const as = String(a || '');
   const bs = String(b || '');
@@ -182,8 +246,10 @@ export function emptyInvoiceRow(): InvoiceRow {
   return {
     id: genId(),
     pos: '',
-    article: '',
     name: '',
+    tag: '',
+    model: '',
+    article: '',
     supplier: '',
     quantity: 1,
     unit: 'шт',
@@ -191,8 +257,10 @@ export function emptyInvoiceRow(): InvoiceRow {
     discount: '0',
     price_final: 0,
     total: 0,
-    vat_rate: '20%',
-    tag: '',
+    vat_rate: '22%',
+    vat_amount: 0,
+    price_without_vat: 0,
+    note: '',
     is_valid: true,
     isUncertain: false,
   };
@@ -255,7 +323,7 @@ interface DataContextType {
   filesMap: Record<string, File>;
   setFilesMap: React.Dispatch<React.SetStateAction<Record<string, File>>>;
   handleFile: (files: FileList | File[], stage: string, forceAI?: boolean) => Promise<void>;
-  aiQueue: {fileName: string, serverFilename: string}[];
+  aiQueue: { fileName: string, serverFilename: string }[];
   reprocessAi: (fileName: string, forceOcr?: boolean) => Promise<void>;
   restoreFromCache: (fileName: string) => Promise<void>;
   removeFile: (fileName: string, nuclear?: boolean) => void;
@@ -374,7 +442,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     try {
       const saved = localStorage.getItem('docok_activeProjectId');
       if (saved) return JSON.parse(saved);
-    } catch (e) {}
+    } catch (e) { }
     return null;
   });
 
@@ -393,7 +461,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   // TZ#25: AI Queue for sequential invoice processing
-  const [aiQueue, setAiQueue] = useState<{fileName: string, serverFilename: string}[]>([]);
+  const [aiQueue, setAiQueue] = useState<{ fileName: string, serverFilename: string }[]>([]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
@@ -462,12 +530,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     try {
       const saved = localStorage.getItem('docok_categories');
       if (saved) return JSON.parse(saved);
-    } catch (e) {}
+    } catch (e) { }
     return [
-      { id: 'all',     label: 'Все проекты',  icon: 'LayoutGrid', count: 4, type: 'system' },
-      { id: 'active',  label: 'Активные',     icon: 'Zap',        count: 2, type: 'system' },
-      { id: 'archive', label: 'В архиве',     icon: 'Archive',    count: 1, type: 'system' },
-      { id: 'tender',  label: 'Тендеры',      icon: 'Award',      count: 1, type: 'system' },
+      { id: 'all', label: 'Все проекты', icon: 'LayoutGrid', count: 4, type: 'system' },
+      { id: 'active', label: 'Активные', icon: 'Zap', count: 2, type: 'system' },
+      { id: 'archive', label: 'В архиве', icon: 'Archive', count: 1, type: 'system' },
+      { id: 'tender', label: 'Тендеры', icon: 'Award', count: 1, type: 'system' },
     ];
   });
 
@@ -1255,7 +1323,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
           // If name is empty but there's a sum/price, try to take from other columns
           if (!r.name && (r.total || r.price_unit)) {
-              r.name = cols.find(c => c.length > 3) || '';
+            r.name = cols.find(c => c.length > 3) || '';
           }
         }
 
@@ -1484,36 +1552,48 @@ export function DataProvider({ children }: { children: ReactNode }) {
                   newProgress = 100;
                 }
 
-                 return {
+                return {
                   ...prev,
                   [fileName]: {
-                     ...prevData,
-                     status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
-                     method: newMethod,
-                     progress: newProgress,
-                     supplierData: {
-                        ...(prevData.supplierData || {}),
-                        ...incomingDoc,
-                        method: newMethod
-                     }
+                    ...prevData,
+                    status: data.status === 'chunk' ? (data.msg || 'Разбор данных...') : (data.status === 'final' ? 'Завершено' : data.status),
+                    method: newMethod,
+                    progress: newProgress,
+                    supplierData: {
+                      ...(prevData.supplierData || {}),
+                      ...incomingDoc,
+                      method: newMethod
+                    }
                   }
                 };
               });
 
               if (data.status === 'final') {
-                 if (stage === 'invoice' && data.data?.items) {
-                    const parsedItems = data.data.items.map((it: any) => {
-                      // Убедимся, что ID и fileId присутствуют для корректной привязки UI
-                      return {
-                        ...it,
-                        id: it.id || String(Date.now() + Math.random()),
-                        fileId: fileName
-                      };
-                    });
-                    setInvoiceRows(prev => [...prev.filter(r => r.fileId !== fileName), ...parsedItems]);
-                 }
-                 await fetchStorageFiles();
-                 await fetchSuppliers();
+                if (stage === 'invoice' && data.data?.items) {
+                  // Извлекаем поставщика и НДС из document
+                  // Поддержка обеих структур: { value: "..." } и "..." (строка)
+                  const orgName = data.data?.document?.organization_name;
+                  const supplierName = typeof orgName === 'string' ? orgName : (orgName?.value || '');
+
+                  const vatRate = data.data?.document?.default_vat_rate;
+                  const defaultVat = typeof vatRate === 'string' ? vatRate : (vatRate?.value || '');
+
+                  const parsedItems = data.data.items.map((it: any) => {
+                    // Убедимся, что ID и fileId присутствуют для корректной привязки UI
+                    const itemWithSupplier = {
+                      ...it,
+                      id: it.id || String(Date.now() + Math.random()),
+                      fileId: fileName,
+                      // Если supplier пустой → берём из document
+                      supplier: it.supplier || supplierName
+                    };
+                    // Вычисляем поля НДС
+                    return calculateVatFields(itemWithSupplier, defaultVat);
+                  });
+                  setInvoiceRows(prev => [...prev.filter(r => r.fileId !== fileName), ...parsedItems]);
+                }
+                await fetchStorageFiles();
+                await fetchSuppliers();
               }
             } catch (e) {
               console.error("Ошибка парсинга чанка:", e);
@@ -1573,26 +1653,40 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       const originalData = await response.json();
 
+      // Извлекаем поставщика и НДС из document
+      // Поддержка обеих структур: { value: "..." } и "..." (строка)
+      const orgName = originalData.document?.organization_name;
+      const supplierName = typeof orgName === 'string' ? orgName : (orgName?.value || '');
+
+      const vatRate = originalData.document?.default_vat_rate;
+      const defaultVat = typeof vatRate === 'string' ? vatRate : (vatRate?.value || '');
+
       if (originalData.items && Array.isArray(originalData.items)) {
-          const itemsWithFileId = originalData.items.map((it: any) => ({
-              ...it,
-              fileId: fileName,
-              id: it.id || genId()
-          }));
+        const itemsWithFileId = originalData.items.map((it: any) => {
+          const itemWithSupplier = {
+            ...it,
+            fileId: fileName,
+            id: it.id || genId(),
+            // Если supplier пустой → берём из document
+            supplier: it.supplier || supplierName
+          };
+          // Вычисляем поля НДС
+          return calculateVatFields(itemWithSupplier, defaultVat);
+        });
 
-          const isSpec = (originalData.document?.doc_type || originalData.doc_type) === 'spec' || currentStage === 'spec';
+        const isSpec = (originalData.document?.doc_type || originalData.doc_type) === 'spec' || currentStage === 'spec';
 
-          if (isSpec) {
-              setSpecRows(prev => {
-                  const otherFilesRows = prev.filter(row => row.fileId !== fileName);
-                  return [...otherFilesRows, ...itemsWithFileId];
-              });
-          } else {
-              setInvoiceRows(prev => {
-                  const otherFilesRows = prev.filter(row => row.fileId !== fileName);
-                  return [...otherFilesRows, ...itemsWithFileId];
-              });
-          }
+        if (isSpec) {
+          setSpecRows(prev => {
+            const otherFilesRows = prev.filter(row => row.fileId !== fileName);
+            return [...otherFilesRows, ...itemsWithFileId];
+          });
+        } else {
+          setInvoiceRows(prev => {
+            const otherFilesRows = prev.filter(row => row.fileId !== fileName);
+            return [...otherFilesRows, ...itemsWithFileId];
+          });
+        }
       }
 
       let newStatus: FileStatus = 'READY_MD_AI';
@@ -1603,12 +1697,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
 
       setUploadStatuses(prev => ({
-          ...prev,
-          [fileName]: {
-              ...prev[fileName],
-              status: newStatus,
-              method: originalData.method || prev[fileName]?.method
-          }
+        ...prev,
+        [fileName]: {
+          ...prev[fileName],
+          status: newStatus,
+          method: originalData.method || prev[fileName]?.method
+        }
       }));
 
       await updateFileStatusOnServer(fileName, newStatus as FileStatus);
@@ -1771,9 +1865,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const generateStableId = (prefix: string, seed: string) => {
     let hash = 0;
     for (let i = 0; i < seed.length; i++) {
-        const char = seed.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash; // Convert to 32bit integer
+      const char = seed.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
     }
     return `${prefix}_${Math.abs(hash)}`;
   };
@@ -1844,7 +1938,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // 3. Сортируем с учетом глобального конфига или по умолчанию по имени
     const sortedResult = rawResult.sort((a: any, b: any) => {
       if (!config.key || !config.direction) {
-         return priorityCompare(a.name, b.name, 'asc');
+        return priorityCompare(a.name, b.name, 'asc');
       }
 
       const valA = a[config.key!];
@@ -1854,7 +1948,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const nA = parseFloat(String(valA).replace(/\s/g, '').replace(/,/g, '.'));
       const nB = parseFloat(String(valB).replace(/\s/g, '').replace(/,/g, '.'));
       if (!isNaN(nA) && !isNaN(nB) && config.key !== 'name') {
-         return (nA - nB) * (config.direction === 'asc' ? 1 : -1);
+        return (nA - nB) * (config.direction === 'asc' ? 1 : -1);
       }
 
       // Strings
@@ -1933,8 +2027,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         existing.children.push({ ...item });
 
         if (item.id) {
-           if (!existing.originalRowsIds) existing.originalRowsIds = [existing.id];
-           existing.originalRowsIds.push(item.id);
+          if (!existing.originalRowsIds) existing.originalRowsIds = [existing.id];
+          existing.originalRowsIds.push(item.id);
         }
       } else {
         // Create a stable ID for the merged item within this supplier
@@ -2206,15 +2300,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     // 4. ГЛОБАЛЬНАЯ ПЕРЕНУМЕРАЦИЯ (Если активна сортировка)
     if (isSortingActive) {
-       let globalPos = 1;
-       result = result.map(r => {
-         // Для поставщиков нумеруем дочерние элементы, саму группу не трогаем (она уже пронумерована внутри)
-         // Но если это плоский список (original + sort), нумеруем всё подряд.
-         if (viewMode === 'original') {
-            return { ...r, pos: String(globalPos++) };
-         }
-         return r;
-       });
+      let globalPos = 1;
+      result = result.map(r => {
+        // Для поставщиков нумеруем дочерние элементы, саму группу не трогаем (она уже пронумерована внутри)
+        // Но если это плоский список (original + sort), нумеруем всё подряд.
+        if (viewMode === 'original') {
+          return { ...r, pos: String(globalPos++) };
+        }
+        return r;
+      });
     }
 
 
@@ -2516,6 +2610,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         updatedRow.price_final = Number(pad.toFixed(2));
         updatedRow.total = Number((qty * pad).toFixed(2));
 
+        // Если изменили vat_rate → пересчитываем поля НДС
+        if (field === 'vat_rate') {
+          const recalculated = calculateVatFields(updatedRow, '');
+          return recalculated as InvoiceRow;
+        }
+
         return updatedRow;
       }));
     } else if (stage === 'estimate') {
@@ -2640,19 +2740,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const newRows = baseRows.filter(r => {
       const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
       if (type === 'WORK_TYPE') {
-         deleteStateL0 = idsToDelete.has(r.id);
-         deleteStateL1 = false;
-         deleteStateL2 = false;
-         return !deleteStateL0;
+        deleteStateL0 = idsToDelete.has(r.id);
+        deleteStateL1 = false;
+        deleteStateL2 = false;
+        return !deleteStateL0;
       }
       if (type === 'LOCATION') {
-         deleteStateL1 = idsToDelete.has(r.id);
-         deleteStateL2 = false;
-         return !(deleteStateL0 || deleteStateL1);
+        deleteStateL1 = idsToDelete.has(r.id);
+        deleteStateL2 = false;
+        return !(deleteStateL0 || deleteStateL1);
       }
       if (type === 'GROUP') {
-         deleteStateL2 = idsToDelete.has(r.id);
-         return !(deleteStateL0 || deleteStateL1 || deleteStateL2);
+        deleteStateL2 = idsToDelete.has(r.id);
+        return !(deleteStateL0 || deleteStateL1 || deleteStateL2);
       }
       return !(deleteStateL0 || deleteStateL1 || deleteStateL2 || idsToDelete.has(r.id));
     });
@@ -2700,26 +2800,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
     for (const r of baseRows) {
       const type = r.row_type || (r.is_header ? 'GROUP' : 'ITEM');
       if (type === 'WORK_TYPE') {
-         activeL0 = r.id; activeL1 = null; activeL2 = null;
-         keepL0 = idsToKeep.has(r.id);
-         keepL1 = false; keepL2 = false;
+        activeL0 = r.id; activeL1 = null; activeL2 = null;
+        keepL0 = idsToKeep.has(r.id);
+        keepL1 = false; keepL2 = false;
       } else if (type === 'LOCATION') {
-         activeL1 = r.id; activeL2 = null;
-         keepL1 = idsToKeep.has(r.id);
-         keepL2 = false;
+        activeL1 = r.id; activeL2 = null;
+        keepL1 = idsToKeep.has(r.id);
+        keepL2 = false;
       } else if (type === 'GROUP') {
-         activeL2 = r.id;
-         keepL2 = idsToKeep.has(r.id);
+        activeL2 = r.id;
+        keepL2 = idsToKeep.has(r.id);
       }
 
       const explicitlySelected = idsToKeep.has(r.id);
       const implicitlySelected = keepL0 || keepL1 || keepL2;
 
       if (explicitlySelected || implicitlySelected) {
-         keepStatus.set(r.id, true);
-         if (activeL0) keepStatus.set(activeL0, true);
-         if (activeL1) keepStatus.set(activeL1, true);
-         if (activeL2) keepStatus.set(activeL2, true);
+        keepStatus.set(r.id, true);
+        if (activeL0) keepStatus.set(activeL0, true);
+        if (activeL1) keepStatus.set(activeL1, true);
+        if (activeL2) keepStatus.set(activeL2, true);
       }
     }
 
@@ -2784,7 +2884,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       if (level === 0 && !row.is_header) {
         let currId = row.parentId;
-        while(currId && nodes[currId]) {
+        while (currId && nodes[currId]) {
           nodes[currId].count++;
           currId = nodes[currId].parentId;
         }

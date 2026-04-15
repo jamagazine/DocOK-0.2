@@ -354,7 +354,7 @@ function TableHeader({ columns, pageIds = [] }: { columns: Column[], pageIds?: s
                         isSomeSelected && "opacity-100"
                       )}
                       checked={isAllSelected}
-                      onChange={() => { }} 
+                      onChange={() => { }}
                       ref={(el) => { if (el) el.indeterminate = isSomeSelected; }}
                     />
                   </div>
@@ -439,18 +439,18 @@ function SpecTable() {
       if (hideUntilLevel !== -1 && level >= hideUntilLevel && row.is_header) {
         hideUntilLevel = -1;
       }
-      
+
       if (hideUntilLevel !== -1) continue;
 
       // У supplier-заголовка убираем children перед рендером (они уже развёрнуты)
       const renderedRow = (isSupplierMode && row.row_type === 'GROUP') ? { ...row, children: undefined } : row;
       res.push(renderedRow);
-      
+
       // ПО УМОЛЧАНИЮ ВСЁ СКРЫТО (кроме поставщиков и оригинала), если ID нет в expandedHeaderIds
       const isRowSupplier = String(row.id).startsWith('supplier_header_');
       const defaultExpanded = isRowSupplier || viewMode === 'original';
-      const isExpanded = expandedHeaderIds[row.id] !== undefined 
-        ? expandedHeaderIds[row.id] 
+      const isExpanded = expandedHeaderIds[row.id] !== undefined
+        ? expandedHeaderIds[row.id]
         : defaultExpanded;
 
       if (row.is_header && !isExpanded && !isOnlySelectedView) {
@@ -465,9 +465,9 @@ function SpecTable() {
 
   if (isActiveSearch && visibleRows.length === 0) {
     return (
-      <NoResultsState 
-        onReset={() => setSearchQuery('')} 
-        currentQuery={searchQuery} 
+      <NoResultsState
+        onReset={() => setSearchQuery('')}
+        currentQuery={searchQuery}
         stage="spec"
       />
     );
@@ -499,8 +499,8 @@ function SpecTable() {
                 isCollapsed={(() => {
                   const isRowSupplier = String(row.id).startsWith('supplier_header_');
                   const defaultExpanded = isRowSupplier || viewMode === 'original';
-                  const isExpanded = expandedHeaderIds[row.id] !== undefined 
-                    ? expandedHeaderIds[row.id] 
+                  const isExpanded = expandedHeaderIds[row.id] !== undefined
+                    ? expandedHeaderIds[row.id]
                     : defaultExpanded;
                   return !isExpanded;
                 })()}
@@ -542,26 +542,31 @@ function InvoiceTable() {
 
   const columns: Column[] = [
     { key: 'pos', label: '№', width: '60px', align: 'center', sortable: false },
-    { key: 'tag', label: 'Тег', width: '80px', align: 'center' },
     { key: 'name', label: 'Наименование' },
+    { key: 'tag', label: 'Тэг', width: '80px', align: 'center' },
+    { key: 'model', label: 'Модель', width: '120px' },
     { key: 'article', label: 'Артикул', width: '120px' },
     { key: 'supplier', label: 'Поставщик', width: '150px' },
     { key: 'quantity', label: 'Кол-во', width: '80px', align: 'right' },
     { key: 'unit', label: 'Ед. изм', width: '80px', align: 'center' },
-    { key: 'price_unit', label: 'Цена за ед.', width: '100px', align: 'right' },
-    { key: 'discount', label: 'Скидка', width: '80px', align: 'right' },
-    { key: 'price_final', label: 'Цена ит.', width: '100px', align: 'right' },
-    { key: 'vat_rate', label: 'НДС', width: '80px', align: 'center' },
-    { key: 'total', label: 'Итого', width: '110px', align: 'right' }
+    { key: 'price_unit', label: 'Цена (с НДС)', width: '110px', align: 'right' },
+    { key: 'price_final', label: 'Цена со скидкой', width: '110px', align: 'right' },
+    { key: 'price_before_discount', label: 'Сумма без скидки', width: '120px', align: 'right' },
+    { key: 'discount', label: 'Скидка', width: '100px', align: 'right' },
+    { key: 'total', label: 'Сумма (с НДС)', width: '120px', align: 'right' },
+    { key: 'vat_rate', label: 'Ставка НДС', width: '140px', align: 'center' },
+    { key: 'vat_amount', label: 'Сумма НДС', width: '110px', align: 'right' },
+    { key: 'price_without_vat', label: 'Цена без НДС', width: '110px', align: 'right' },
+    { key: 'note', label: 'Примечание', width: '150px' }
   ];
 
   const isActiveSearch = searchQuery.trim().length > 0;
 
   if (isActiveSearch && displayRows.length === 0) {
     return (
-      <NoResultsState 
-        onReset={() => setSearchQuery('')} 
-        currentQuery={searchQuery} 
+      <NoResultsState
+        onReset={() => setSearchQuery('')}
+        currentQuery={searchQuery}
         stage="invoice"
       />
     );
@@ -635,9 +640,9 @@ function EstimateTable() {
 
   if (isActiveSearch && displayRows.length === 0) {
     return (
-      <NoResultsState 
-        onReset={() => setSearchQuery('')} 
-        currentQuery={searchQuery} 
+      <NoResultsState
+        onReset={() => setSearchQuery('')}
+        currentQuery={searchQuery}
         stage="estimate"
       />
     );
